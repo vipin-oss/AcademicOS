@@ -21,6 +21,7 @@ from app.domain.events import (
     MetadataChanged,
     ObjectArchived,
     ObjectCreated,
+    ObjectRenamed,
     ObjectStatusChanged,
     ObjectSuperseded,
     RelationshipAdded,
@@ -87,6 +88,30 @@ class UniversalObject(AggregateRoot):
             ObjectCreated(aggregate_id=obj.id, object_type=object_type.value, title=title)
         )
         return obj
+
+    # ------------------------------------------------------------------- title
+    def rename(
+        self, new_title: str, actor: str, *, at: dt.datetime | None = None
+    ) -> None:
+        """Rename the Object (human-asserted display title).
+
+        Follows the same rules as every aggregate mutator: validate, bump the
+        version, touch the audit trail, emit a domain event. A no-op rename
+        (same title) changes nothing and emits no event.
+        """
+        if not new_title or not new_title.strip():
+            raise ValueError("Title must not be empty.")
+        new_title = new_title.strip()
+        if new_title == self.title:
+            return
+        old = self.title
+        self.title = new_title
+        self.version += 1
+        if self.audit is not None:
+            self.audit = self.audit.touch(actor, at=at)
+        self.add_domain_event(
+            ObjectRenamed(aggregate_id=self.id, old_title=old, new_title=new_title, actor=actor)
+        )
 
     # ------------------------------------------------------------------- status
     def change_status(

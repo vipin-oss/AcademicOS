@@ -92,3 +92,47 @@ Status codes: `200` (ok), `201` (created), `204` (deleted), `400`/`422` (validat
 > Note: deletion is a **hard delete** (repository `delete`). `PUT` updates only
 > `status` and `metadata` — the Domain aggregate has no title setter, so `title`
 > is immutable post-creation by design.
+
+## API — Phase 2 (Documents slice)
+
+A **Document is a Universal Object** with `object_type = document` (Blueprint
+§2): it lives in the same `objects` table, reuses the same repository, and its
+file facts (`file_name`, `file_size`, `mime_type`, `file_path`) ride as L2
+system metadata while `document_type`, `description` and `tags` are L6
+human-asserted metadata. The link to another Object is an asserted
+`belongs_to` relationship (Blueprint §4). Uploads are stored through the
+`FileStorage` application port (`infrastructure/storage/local` adapter).
+
+| Method | Path | Purpose | Use case |
+|---|---|---|---|
+| `GET` | `/api/v1/documents` | List Documents (paginated, `?object_id=` filter) | `ListDocumentsUseCase` |
+| `GET` | `/api/v1/documents/{id}` | Fetch a Document | `GetDocumentUseCase` |
+| `POST` | `/api/v1/documents` | Upload a Document (multipart, file + metadata) | `CreateDocumentUseCase` |
+| `PUT`/`PATCH` | `/api/v1/documents/{id}` | Update title/status/metadata/link (no re-upload) | `UpdateDocumentUseCase` |
+| `DELETE` | `/api/v1/documents/{id}` | Delete Document + stored blob | `DeleteDocumentUseCase` |
+| `GET` | `/api/v1/documents/{id}/download` | Download the stored blob | — |
+
+Upload form fields (`multipart/form-data`): `title`, `document_type`
+(`pdf|docx|xlsx|pptx|txt|zip|image|video|unknown`), `uploaded_by`, `file`,
+optional `object_id`, `description`, `tags` (JSON string array), `status`
+(default `draft`).
+
+`PUT`/`PATCH` body (all optional; `object_id: null` unlinks, absent leaves as-is):
+```json
+{
+  "title": "CS101 Syllabus v2",
+  "object_id": "obj:course:AB12CD34EF56GH78",
+  "document_type": "pdf",
+  "description": "Updated",
+  "tags": ["syllabus", "fall-2026"],
+  "status": "active",
+  "uploaded_by": "faculty:1"
+}
+```
+
+List query params: `page` (>=1, default 1), `page_size` (1–100, default 20),
+`object_id` (filter to documents linked to that Object). Lifecycle transitions
+follow the universal rules (`draft → active/archived`, `active → archived`; an
+illegal move returns `422`). Configuration: `STORAGE_DIR` (blob root, default
+`./storage`) and `PUBLIC_BASE_URL` (used to build the absolute `url` download
+link in responses).

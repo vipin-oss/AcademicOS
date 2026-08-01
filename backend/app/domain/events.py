@@ -43,6 +43,13 @@ class ObjectStatusChanged(DomainEvent):
 
 
 @dataclass(frozen=True)
+class ObjectRenamed(DomainEvent):
+    old_title: str | None = None
+    new_title: str | None = None
+    actor: str | None = None
+
+
+@dataclass(frozen=True)
 class MetadataChanged(DomainEvent):
     key: str | None = None
     layer: int | None = None

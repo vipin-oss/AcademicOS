@@ -23,6 +23,11 @@ env/
 .env.*
 !.env.example
 
+# Local runtime data (dev SQLite db, local file-storage blobs)
+backend/storage/
+*.db
+*.sqlite3
+
 # Editor / OS
 .DS_Store
 .idea/

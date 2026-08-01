@@ -101,7 +101,7 @@ def test_list_validation_422(client):
 
 
 def test_update_object(client):
-    oid = _create(client)["json"]()["id"]
+    oid = _create(client).json()["id"]
     resp = client.put(
         f"/api/v1/objects/{oid}",
         json={"updated_by": "faculty:1", "status": "archived", "metadata": [{"key": "note", "value": "x"}]},
@@ -122,7 +122,7 @@ def test_update_missing_object_returns_404(client):
 
 
 def test_delete_object(client):
-    oid = _create(client)["json"]()["id"]
+    oid = _create(client).json()["id"]
     resp = client.delete(f"/api/v1/objects/{oid}")
     assert resp.status_code == 204
     assert client.get(f"/api/v1/objects/{oid}").status_code == 404
