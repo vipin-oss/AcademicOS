@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #f7f7f5;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #fbfbfa;
+  --bg-hover: #f2f2f0;
+  --bg-active: #ececfe;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6b6b;
+  --text-tertiary: #9c9c9c;
+  --border-subtle: #ececec;
+  --border-strong: #dcdcda;
+  --accent: #5b5bd6;
+  --accent-hover: #4f4fc9;
+  --accent-subtle: #eeeefb;
+  /* Semantic status tokens (were referenced by components but never defined). */
+  --success: #18794e;
+  --success-subtle: #e7f5ee;
+  --warning: #b25c00;
+  --warning-subtle: #fdf1e3;
+  --danger: #c0392b;
+  --danger-subtle: #fcecea;
+  --info: #2563eb;
+  --info-subtle: #e8effd;
+}
+
+.dark {
+  --bg-app: #0e0e10;
+  --bg-surface: #161618;
+  --bg-surface-2: #1c1c1f;
+  --bg-hover: #232327;
+  --bg-active: #2a2540;
+  --text-primary: #ededed;
+  --text-secondary: #a0a0a6;
+  --text-tertiary: #6e6e76;
+  --border-subtle: #26262a;
+  --border-strong: #34343a;
+  --accent: #7c7cf0;
+  --accent-hover: #8e8eff;
+  --accent-subtle: #211e33;
+  --success: #4cc38a;
+  --success-subtle: #12241c;
+  --warning: #f5a524;
+  --warning-subtle: #2a1f0f;
+  --danger: #ff6369;
+  --danger-subtle: #2c1618;
+  --info: #7aa2f7;
+  --info-subtle: #16202f;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}

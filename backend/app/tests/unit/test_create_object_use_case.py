@@ -1,0 +1,157 @@
+"""Unit tests for the Create Universal Object vertical slice.
+
+No infrastructure is used: a fake in-memory repository implements the abstract
+``ObjectRepository`` port, proving the Application layer works against the port
+alone. This is exactly what "depend only on app.domain" requires.
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.application.commands.create_object import CreateObjectCommand
+from app.application.dtos.object import CreateObjectInput, CreateObjectOutput
+from app.application.exceptions import (
+    ObjectAlreadyExistsError,
+    ObjectNotFoundError,
+    ValidationError,
+)
+from app.application.queries.get_object import GetObjectQuery
+from app.application.use_cases.create_object import CreateObjectUseCase
+from app.application.use_cases.get_object import GetObjectUseCase
+from app.domain.entities.object import UniversalObject
+from app.domain.repositories.object_repository import ObjectRepository
+from app.domain.value_objects.enums import (
+    MetadataLayer,
+    ObjectStatus,
+    ObjectType,
+    Provenance,
+)
+from app.domain.value_objects.metadata import Metadata, MetadataEntry
+from app.domain.value_objects.object_id import ObjectId
+
+
+class InMemoryObjectRepository(ObjectRepository):
+    """Test double implementing the abstract port. No DB, no framework."""
+
+    def __init__(self) -> None:
+        self._store: dict[ObjectId, UniversalObject] = {}
+
+    def save(self, entity: UniversalObject) -> None:
+        self._store[entity.id] = entity
+
+    def get_by_id(self, id: ObjectId) -> UniversalObject | None:
+        return self._store.get(id)
+
+    def find_by_ids(self, ids: list[ObjectId]) -> list[UniversalObject]:
+        return [self._store[i] for i in ids if i in self._store]
+
+    def exists(self, id: ObjectId) -> bool:
+        return id in self._store
+
+    def delete(self, id: ObjectId) -> None:
+        self._store.pop(id, None)
+
+    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
+        return [o for o in self._store.values() if o.object_type == object_type]
+
+    def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
+        return [o for o in self._store.values() if o.status == status]
+
+    def find_related(
+        self, object_id: ObjectId, kind=None
+    ) -> list[ObjectId]:
+        obj = self._store.get(object_id)
+        if obj is None:
+            return []
+        return obj.related_ids(kind)
+
+    def find_by_metadata(
+        self, key: str, value: str | None = None
+    ) -> list[UniversalObject]:
+        out: list[UniversalObject] = []
+        for o in self._store.values():
+            v = o.metadata.get_value(key)
+            if v is not None and (value is None or v == value):
+                out.append(o)
+        return out
+
+
+def _input(**overrides) -> CreateObjectInput:
+    data = dict(
+        object_type=ObjectType.COURSE,
+        title="Introduction to Machine Learning",
+        created_by="faculty:1",
+        status=ObjectStatus.DRAFT,
+    )
+    data.update(overrides)
+    return CreateObjectInput(**data)
+
+
+def test_create_object_happy_path():
+    repo = InMemoryObjectRepository()
+    out = CreateObjectUseCase(repo).execute(CreateObjectCommand(input=_input()))
+
+    assert isinstance(out, CreateObjectOutput)
+    assert out.object_type == "course"
+    assert out.title == "Introduction to Machine Learning"
+    assert out.status == "draft"
+    assert out.version == 1
+    assert "ObjectCreated" in out.events
+    # Persisted via the repository interface
+    assert repo.exists(ObjectId.parse(out.id))
+
+
+def test_create_object_validation_error():
+    repo = InMemoryObjectRepository()
+    with pytest.raises(ValidationError):
+        CreateObjectUseCase(repo).execute(
+            CreateObjectCommand(input=_input(title="   "))
+        )
+
+
+def test_create_object_conflict_guard():
+    repo = InMemoryObjectRepository()
+    oid = ObjectId.generate(ObjectType.COURSE)
+    CreateObjectUseCase(repo).execute(
+        CreateObjectCommand(input=_input(object_id=oid))
+    )
+    with pytest.raises(ObjectAlreadyExistsError):
+        CreateObjectUseCase(repo).execute(
+            CreateObjectCommand(input=_input(object_id=oid))
+        )
+
+
+def test_create_object_metadata_roundtrip():
+    repo = InMemoryObjectRepository()
+    meta = Metadata(
+        entries=(
+            MetadataEntry(
+                "doi", "10.1000/ml101", MetadataLayer.L6_HUMAN_ASSERTED, Provenance.ASSERTED
+            ),
+        )
+    )
+    out = CreateObjectUseCase(repo).execute(
+        CreateObjectCommand(input=_input(metadata=meta))
+    )
+    got = GetObjectUseCase(repo).execute(
+        GetObjectQuery(object_id=ObjectId.parse(out.id))
+    )
+    assert got.metadata.get("doi") == "10.1000/ml101"
+
+
+def test_get_object_after_create():
+    repo = InMemoryObjectRepository()
+    out = CreateObjectUseCase(repo).execute(CreateObjectCommand(input=_input()))
+    got = GetObjectUseCase(repo).execute(
+        GetObjectQuery(object_id=ObjectId.parse(out.id))
+    )
+    assert got.id == out.id
+    assert got.title == out.title
+
+
+def test_get_object_not_found():
+    repo = InMemoryObjectRepository()
+    with pytest.raises(ObjectNotFoundError):
+        GetObjectUseCase(repo).execute(
+            GetObjectQuery(object_id=ObjectId.generate(ObjectType.COURSE))
+        )

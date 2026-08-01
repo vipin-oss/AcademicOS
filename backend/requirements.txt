@@ -1,0 +1,16 @@
+# AcademicOS backend — runtime dependencies
+# Stack (frozen): FastAPI · PostgreSQL · Qdrant · JWT
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+qdrant-client==1.11.0
+pyjwt==2.9.0
+python-multipart==0.0.12
+httpx==0.27.2
+
+# Development / tooling
+pytest==8.3.3
+ruff==0.6.9
