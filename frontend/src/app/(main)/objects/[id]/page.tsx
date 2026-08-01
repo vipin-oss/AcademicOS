@@ -25,6 +25,7 @@ import {
 import { ConfirmDialog } from "@/components/features/objects/ConfirmDialog";
 import { Section, SectionPlaceholder, DetailRow } from "@/components/features/objects/DetailSection";
 import { ObjectDocuments } from "@/components/features/documents/ObjectDocuments";
+import { ObjectPublications } from "@/components/features/publications/ObjectPublications";
 import { Spinner } from "@/components/features/objects/Spinner";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useObject } from "@/hooks/useObject";
@@ -271,6 +272,9 @@ export default function ObjectDetailsPage() {
                   />
                   <Section title="Documents">
                     <ObjectDocuments objectId={object.id} />
+                  </Section>
+                  <Section title="Publications">
+                    <ObjectPublications objectId={object.id} />
                   </Section>
                   <SectionPlaceholder
                     title="Activity"
