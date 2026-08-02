@@ -683,3 +683,228 @@ export interface CascadeDeleteResult {
   attendance_sessions?: number;
   unenrolled_students?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Research module (Projects & Grants management)
+// ---------------------------------------------------------------------------
+
+/** The 9-state research lifecycle (a type-specific state — metadata, §1.4). */
+export type ProjectLifecycleStatus =
+  | "draft"
+  | "proposal_submitted"
+  | "under_review"
+  | "approved"
+  | "funded"
+  | "active"
+  | "on_hold"
+  | "completed"
+  | "closed";
+
+export type ProjectPriority = "high" | "medium" | "low";
+export type MilestoneStatus = "pending" | "in_progress" | "done";
+export type InstallmentStatus = "scheduled" | "released";
+export type ResearchObjectStatus = "draft" | "active" | "archived";
+
+/** A denormalised linked Object in a research payload (typed edge). */
+export interface ResearchLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+/** Outgoing edges that live on the project aggregate. */
+export type ProjectLinkGroup = "agencies" | "committees";
+/** Outgoing edges that live on the grant aggregate. */
+export type GrantLinkGroup = "projects" | "funding_agencies";
+/** Team edges are written on the faculty/student aggregates. */
+export type ProjectTeamGroup =
+  | "principal_investigators"
+  | "co_investigators"
+  | "team_members";
+
+export interface ProjectMilestone {
+  id: string;
+  title: string;
+  date?: string | null;
+  status: MilestoneStatus;
+  notes?: string | null;
+}
+
+/** PART 8 progress log entry ({date, percent, remark}). */
+export interface ProjectProgressUpdate {
+  date: string;
+  percent: number;
+  remark: string;
+}
+
+/** PART 7 project-level MVP budget view. */
+export interface ProjectBudget {
+  approved: number | null;
+  utilized: number | null;
+  remaining: number | null;
+  /** Sum of released installments across the project's grant objects. */
+  grants_released: number | null;
+}
+
+/**
+ * Frontend mirror of the Research projects contract:
+ *   GET    /research/projects              -> ListProjectsResponse (PART 9 filters)
+ *   GET    /research/projects/{id}         -> ProjectResponse (enriched workspace)
+ *   POST   /research/projects              -> ProjectResponse (409 duplicate code)
+ *   PUT    /research/projects/{id}         -> ProjectResponse (merge + lifecycle)
+ *   DELETE /research/projects/{id}         -> 204 (milestones cascade)
+ *   POST   /research/projects/{id}/milestones / .../updates
+ *   GET    /research/projects?object_id=.. -> object lens
+ */
+export interface ProjectResponse {
+  id: string;
+  title: string;
+  status: ResearchObjectStatus;
+  lifecycle_status: ProjectLifecycleStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  project_code?: string | null;
+  department?: string | null;
+  grant_number?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  duration?: string | null;
+  budget_approved?: number | null;
+  budget_utilized?: number | null;
+  objectives?: string | null;
+  keywords: string[];
+  abstract?: string | null;
+  priority?: string | null;
+  notes?: string | null;
+  tags: string[];
+  progress_updates: ProjectProgressUpdate[];
+  links: Record<ProjectLinkGroup, ResearchLinkedObject[]>;
+  team: Record<ProjectTeamGroup, ResearchLinkedObject[]>;
+  milestones: ProjectMilestone[];
+  budget?: ProjectBudget | null;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListProjectsResponse {
+  items: ProjectResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface GrantInstallment {
+  id: string;
+  installment_no?: number | null;
+  date?: string | null;
+  amount?: number | null;
+  status: InstallmentStatus;
+  notes?: string | null;
+}
+
+export interface GrantExpenditure {
+  id: string;
+  date?: string | null;
+  head?: string | null;
+  amount?: number | null;
+  reference?: string | null;
+  notes?: string | null;
+}
+
+/** PART 7 grant budget view (approved/released/utilized/remaining). */
+export interface GrantBudget {
+  approved: number | null;
+  released: number | null;
+  utilized: number | null;
+  remaining: number | null;
+}
+
+/**
+ * Frontend mirror of the Research grants contract:
+ *   GET    /research/grants                -> ListGrantsResponse (q + lenses)
+ *   GET    /research/grants/{id}           -> GrantResponse (enriched)
+ *   POST   /research/grants                -> GrantResponse (409 duplicate number)
+ *   PUT    /research/grants/{id}           -> GrantResponse (merge)
+ *   DELETE /research/grants/{id}           -> 204 (children cascade)
+ *   POST   /research/grants/{id}/installments / .../expenditures
+ *   DELETE /research/installments/{id} / /expenditures/{id}
+ */
+export interface GrantResponse {
+  id: string;
+  title: string;
+  grant_number: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  amount?: number | null;
+  release_schedule?: string | null;
+  notes?: string | null;
+  links: Record<GrantLinkGroup, ResearchLinkedObject[]>;
+  installments: GrantInstallment[];
+  expenditures: GrantExpenditure[];
+  budget?: GrantBudget | null;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListGrantsResponse {
+  items: GrantResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/**
+ * Frontend mirror of the Funding Agency contract (registry — name unique):
+ *   GET/POST /research/agencies, GET/PUT/DELETE /research/agencies/{id}
+ */
+export interface AgencyResponse {
+  id: string;
+  name: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  website?: string | null;
+  scheme?: string | null;
+  contact_person?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListAgenciesResponse {
+  items: AgencyResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/** PART 10 dashboard card: one upcoming milestone with its project. */
+export interface ResearchUpcomingDeadline {
+  milestone_id: string;
+  title: string;
+  date?: string | null;
+  status: MilestoneStatus;
+  project_id: string;
+  project_title: string;
+}
+
+export interface ResearchDashboard {
+  total_projects: number;
+  active_projects: number;
+  completed_projects: number;
+  total_grants: number;
+  budget_approved: number;
+  budget_utilized: number;
+  upcoming_deadlines: ResearchUpcomingDeadline[];
+}

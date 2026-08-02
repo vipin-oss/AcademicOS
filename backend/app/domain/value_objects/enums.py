@@ -31,6 +31,11 @@ class ObjectType(str, Enum):
     ASSIGNMENT = "assignment"
     SUBMISSION = "submission"
     ATTENDANCE_SESSION = "attendance_session"
+    # Research projects & grants management (appended — same doctrine)
+    FUNDING_AGENCY = "funding_agency"
+    PROJECT_MILESTONE = "project_milestone"
+    GRANT_INSTALLMENT = "grant_installment"
+    GRANT_EXPENDITURE = "grant_expenditure"
     # Operations & governance
     MEETING = "meeting"
     COMMITTEE = "committee"
@@ -129,6 +134,9 @@ class RelationshipKind(str, Enum):
     TEACHES = "teaches"
     TAUGHT_BY = "taught_by"
     LEADS = "leads"
+    # Research projects & grants: the Co-PI edge (faculty CO_LEADS project),
+    # appended like every catalogue member before it
+    CO_LEADS = "co_leads"
     WORKS_IN = "works_in"
     ENROLLED_IN = "enrolled_in"
     ADVISED_BY = "advised_by"

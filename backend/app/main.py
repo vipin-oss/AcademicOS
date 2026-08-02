@@ -16,6 +16,7 @@ from app.api.routes.documents import router as documents_router
 from app.api.routes.health import router as health_router
 from app.api.routes.objects import router as objects_router
 from app.api.routes.publications import router as publications_router
+from app.api.routes.research import router as research_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(publications_router, prefix=settings.api_v1_prefix)
     app.include_router(students_router, prefix=settings.api_v1_prefix)
     app.include_router(teaching_router, prefix=settings.api_v1_prefix)
+    app.include_router(research_router, prefix=settings.api_v1_prefix)
     return app
 
 
