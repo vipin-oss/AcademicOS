@@ -1028,3 +1028,201 @@ export interface ListFacultyResponse {
   page: number;
   page_size: number;
 }
+
+// ---------------------------------------------------------------------------
+// Committees & Meetings module (governance)
+// ---------------------------------------------------------------------------
+
+/** Member roles (PART 2 — the closed vocabulary from the spec). */
+export type CommitteeRole =
+  | "chairperson"
+  | "convener"
+  | "coordinator"
+  | "member"
+  | "external_expert"
+  | "student_member"
+  | "observer"
+  | "nominee";
+
+export type MeetingMode = "offline" | "online" | "hybrid";
+export type AgendaItemPriority = "high" | "medium" | "low";
+export type AgendaItemStatus = "pending" | "discussed" | "decided" | "deferred";
+export type AttendanceStatus = "present" | "absent" | "leave";
+export type ActionPriority = "high" | "medium" | "low";
+export type ActionStatus = "pending" | "in_progress" | "done";
+
+/** A denormalised linked Object in a committee payload (related_to edges). */
+export interface CommitteeLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+/** PART 7 link groups written on the committee aggregate. */
+export type CommitteeLinkGroup = "projects" | "grants" | "students" | "publications";
+
+/** One resolved committee member (faculty/student backlink + role, PART 2). */
+export interface CommitteeMember {
+  id: string;
+  name: string;
+  object_type: string;
+  role: CommitteeRole;
+  start_date?: string | null;
+  end_date?: string | null;
+  remarks?: string | null;
+}
+
+/** A meeting row embedded in the committee workspace. */
+export interface CommitteeMeetingSummary {
+  id: string;
+  title: string;
+  meeting_number?: string | null;
+  meeting_date?: string | null;
+  venue?: string | null;
+  mode?: MeetingMode | null;
+  status: string;
+}
+
+export interface CommitteeStats {
+  meetings: number;
+  pending_actions: number;
+  completed_actions: number;
+}
+
+/**
+ * Frontend mirror of the Committees contract:
+ *   GET    /committees            -> ListCommitteesResponse (PART 9 search + filters)
+ *   GET    /committees/{id}       -> CommitteeResponse (enriched workspace)
+ *   POST   /committees            -> 201 (409 duplicate code / name+type+dept)
+ *   PUT    /committees/{id}       -> merge (members + links group-replace)
+ *   DELETE /committees/{id}       -> 204 (meetings + actions cascade)
+ */
+export interface CommitteeResponse {
+  id: string;
+  name: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  committee_code?: string | null;
+  committee_type?: string | null;
+  department?: string | null;
+  school?: string | null;
+  description?: string | null;
+  constitution_date?: string | null;
+  expiry_date?: string | null;
+  notes?: string | null;
+  tags: string[];
+  members: CommitteeMember[];
+  meetings: CommitteeMeetingSummary[];
+  links: Record<CommitteeLinkGroup, CommitteeLinkedObject[]>;
+  stats: CommitteeStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListCommitteesResponse {
+  items: CommitteeResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/** PART 4 agenda item ({title, priority?, presenter?, discussion?, decision?, status?, document_ids?}). */
+export interface AgendaItem {
+  title: string;
+  priority?: AgendaItemPriority | null;
+  presenter?: string | null;
+  discussion?: string | null;
+  decision?: string | null;
+  status?: AgendaItemStatus | null;
+  document_ids?: string[];
+  /** Resolved on read (GET): [{id, title}]. */
+  supporting_documents?: { id: string; title: string }[];
+}
+
+/** Meeting attendance entry ({object_id | name, status}) — denormalised on read. */
+export interface AttendanceEntry {
+  object_id?: string | null;
+  name: string;
+  object_type?: string;
+  status: AttendanceStatus;
+}
+
+/** PART 5 action item (a task child of the meeting). */
+export interface ActionItem {
+  id: string;
+  title: string;
+  status: ActionStatus;
+  assigned_to?: string | null;
+  assigned_name?: string | null;
+  due_date?: string | null;
+  priority?: ActionPriority | null;
+  progress: number;
+  completion_date?: string | null;
+  remarks?: string | null;
+  meeting?: CommitteeLinkedObject | null;
+  committee?: CommitteeLinkedObject | null;
+}
+
+export interface MeetingStats {
+  agenda_items: number;
+  pending_actions: number;
+  completed_actions: number;
+}
+
+/**
+ * Frontend mirror of the Meetings contract:
+ *   POST   /committees/{id}/meetings        -> 201 (409 number per committee)
+ *   GET    /committees/meetings/{id}        -> MeetingResponse (workspace)
+ *   PUT    /committees/meetings/{id}        -> MeetingResponse (merge)
+ *   DELETE /committees/meetings/{id}        -> 204 (actions cascade)
+ *   POST   /committees/meetings/{id}/actions / PUT/DELETE /committees/actions/{id}
+ */
+export interface MeetingResponse {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  meeting_number?: string | null;
+  meeting_date?: string | null;
+  venue?: string | null;
+  mode?: MeetingMode | null;
+  agenda_items: AgendaItem[];
+  minutes?: string | null;
+  attendance: AttendanceEntry[];
+  decisions: string[];
+  remarks?: string | null;
+  committee?: CommitteeLinkedObject | null;
+  action_items: ActionItem[];
+  stats: MeetingStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+/** A dashboard upcoming-meeting row (with the committee denormalised). */
+export interface UpcomingMeeting {
+  meeting_id: string;
+  committee_id: string;
+  committee_title: string;
+  title: string;
+  meeting_number?: string | null;
+  date: string;
+  venue?: string | null;
+  mode?: string | null;
+}
+
+/** PART 8 dashboard payload. */
+export interface CommitteesDashboard {
+  total_committees: number;
+  active_committees: number;
+  meetings_this_month: number;
+  pending_actions: number;
+  completed_actions: number;
+  upcoming_meetings: UpcomingMeeting[];
+}
