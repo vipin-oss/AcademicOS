@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Search, Calendar, Settings } from "lucide-react";
+import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Wallet, Search, Calendar, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** `href: null` = module not built yet; rendered as a disabled item. */
@@ -16,6 +16,7 @@ const NAV = [
   { label: "Research", icon: FlaskConical, href: "/research" },
   { label: "Faculty", icon: Briefcase, href: "/faculty" },
   { label: "Committees", icon: UsersRound, href: "/committees" },
+  { label: "Finance", icon: Wallet, href: "/finance" },
   { label: "Search", icon: Search, href: null },
   { label: "Events", icon: Calendar, href: null },
   { label: "Settings", icon: Settings, href: null },

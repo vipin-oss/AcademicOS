@@ -1226,3 +1226,271 @@ export interface CommitteesDashboard {
   completed_actions: number;
   upcoming_meetings: UpcomingMeeting[];
 }
+
+// ---------------------------------------------------------------------------
+// Finance & Procurement module (procurement governance)
+// ---------------------------------------------------------------------------
+
+export type ProposalStatus =
+  | "draft"
+  | "submitted"
+  | "under_review"
+  | "approved"
+  | "rejected"
+  | "ordered"
+  | "completed"
+  | "cancelled";
+
+export type ProposalPriority = "high" | "medium" | "low";
+export type PurchaseOrderStatus =
+  | "issued"
+  | "acknowledged"
+  | "partially_received"
+  | "delivered"
+  | "closed"
+  | "cancelled";
+export type PaymentStatus = "pending" | "partial" | "paid";
+export type ComplianceValue = "compliant" | "non_compliant" | "conditional";
+export type AssetStatus = "in_service" | "in_store" | "under_maintenance" | "retired";
+export type AssetCategory =
+  | "equipment"
+  | "furniture"
+  | "computer"
+  | "laboratory"
+  | "library"
+  | "vehicle"
+  | "software"
+  | "other";
+
+/** One linked document resolved on a section row (documents integration). */
+export interface SupportingDocumentRef {
+  id: string;
+  title: string;
+}
+
+/** PART 4 quotation row (vendor resolved server-side). */
+export interface QuotationRow {
+  vendor_id?: string;
+  vendor_name?: string;
+  quotation_date?: string;
+  amount?: string;
+  validity_date?: string;
+  document_ids?: string[];
+  supporting_documents?: SupportingDocumentRef[];
+  remarks?: string;
+}
+
+/** PART 5 comparative-statement row. */
+export interface ComparativeRow {
+  vendor_id?: string;
+  vendor_name?: string;
+  amount?: string;
+  technical_compliance?: ComplianceValue;
+  financial_compliance?: ComplianceValue;
+  recommended?: boolean;
+  remarks?: string;
+}
+
+/** PART 6 purchase-order row. */
+export interface PurchaseOrderRow {
+  po_number?: string;
+  po_date?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  amount?: string;
+  status?: PurchaseOrderStatus;
+  delivery_date?: string;
+  document_ids?: string[];
+  supporting_documents?: SupportingDocumentRef[];
+  remarks?: string;
+}
+
+/** PART 7 bill/invoice row. */
+export interface BillRow {
+  bill_number?: string;
+  invoice_number?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  bill_date?: string;
+  amount?: string;
+  gst_amount?: string;
+  payment_status?: PaymentStatus;
+  paid_date?: string;
+  po_number?: string;
+  document_ids?: string[];
+  supporting_documents?: SupportingDocumentRef[];
+  remarks?: string;
+}
+
+/** PART 8 asset row (also surfaced via the register lens). */
+export interface AssetRow {
+  asset_id?: string;
+  category?: AssetCategory;
+  item_name?: string;
+  serial_number?: string;
+  location?: string;
+  assigned_to?: string;
+  warranty_expiry?: string;
+  purchase_date?: string;
+  cost?: string;
+  status?: AssetStatus;
+  po_number?: string;
+  vendor_name?: string;
+  remarks?: string;
+}
+
+export interface BankDetails {
+  bank_name?: string;
+  account_number?: string;
+  ifsc?: string;
+  branch?: string;
+}
+
+export interface VendorStats {
+  proposals: number;
+  purchase_orders: number;
+  pending_bills: number;
+  spent: number;
+}
+
+/** A denormalised linked Object in a proposal payload (related_to edges). */
+export interface ProposalLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+export type ProposalLinkGroup = "projects" | "grants" | "committees";
+
+/** The resolved PART 2 approval meeting pointer. */
+export interface ApprovalMeetingRef {
+  id: string;
+  title: string;
+  meeting_number?: string | null;
+  meeting_date?: string | null;
+  mode?: string | null;
+  venue?: string | null;
+}
+
+export interface ProposalStats {
+  quotations: number;
+  purchase_orders: number;
+  bills: number;
+  pending_bills: number;
+  committed: number;
+  spent: number;
+  assets: number;
+}
+
+export interface ProposalResponse {
+  id: string;
+  title: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  proposal_number?: string | null;
+  department?: string | null;
+  requested_by?: string | null;
+  requested_name?: string | null;
+  proposal_date?: string | null;
+  purpose?: string | null;
+  budget_head?: string | null;
+  estimated_cost?: number | null;
+  proposal_status: ProposalStatus;
+  priority?: ProposalPriority | null;
+  notes?: string | null;
+  tags: string[];
+  approval_meeting_id?: string | null;
+  approval_meeting?: ApprovalMeetingRef | null;
+  minutes?: string | null;
+  recommendations?: string | null;
+  quotations: QuotationRow[];
+  comparative: ComparativeRow[];
+  purchase_orders: PurchaseOrderRow[];
+  bills: BillRow[];
+  assets: AssetRow[];
+  links: Record<ProposalLinkGroup, ProposalLinkedObject[]>;
+  stats: ProposalStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListProposalsResponse {
+  items: ProposalResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface VendorResponse {
+  id: string;
+  name: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  gst_number?: string | null;
+  pan?: string | null;
+  contact_person?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  bank_details: BankDetails;
+  notes?: string | null;
+  tags: string[];
+  stats: VendorStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListVendorsResponse {
+  items: VendorResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/** PART 11 dashboard cards (computed server-side). */
+export interface FinanceDashboard {
+  active_procurements: number;
+  pending_approvals: number;
+  total_vendors: number;
+  total_purchase_orders: number;
+  budget_utilized: number;
+  budget_remaining?: number | null;
+  pending_bills: number;
+}
+
+/** PART 9 per-project budget tracking line (computed read). */
+export interface BudgetLine {
+  project_id: string;
+  title: string;
+  approved?: number | null;
+  released: number;
+  utilized: number;
+  remaining?: number | null;
+  proposals: number;
+  spent: number;
+}
+
+export interface ListBudgetsResponse {
+  items: BudgetLine[];
+}
+
+export interface AssetRegisterRow {
+  proposal_id: string;
+  proposal_number?: string | null;
+  proposal_title: string;
+  row: AssetRow;
+}
+
+export interface ListAssetRegisterResponse {
+  items: AssetRegisterRow[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}

@@ -15,6 +15,7 @@ from app.core.logging import logger
 from app.api.routes.documents import router as documents_router
 from app.api.routes.committees import router as committees_router
 from app.api.routes.faculty import router as faculty_router
+from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
 from app.api.routes.objects import router as objects_router
 from app.api.routes.publications import router as publications_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(teaching_router, prefix=settings.api_v1_prefix)
     app.include_router(research_router, prefix=settings.api_v1_prefix)
     app.include_router(committees_router, prefix=settings.api_v1_prefix)
+    app.include_router(finance_router, prefix=settings.api_v1_prefix)
     return app
 
 

@@ -43,6 +43,9 @@ class ObjectType(str, Enum):
     TASK = "task"
     PURCHASE = "purchase"
     BUDGET = "budget"
+    # Finance & procurement management (appended — same doctrine: the
+    # catalogue grows over the product's life; no existing member changed)
+    VENDOR = "vendor"
     # Scholarly artefacts
     DOCUMENT = "document"
     JOURNAL = "journal"
