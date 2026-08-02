@@ -26,6 +26,11 @@ class ObjectType(str, Enum):
     RESEARCH_PROJECT = "research_project"
     PUBLICATION = "publication"
     GRANT = "grant"
+    # Teaching & student management (appended — the catalogue grows over the
+    # product's life; no existing member changed)
+    ASSIGNMENT = "assignment"
+    SUBMISSION = "submission"
+    ATTENDANCE_SESSION = "attendance_session"
     # Operations & governance
     MEETING = "meeting"
     COMMITTEE = "committee"

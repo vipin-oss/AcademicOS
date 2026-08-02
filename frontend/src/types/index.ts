@@ -282,3 +282,404 @@ export interface DoiLookupRecord {
   abstract?: string | null;
   publisher_url?: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Students module (Teaching & Student Management — PART A)
+// ---------------------------------------------------------------------------
+
+export type StudentStatus = "draft" | "active" | "archived";
+
+/** The registry taxonomy: undergraduate / postgraduate / doctoral / alumni. */
+export type StudentTypeValue = "ug" | "pg" | "phd" | "alumni";
+
+/** The student-side "Linked X" panes (typed relationship edges). */
+export type StudentLinkGroup =
+  | "supervisors"
+  | "co_supervisors"
+  | "projects"
+  | "grants"
+  | "committees"
+  | "events";
+
+/** A denormalised linked Object in a student's `links` payload. */
+export interface StudentLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  /** The typed edge (supervised_by / advised_by / works_in / …). */
+  kind: string;
+}
+
+/**
+ * Frontend mirror of the Students contract (StudentResponseModel):
+ *   GET    /students              -> ListStudentsResponse
+ *   GET    /students/{id}         -> StudentResponse
+ *   POST   /students              -> StudentResponse (409 on duplicate roll/enrollment)
+ *   PUT    /students/{id}         -> StudentResponse
+ *   DELETE /students/{id}         -> 204
+ *   GET    /students?object_id=.. -> ListStudentsResponse (object lens)
+ *   GET    /students/export       -> CSV download
+ *   POST   /students/import       -> StudentImportResult
+ */
+export interface StudentResponse {
+  id: string;
+  name: string;
+  student_type: StudentTypeValue;
+  status: StudentStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  roll_number?: string | null;
+  registration_number?: string | null;
+  university_enrollment?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  programme?: string | null;
+  department?: string | null;
+  semester?: number | null;
+  section?: string | null;
+  batch?: string | null;
+  admission_date?: string | null;
+  expected_graduation?: string | null;
+  research_area?: string | null;
+  orcid?: string | null;
+  google_scholar?: string | null;
+  notes?: string | null;
+  tags: string[];
+  links: Record<StudentLinkGroup, StudentLinkedObject[]>;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListStudentsResponse {
+  items: StudentResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface StudentImportResult {
+  created: string[];
+  skipped_duplicates: { index: number; name?: string; roll_number?: string; message: string }[];
+  errors: { index: number; name?: string; message: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Teaching module (classes → assignments → submissions → marks → attendance)
+// ---------------------------------------------------------------------------
+
+export type ClassStatus = "draft" | "active" | "archived";
+export type ClassMode = "offline" | "online" | "blended";
+export type ClassLinkGroup = "teachers" | "departments";
+
+export interface WeeklySlot {
+  day: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+  start?: string;
+  end?: string;
+}
+
+export interface ClassLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+export interface ClassResponse {
+  id: string;
+  title: string;
+  status: ClassStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  course_code?: string | null;
+  programme?: string | null;
+  semester?: number | null;
+  section?: string | null;
+  session?: string | null;
+  credits?: number | null;
+  weekly_schedule: WeeklySlot[];
+  room?: string | null;
+  class_mode?: ClassMode | null;
+  notes?: string | null;
+  tags: string[];
+  student_count: number;
+  links: Record<ClassLinkGroup, ClassLinkedObject[]>;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListClassesResponse {
+  items: ClassResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface RosterEntry {
+  student_id: string;
+  name: string;
+  roll_number?: string | null;
+  email?: string | null;
+  programme?: string | null;
+  semester?: number | null;
+  section?: string | null;
+  student_type?: string | null;
+}
+
+export interface EnrollmentResult {
+  enrolled: string[];
+  already_enrolled: string[];
+  errors: { student_id?: string; index?: number; roll_number?: string; message: string }[];
+}
+
+/** PART D vocabulary: assignment / quiz / internal / mid sem / end sem. */
+export type AssignmentTypeValue =
+  | "assignment"
+  | "quiz"
+  | "internal_assessment"
+  | "mid_semester"
+  | "end_semester";
+
+export type AssignmentVisibility = "visible" | "hidden";
+
+export interface RubricCriterion {
+  criterion: string;
+  marks?: number;
+}
+
+export interface AssignmentResponse {
+  id: string;
+  title: string;
+  class_id: string;
+  class_title?: string | null;
+  assignment_type: AssignmentTypeValue;
+  status: ClassStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  max_marks?: number | null;
+  deadline?: string | null;
+  late_allowed: boolean;
+  rubric: RubricCriterion[];
+  visibility: AssignmentVisibility;
+  weightage?: number | null;
+  attachment_file_name?: string | null;
+  attachment_file_size: number;
+  attachment_mime_type?: string | null;
+  attachment_url?: string | null;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListAssignmentsResponse {
+  items: AssignmentResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface RubricScore {
+  criterion: string;
+  marks_awarded?: number;
+}
+
+export interface SubmissionResponse {
+  id: string;
+  assignment_id: string;
+  student_id: string;
+  student_name?: string | null;
+  student_roll?: string | null;
+  submitted_at?: string | null;
+  is_late: boolean;
+  comments?: string | null;
+  marks?: number | null;
+  faculty_feedback?: string | null;
+  rubric_score: RubricScore[];
+  graded_at?: string | null;
+  graded_by?: string | null;
+  file_name?: string | null;
+  file_size: number;
+  file_mime_type?: string | null;
+  file_url?: string | null;
+  status: string;
+  version: number;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListSubmissionsResponse {
+  items: SubmissionResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/** PART E grid: one row per roster student (pending rows are virtual). */
+export type SubmissionGridState = "submitted" | "late" | "pending" | "graded";
+
+export interface SubmissionGridRow {
+  student_id: string;
+  student_name: string;
+  student_roll?: string | null;
+  state: SubmissionGridState;
+  submission?: SubmissionResponse | null;
+}
+
+export interface SubmissionGrid {
+  assignment_id: string;
+  rows: SubmissionGridRow[];
+  submitted_count: number;
+  late_count: number;
+  pending_count: number;
+  graded_count: number;
+}
+
+export interface MarksImportResult {
+  assignment_id: string;
+  graded: string[];
+  created_submissions: string[];
+  errors: { index: number; roll_number?: string; message: string }[];
+}
+
+/** PART I vocabulary. */
+export type AttendanceState = "present" | "absent" | "late" | "medical_leave";
+
+export interface AttendanceSessionResponse {
+  id: string;
+  class_id: string;
+  session_date: string;
+  records: Record<string, AttendanceState>;
+  status: string;
+  version: number;
+  events?: string[];
+}
+
+export interface AttendanceImportResult {
+  class_id: string;
+  session_date: string;
+  applied: string[];
+  unknown: { index: number; roll_number?: string; message: string }[];
+  errors: { index: number; roll_number?: string; message: string }[];
+}
+
+export interface AttendanceSummaryRow {
+  student_id: string;
+  student_name: string;
+  student_roll?: string | null;
+  present: number;
+  absent: number;
+  late: number;
+  medical_leave: number;
+  effective_present: number;
+  total: number;
+  percentage: number;
+  below_threshold: boolean;
+}
+
+export interface AttendanceSummary {
+  class_id: string;
+  session_count: number;
+  threshold: number;
+  rows: AttendanceSummaryRow[];
+}
+
+/** PART H — the computed gradebook. */
+export interface GradebookAssignmentHeader {
+  id: string;
+  title: string;
+  assignment_type: AssignmentTypeValue;
+  max_marks?: number | null;
+  weightage?: number | null;
+}
+
+export interface GradebookCell {
+  assignment_id: string;
+  title: string;
+  assignment_type: AssignmentTypeValue;
+  max_marks?: number | null;
+  weightage?: number | null;
+  marks?: number | null;
+  is_late: boolean;
+}
+
+export interface GradebookRow {
+  student_id: string;
+  student_name: string;
+  student_roll?: string | null;
+  cells: GradebookCell[];
+  internal_total: number;
+  internal_max: number;
+  grade: string;
+  average_percent: number;
+}
+
+export interface Gradebook {
+  class_id: string;
+  assignments: GradebookAssignmentHeader[];
+  rows: GradebookRow[];
+}
+
+export interface AssignmentStat {
+  assignment_id: string;
+  title: string;
+  assignment_type: AssignmentTypeValue;
+  max_marks?: number | null;
+  deadline?: string | null;
+  submitted: number;
+  late: number;
+  pending: number;
+  graded: number;
+  average_marks?: number | null;
+}
+
+export interface StudentSignal {
+  student_id: string;
+  name: string;
+  roll_number?: string | null;
+  average_marks_percent: number;
+  attendance_percent?: number | null;
+  class_id?: string;
+  class_title?: string;
+  reasons?: string[];
+}
+
+/** PART K — the AI-report-ready class payload. */
+export interface ClassReport {
+  class_info: ClassResponse;
+  roster: RosterEntry[];
+  assignment_stats: AssignmentStat[];
+  gradebook: Gradebook;
+  attendance: AttendanceSummary;
+  average_marks_percent?: number | null;
+  pending_submissions: number;
+  late_submissions: number;
+  weak_students: StudentSignal[];
+  top_performers: StudentSignal[];
+}
+
+/** PART J — the faculty dashboard. */
+export interface TeachingDashboard {
+  class_count: number;
+  student_count: number;
+  assignment_count: number;
+  pending_submissions: number;
+  late_submissions: number;
+  graded_submissions: number;
+  average_marks_percent?: number | null;
+  weak_students: StudentSignal[];
+  top_performers: StudentSignal[];
+  classes: ClassResponse[];
+}
+
+export interface CascadeDeleteResult {
+  assignments?: number;
+  submissions?: number;
+  attendance_sessions?: number;
+  unenrolled_students?: number;
+}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Search, Calendar, Settings } from "lucide-react";
+import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Users, Presentation, Search, Calendar, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** `href: null` = module not built yet; rendered as a disabled item. */
@@ -11,6 +11,8 @@ const NAV = [
   { label: "Objects", icon: Boxes, href: "/objects" },
   { label: "Documents", icon: FileText, href: "/documents" },
   { label: "Publications", icon: BookOpen, href: "/publications" },
+  { label: "Students", icon: Users, href: "/students" },
+  { label: "Teaching", icon: Presentation, href: "/teaching" },
   { label: "Search", icon: Search, href: null },
   { label: "Events", icon: Calendar, href: null },
   { label: "Settings", icon: Settings, href: null },
