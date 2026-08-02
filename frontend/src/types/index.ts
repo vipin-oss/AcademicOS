@@ -908,3 +908,123 @@ export interface ResearchDashboard {
   budget_utilized: number;
   upcoming_deadlines: ResearchUpcomingDeadline[];
 }
+
+// ---------------------------------------------------------------------------
+// Faculty module (Faculty Management)
+// ---------------------------------------------------------------------------
+
+/** Employment type vocabulary (PART 1 — guidance, not a closed enum). */
+export type FacultyEmploymentType = "regular" | "contract" | "visiting" | "adjunct";
+
+/** A denormalised linked Object in a faculty payload (typed edge). */
+export interface FacultyLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+/** One row of an academic profile section (PART 2 — {degree, institution, year} etc.). */
+export type FacultySectionEntry = Record<string, string>;
+
+/** A supervised student: the linked object + the student-type lens (PART 4). */
+export interface FacultySupervisionEntry extends FacultyLinkedObject {
+  student_type?: string | null;
+}
+
+/** A taught class: the linked object + the teaching-load fields (PART 5). */
+export interface FacultyTeachingClass extends FacultyLinkedObject {
+  course_code?: string | null;
+  programme?: string | null;
+  semester?: number | null;
+  credits?: number | null;
+  weekly_hours: number;
+}
+
+/** PART 6 dashboard cards (computed by the backend, never client-side). */
+export interface FacultyStats {
+  publications: number;
+  active_projects: number;
+  grants: number;
+  students_supervised: number;
+  courses: number;
+  committees: number;
+}
+
+/**
+ * Frontend mirror of the Faculty contract:
+ *   GET    /faculty              -> ListFacultyResponse (PART 7 search + filters)
+ *   GET    /faculty/{id}         -> FacultyResponse (enriched workspace)
+ *   POST   /faculty              -> FacultyResponse (409 duplicate employee id/code)
+ *   PUT    /faculty/{id}         -> FacultyResponse (merge — provided keys replace)
+ *   DELETE /faculty/{id}         -> 204
+ *   PUT    /faculty/{id}/photo   -> FacultyResponse (profile photo, image/*)
+ *   GET    /faculty/{id}/photo   -> the photo blob
+ */
+export interface FacultyResponse {
+  id: string;
+  name: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  employee_id?: string | null;
+  faculty_code?: string | null;
+  designation?: string | null;
+  department?: string | null;
+  school?: string | null;
+  joining_date?: string | null;
+  employment_type?: FacultyEmploymentType | null;
+  email?: string | null;
+  mobile?: string | null;
+  office?: string | null;
+  qualification?: string | null;
+  specialization?: string | null;
+  research_interests: string[];
+  biography?: string | null;
+  orcid?: string | null;
+  scopus_id?: string | null;
+  google_scholar?: string | null;
+  researchgate?: string | null;
+  website?: string | null;
+  notes?: string | null;
+  tags: string[];
+  // Academic profile sections (PART 2)
+  degrees: FacultySectionEntry[];
+  experience: FacultySectionEntry[];
+  awards: FacultySectionEntry[];
+  memberships: FacultySectionEntry[];
+  certifications: FacultySectionEntry[];
+  admin_positions: FacultySectionEntry[];
+  // Profile photo facts (L2)
+  photo_file_name?: string | null;
+  photo_file_size: number;
+  photo_mime_type?: string | null;
+  photo_url?: string | null;
+  // Edges the module owns
+  links: Record<"committees", FacultyLinkedObject[]>;
+  // Derived lenses (PART 3/4/5)
+  research: {
+    projects: FacultyLinkedObject[];
+    grants: FacultyLinkedObject[];
+  };
+  supervision: {
+    current: FacultySupervisionEntry[];
+    completed: FacultySupervisionEntry[];
+  };
+  teaching: {
+    classes: FacultyTeachingClass[];
+    total_weekly_hours: number;
+  };
+  stats: FacultyStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListFacultyResponse {
+  items: FacultyResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
