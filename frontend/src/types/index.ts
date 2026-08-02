@@ -1494,3 +1494,197 @@ export interface ListAssetRegisterResponse {
   page: number;
   page_size: number;
 }
+
+// ---------------------------------------------------------------------------
+// Events & Academic Activities module (personal academic activity registry)
+// ---------------------------------------------------------------------------
+
+export type EventType =
+  | "conference"
+  | "workshop"
+  | "seminar"
+  | "webinar"
+  | "fdp"
+  | "sttp"
+  | "expert_lecture"
+  | "guest_lecture"
+  | "invited_talk"
+  | "mathematics_day"
+  | "science_day"
+  | "orientation_programme"
+  | "training_programme"
+  | "industry_visit"
+  | "club_activity"
+  | "research_colloquium"
+  | "outreach_activity"
+  | "competition"
+  | "custom";
+
+export type EventStatus =
+  | "planned"
+  | "ongoing"
+  | "postponed"
+  | "completed"
+  | "cancelled";
+export type EventMode = "online" | "offline" | "hybrid";
+export type EventPriority = "high" | "medium" | "low";
+
+/** PART 2 "My Participation" role vocabulary. */
+export type ParticipationRole =
+  | "organizer"
+  | "coordinator"
+  | "convener"
+  | "speaker"
+  | "session_chair"
+  | "participant"
+  | "volunteer"
+  | "resource_person"
+  | "chief_guest"
+  | "judge"
+  | "attendee";
+
+/** PART 8 event ↔ publication link relation vocabulary. */
+export type PresentationRelation =
+  | "presented_paper"
+  | "published_proceedings"
+  | "best_paper_award"
+  | "poster_presentation";
+
+/** One linked document resolved on a section row (documents integration). */
+export interface EventDocumentRef {
+  id: string;
+  title: string;
+}
+
+/** PART 2 participation row (certificate resolved server-side). */
+export interface ParticipationRow {
+  role?: ParticipationRole;
+  contribution?: string;
+  certificate_document_id?: string;
+  certificate?: EventDocumentRef;
+  remarks?: string;
+}
+
+/** PART 3 speaker directory row (`row_id` is server-minted when absent). */
+export interface SpeakerRow {
+  row_id?: string;
+  name?: string;
+  affiliation?: string;
+  designation?: string;
+  email?: string;
+  phone?: string;
+  biography?: string;
+  photo_document_id?: string;
+  photo?: EventDocumentRef;
+  document_ids?: string[];
+  supporting_documents?: EventDocumentRef[];
+}
+
+/** PART 4 schedule session row (speaker resolved from the speakers list). */
+export interface ScheduleRow {
+  title?: string;
+  session_date?: string;
+  start_time?: string;
+  end_time?: string;
+  speaker_id?: string;
+  speaker_name?: string;
+  venue?: string;
+  chairperson?: string;
+  remarks?: string;
+}
+
+/** PART 5 registration counters. */
+export interface EventRegistration {
+  expected_participants: number;
+  registered: number;
+  present: number;
+  certificates_issued: number;
+}
+
+/** PART 8 publication link row (title resolved server-side). */
+export interface PresentationRow {
+  publication_id?: string;
+  publication_title?: string;
+  relation?: PresentationRelation;
+  remarks?: string;
+}
+
+/** A denormalised linked Object in an event payload (related_to edges). */
+export interface EventLinkedObject {
+  id: string;
+  title: string;
+  object_type: string;
+  kind: string;
+}
+
+export type EventLinkGroup =
+  | "faculty"
+  | "students"
+  | "projects"
+  | "grants"
+  | "committees"
+  | "publications";
+/** Groups accepted on the wire (`presentations` rows drive publications). */
+export type EventInputLinkGroup = Exclude<EventLinkGroup, "publications">;
+
+export interface EventStats {
+  participation: number;
+  speakers: number;
+  sessions: number;
+  presentations: number;
+  certificates: number;
+}
+
+export interface EventResponse {
+  id: string;
+  title: string;
+  status: ResearchObjectStatus;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at?: string | null;
+  event_code?: string | null;
+  event_type?: EventType | null;
+  organizer?: string | null;
+  co_organizer?: string | null;
+  venue?: string | null;
+  mode?: EventMode | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  department?: string | null;
+  school?: string | null;
+  description?: string | null;
+  objectives?: string | null;
+  outcome?: string | null;
+  event_status: EventStatus;
+  priority?: EventPriority | null;
+  notes?: string | null;
+  tags: string[];
+  participation: ParticipationRow[];
+  speakers: SpeakerRow[];
+  schedule: ScheduleRow[];
+  registration: EventRegistration;
+  presentations: PresentationRow[];
+  links: Record<EventLinkGroup, EventLinkedObject[]>;
+  stats: EventStats;
+  metadata?: Record<string, string>;
+  events?: string[];
+}
+
+export interface ListEventsResponse {
+  items: EventResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+/** PART 9 dashboard cards (computed server-side). */
+export interface EventsDashboard {
+  upcoming_events: number;
+  completed_events: number;
+  events_organized: number;
+  events_attended: number;
+  certificates: number;
+  presentations: number;
+  invited_talks: number;
+}

@@ -14,6 +14,7 @@ from app.core.exceptions import AcademicosError
 from app.core.logging import logger
 from app.api.routes.documents import router as documents_router
 from app.api.routes.committees import router as committees_router
+from app.api.routes.events import router as events_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(research_router, prefix=settings.api_v1_prefix)
     app.include_router(committees_router, prefix=settings.api_v1_prefix)
     app.include_router(finance_router, prefix=settings.api_v1_prefix)
+    app.include_router(events_router, prefix=settings.api_v1_prefix)
     return app
 
 

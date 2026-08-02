@@ -18,7 +18,7 @@ const NAV = [
   { label: "Committees", icon: UsersRound, href: "/committees" },
   { label: "Finance", icon: Wallet, href: "/finance" },
   { label: "Search", icon: Search, href: null },
-  { label: "Events", icon: Calendar, href: null },
+  { label: "Events", icon: Calendar, href: "/events" },
   { label: "Settings", icon: Settings, href: null },
 ] as const;
 
