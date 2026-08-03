@@ -1688,3 +1688,80 @@ export interface EventsDashboard {
   presentations: number;
   invited_talks: number;
 }
+
+// ---------------------------------------------------------------------------
+// Reports & Analytics (read-only; everything computed server-side)
+// ---------------------------------------------------------------------------
+
+/** PART 1 dashboard cards (computed read over every module). */
+export interface ReportsDashboard {
+  total_publications: number;
+  total_projects: number;
+  total_grants: number;
+  total_students: number;
+  total_classes: number;
+  total_faculty: number;
+  total_committees: number;
+  total_events: number;
+  budget_approved: number;
+  budget_utilized: number;
+  budget_remaining: number;
+}
+
+/** PART 12 filters (all optional; each report kind honours a documented
+ * subset — see `REPORT_KINDS` in `lib/reports/constants`). */
+export interface ReportFilters {
+  year?: string;          // e.g. "2026" (string on the wire; server narrows)
+  date_from?: string;     // ISO YYYY-MM-DD, inclusive
+  date_to?: string;       // ISO YYYY-MM-DD, inclusive
+  faculty_id?: string;
+  student_id?: string;
+  project_id?: string;
+  grant_id?: string;
+  department?: string;
+  event_id?: string;
+  committee_id?: string;
+}
+
+export interface ReportKpi {
+  label: string;
+  value: string;
+}
+
+export interface ReportTable {
+  key: string;
+  title: string;
+  columns: string[];
+  rows: string[][];
+  /** Optional per-cell module hrefs; `null` = plain text cell (frontend only). */
+  hrefs?: (string | null)[][] | null;
+}
+
+export interface ReportChartSeries {
+  name: string;
+  data: number[];
+}
+
+export interface ReportChart {
+  key: string;
+  title: string;
+  kind: "bar" | "line";
+  labels: string[];
+  series: ReportChartSeries[];
+}
+
+/** The computed report — the workspace payload and the export source. */
+export interface ReportView {
+  kind: string;
+  title: string;
+  generated_at: string;
+  applied_filters: Record<string, string>;
+  kpis: ReportKpi[];
+  tables: ReportTable[];
+  charts: ReportChart[];
+}
+
+/** The module catalogue: report kinds + which PART 12 filters each honours. */
+export interface ReportsCatalogue {
+  kinds: { key: string; title: string; filters: string[] }[];
+}
