@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Wallet, Search, Calendar, Settings, BarChart3, CalendarCheck } from "lucide-react";
+import { GraduationCap, LayoutDashboard, Boxes, FileText, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Wallet, Search, Calendar, Settings, BarChart3, CalendarCheck, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** `href: null` = module not built yet; rendered as a disabled item. */
 const NAV = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/" },
+  { label: "Assistant", icon: Sparkles, href: "/assistant" },
   { label: "Productivity", icon: CalendarCheck, href: "/productivity" },
   { label: "Objects", icon: Boxes, href: "/objects" },
   { label: "Documents", icon: FileText, href: "/documents" },

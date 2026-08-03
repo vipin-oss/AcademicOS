@@ -18,6 +18,7 @@ from app.api.routes.events import router as events_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.productivity import router as productivity_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.assistant import router as assistant_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(reports_router, prefix=settings.api_v1_prefix)
     app.include_router(productivity_router, prefix=settings.api_v1_prefix)
     app.include_router(settings_router, prefix=settings.api_v1_prefix)
+    app.include_router(assistant_router, prefix=settings.api_v1_prefix)
     return app
 
 

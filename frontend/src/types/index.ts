@@ -2078,3 +2078,108 @@ export interface ProfilePhotoInfo {
   mime_type: string;
   size_bytes: number;
 }
+
+/* --------------------------------------------------------------------------
+ * Module 13 — Academic Intelligence Assistant
+ *
+ * Mirrors `application/dtos/assistant.py` field-for-field. Conversations are
+ * universal objects; answers are the deterministic contract the rule-based
+ * provider produces — a future sanctioned LLM adapter must honour the same
+ * shape (application/ports/assistant_provider.py).
+ * ----------------------------------------------------------------------- */
+
+/** Suggested next step under an answer (module buttons vs plain links). */
+export interface AssistantAction {
+  label: string;
+  href: string;
+  kind: "link" | "module";
+}
+
+/** Linked context card (PART 4): Publication → Project → Grant → Faculty … */
+export interface AssistantCard {
+  object_id: string;
+  object_type: string;
+  title: string;
+  subtitle: string | null;
+  href: string;
+  badge: string | null;
+  stats: Record<string, string>;
+}
+
+/** One raw list row inside an answer (used for flat lists like decisions). */
+export interface AssistantAnswerItem {
+  title: string;
+  subtitle?: string | null;
+  href?: string | null;
+}
+
+/** The deterministic answer contract (PARTS 3..5 surface). */
+export interface AssistantAnswer {
+  intent: string;
+  intent_label: string;
+  question: string;
+  summary: string;
+  metrics: Record<string, string>;
+  items: AssistantAnswerItem[];
+  cards: AssistantCard[];
+  actions: AssistantAction[];
+  sources: string[];
+}
+
+export interface AssistantMessage {
+  seq: number;
+  role: "user" | "assistant" | string;
+  content: string;
+  created_at: string;
+  answer: AssistantAnswer | null;
+}
+
+export interface AssistantConversation {
+  id: string;
+  title: string;
+  pinned: boolean;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string | null;
+  version: number;
+}
+
+export interface ConversationDetail {
+  conversation: AssistantConversation;
+  messages: AssistantMessage[];
+}
+
+export interface ConversationListResult {
+  items: AssistantConversation[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface SuggestedPrompt {
+  group: string;
+  question: string;
+  intent: string;
+}
+
+/** `GET /assistant/home` — AI Home payload (PART 1). */
+export interface AssistantHome {
+  suggested: SuggestedPrompt[];
+  recent: AssistantConversation[];
+  pinned: AssistantConversation[];
+  conversation_count: number;
+}
+
+/** `POST /assistant/ask` — the whole exchange, persisted. */
+export interface AskResult {
+  conversation: AssistantConversation;
+  user_message: AssistantMessage;
+  assistant_message: AssistantMessage;
+  answer: AssistantAnswer;
+}
+
+/** `GET /assistant/suggested` — prompts + the full intent taxonomy. */
+export interface SuggestedCatalogue {
+  suggested: SuggestedPrompt[];
+  intents: { group: string; codes: { code: string; label: string }[] }[];
+}

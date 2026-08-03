@@ -51,6 +51,10 @@ class ObjectType(str, Enum):
     CALENDAR_ENTRY = "calendar_entry"
     # Settings & Preferences (appended — same doctrine; no existing member changed)
     SETTINGS = "settings"
+    # Academic Intelligence Assistant (appended — same doctrine; no existing
+    # member changed). One aggregate per conversation; messages embedded as
+    # numbered metadata entries (see application/use_cases/assistant).
+    AI_CONVERSATION = "ai_conversation"
     # Scholarly artefacts
     DOCUMENT = "document"
     JOURNAL = "journal"
