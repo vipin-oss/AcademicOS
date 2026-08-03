@@ -1765,3 +1765,205 @@ export interface ReportView {
 export interface ReportsCatalogue {
   kinds: { key: string; title: string; filters: string[] }[];
 }
+
+// ---------------------------------------------------------------------------
+// Productivity Hub (Calendar + Notifications) — module 11
+// Mirrors the backend dtos/productivity.py outputs one-to-one.
+// ---------------------------------------------------------------------------
+
+export type ProductivityPriority = "high" | "medium" | "low";
+export type TaskCategory =
+  | "research"
+  | "teaching"
+  | "committees"
+  | "finance"
+  | "events"
+  | "publications"
+  | "personal"
+  | "admin"
+  | "other";
+export type NotificationCategory =
+  | "task"
+  | "deadline"
+  | "meeting"
+  | "finance"
+  | "milestone"
+  | "system";
+
+export interface ProductivityTask {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at: string | null;
+  description: string | null;
+  priority: string | null;
+  category: string | null;
+  start_date: string | null;
+  due_date: string | null;
+  completed: boolean;
+  completion_date: string | null;
+  pinned: boolean;
+  reminder: string | null;
+  tags: string[];
+  remarks: string | null;
+  overdue: boolean;
+  metadata: Record<string, string>;
+}
+
+export interface TaskListResult {
+  items: ProductivityTask[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CalendarEntry {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at: string | null;
+  description: string | null;
+  start_date: string;
+  end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  location: string | null;
+  category: string | null;
+  tags: string[];
+  metadata: Record<string, string>;
+}
+
+export interface CalendarEntryListResult {
+  items: CalendarEntry[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ProductivityNotification {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  uploaded_by: string;
+  created_at: string;
+  updated_at: string | null;
+  body: string | null;
+  category: string | null;
+  priority: string | null;
+  link: string | null;
+  source_module: string | null;
+  source_ref: string | null;
+  generated_by: string;
+  is_read: boolean;
+  read_at: string | null;
+  pinned: boolean;
+  archived: boolean;
+  snoozed_until: string | null;
+  snoozed: boolean;
+  metadata: Record<string, string>;
+}
+
+export interface NotificationListResult {
+  items: ProductivityNotification[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  unread_count: number;
+}
+
+export interface RefreshNotificationsResult {
+  created: number;
+  skipped_existing: number;
+  considered: number;
+}
+
+export type CalendarSource =
+  | "events"
+  | "committee_meetings"
+  | "research_projects"
+  | "grant_milestones"
+  | "teaching"
+  | "assignments"
+  | "attendance_sessions"
+  | "finance_due"
+  | "reports_due"
+  | "personal";
+
+export interface CalendarItem {
+  id: string;
+  source: string;
+  source_id: string;
+  title: string;
+  date: string;
+  date_end: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  all_day: boolean;
+  kind: string;
+  subtitle: string | null;
+  status: string | null;
+  priority: string | null;
+  href: string;
+}
+
+export interface CalendarFeed {
+  items: CalendarItem[];
+  date_from: string;
+  date_to: string;
+  sources: string[];
+}
+
+export interface ReminderItem {
+  id: string;
+  source: string;
+  title: string;
+  date: string;
+  subtitle: string | null;
+  priority: string | null;
+  href: string;
+}
+
+export interface RemindersFeed {
+  overdue: ReminderItem[];
+  due_today: ReminderItem[];
+  upcoming_today: ReminderItem[];
+  tomorrow: ReminderItem[];
+  this_week: ReminderItem[];
+  generated_at: string;
+}
+
+export interface ProductivityDashboard {
+  todays_tasks: number;
+  upcoming_deadlines: number;
+  upcoming_meetings: number;
+  unread_notifications: number;
+  overdue_items: number;
+  completed_today: number;
+}
+
+export interface ProductivitySearchHit {
+  id: string;
+  source: string;
+  kind: string;
+  title: string;
+  date: string | null;
+  priority: string | null;
+  category: string | null;
+  snippet: string | null;
+  href: string;
+}
+
+export interface ProductivitySearchResult {
+  items: ProductivitySearchHit[];
+  total_count: number;
+}
+
+export type CalendarView = "day" | "week" | "month" | "agenda";
+export type NotificationState = "all" | "unread" | "read" | "pinned" | "snoozed" | "archived";

@@ -46,6 +46,9 @@ class ObjectType(str, Enum):
     # Finance & procurement management (appended — same doctrine: the
     # catalogue grows over the product's life; no existing member changed)
     VENDOR = "vendor"
+    # Productivity Hub (appended — same doctrine; no existing member changed)
+    NOTIFICATION = "notification"
+    CALENDAR_ENTRY = "calendar_entry"
     # Scholarly artefacts
     DOCUMENT = "document"
     JOURNAL = "journal"
