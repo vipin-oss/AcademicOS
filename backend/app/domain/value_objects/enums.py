@@ -49,6 +49,8 @@ class ObjectType(str, Enum):
     # Productivity Hub (appended — same doctrine; no existing member changed)
     NOTIFICATION = "notification"
     CALENDAR_ENTRY = "calendar_entry"
+    # Settings & Preferences (appended — same doctrine; no existing member changed)
+    SETTINGS = "settings"
     # Scholarly artefacts
     DOCUMENT = "document"
     JOURNAL = "journal"

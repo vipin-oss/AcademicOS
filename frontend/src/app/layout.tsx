@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+import { ThemeEffect } from "@/components/features/settings/ThemeEffect";
+
 export const metadata: Metadata = {
   title: "AcademicOS",
   description: "The Academic Operating System — Object-Centric Knowledge Graph",
@@ -13,7 +15,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ThemeEffect />
+        {children}
+      </body>
     </html>
   );
 }

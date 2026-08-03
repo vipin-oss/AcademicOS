@@ -21,7 +21,7 @@ const NAV = [
   { label: "Search", icon: Search, href: null },
   { label: "Events", icon: Calendar, href: "/events" },
   { label: "Reports", icon: BarChart3, href: "/reports" },
-  { label: "Settings", icon: Settings, href: null },
+  { label: "Settings", icon: Settings, href: "/settings" },
 ] as const;
 
 export function Sidebar() {

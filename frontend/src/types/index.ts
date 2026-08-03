@@ -1967,3 +1967,114 @@ export interface ProductivitySearchResult {
 
 export type CalendarView = "day" | "week" | "month" | "agenda";
 export type NotificationState = "all" | "unread" | "read" | "pinned" | "snoozed" | "archived";
+
+// ---------------------------------------------------------------------------
+// Settings & Preferences (module 12) — mirrors application/dtos/settings.py
+// ---------------------------------------------------------------------------
+
+export type SettingsSectionCode =
+  | "profile"
+  | "appearance"
+  | "academic"
+  | "notifications"
+  | "dashboard"
+  | "search"
+  | "privacy"
+  | "ai";
+
+export interface ProfileSection {
+  name: string;
+  email: string;
+  designation: string;
+  department: string;
+  institution: string;
+  biography: string;
+}
+
+export interface AppearanceSection {
+  theme: string; // "light" | "dark" | "system"
+  custom_theme: string; // stored for future custom themes — inactive
+}
+
+export interface AcademicSection {
+  default_session: string;
+  default_department: string;
+  default_programme: string;
+  default_semester: string;
+  default_timezone: string;
+  date_format: string;
+}
+
+export interface NotificationPrefsSection {
+  enabled: boolean;
+  reminder_default: string;
+  priority_default: string;
+  calendar_default_view: string;
+  calendar_default_sources: string[];
+}
+
+export interface DashboardPrefsSection {
+  default_landing_page: string;
+  favorite_modules: string[];
+  widget_visibility: Record<string, boolean>;
+  default_view: string;
+}
+
+export interface SearchPrefsSection {
+  default_scope: string;
+  recent_searches_limit: number;
+  saved_filters: Record<string, unknown>;
+}
+
+export interface PrivacySection {
+  remember_last_module: boolean;
+  reduce_motion: boolean;
+  session_filter_memory: boolean;
+  session_page_size: number;
+}
+
+export interface AiPrefsSection {
+  preferred_writing_style: string;
+  preferred_report_format: string;
+  preferred_dashboard_layout: string;
+}
+
+export interface SettingsSections {
+  profile: ProfileSection;
+  appearance: AppearanceSection;
+  academic: AcademicSection;
+  notifications: NotificationPrefsSection;
+  dashboard: DashboardPrefsSection;
+  search: SearchPrefsSection;
+  privacy: PrivacySection;
+  ai: AiPrefsSection;
+}
+
+export interface SettingsDocument {
+  sections: SettingsSections;
+  has_photo: boolean;
+  photo_name: string | null;
+  photo_url: string | null;
+  updated_at: string | null;
+}
+
+/** Response of `PUT /settings/{section}` (verbatim-merge result). */
+export interface SettingsSectionResult<K extends SettingsSectionCode = SettingsSectionCode> {
+  section: K;
+  values: SettingsSections[K];
+}
+
+/** Response of `GET /settings/export` (settings only — not a DB backup). */
+export interface SettingsExport {
+  version: number;
+  app: string;
+  exported_at: string;
+  sections: SettingsSections;
+}
+
+/** Response of `POST /settings/profile/photo` (metadata only, never bytes). */
+export interface ProfilePhotoInfo {
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+}
