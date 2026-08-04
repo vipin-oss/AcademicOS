@@ -55,6 +55,10 @@ class ObjectType(str, Enum):
     # member changed). One aggregate per conversation; messages embedded as
     # numbered metadata entries (see application/use_cases/assistant).
     AI_CONVERSATION = "ai_conversation"
+    # Intake Foundations — v2 (appended — same doctrine: the catalogue grows
+    # over the product's life; no existing member changed)
+    INTAKE_SESSION = "intake_session"
+    INTAKE_ITEM = "intake_item"
     # Scholarly artefacts
     DOCUMENT = "document"
     JOURNAL = "journal"

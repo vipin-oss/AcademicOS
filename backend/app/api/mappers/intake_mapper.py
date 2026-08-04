@@ -1,0 +1,114 @@
+"""API models for the Intake Foundations slice (pydantic boundary).
+
+Mirrors ``committee_mapper`` conventions: request models are ``extra=forbid``
+(nothing silently absorbed), response models mirror the frozen DTO outputs
+field-for-field, and ``to_create_input`` is the single translation point from
+wire form to the boundary DTO.
+"""
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from app.application.dtos.intake import (
+    CreateIntakeSessionInput,
+    IntakeItemOutput,
+    IntakeProgressOutput,
+    IntakeSessionOutput,
+    IntakeSourceKind,
+)
+
+
+class IntakeSessionCreateRequest(BaseModel):
+    """POST /intake/sessions body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_kind: Literal["folder", "files"]
+    path: str | None = None
+    paths: list[str] | None = None
+    actor: str | None = None
+    title: str | None = None
+
+
+def to_create_input(payload: IntakeSessionCreateRequest) -> CreateIntakeSessionInput:
+    return CreateIntakeSessionInput(
+        source_kind=IntakeSourceKind(payload.source_kind),
+        path=payload.path,
+        paths=tuple(payload.paths or ()),
+        actor=(payload.actor or "intake").strip() or "intake",
+        title=payload.title,
+    )
+
+
+class IntakeSessionResponseModel(BaseModel):
+    id: str
+    title: str
+    source: dict[str, Any]
+    status: str
+    current_stage: str
+    progress: dict[str, Any]
+    statistics: dict[str, Any]
+    summary: str | None
+    error: dict[str, Any] | None
+    created_at: str | None
+    updated_at: str | None
+    version: int
+
+
+class IntakeProgressResponseModel(BaseModel):
+    session_id: str
+    status: str
+    current_stage: str
+    total_items: int
+    processed_items: int
+    percent: float
+    counts: dict[str, int]
+    updated_at: str | None
+
+
+class IntakeItemResponseModel(BaseModel):
+    id: str
+    session_id: str
+    title: str
+    original_path: str
+    relative_path: str
+    extension: str
+    size_bytes: int
+    mime_type: str | None
+    sha256: str | None
+    staged_key: str | None
+    status: str
+    stage: str
+    attempts: int
+    stage_history: list[dict[str, Any]]
+    error: dict[str, Any] | None
+    created_at: str | None
+    updated_at: str | None
+
+
+class ListIntakeSessionsResponseModel(BaseModel):
+    items: list[IntakeSessionResponseModel]
+    total_count: int
+    page: int
+    page_size: int
+
+
+class ListIntakeItemsResponseModel(BaseModel):
+    items: list[IntakeItemResponseModel]
+    total_count: int
+    page: int
+    page_size: int
+
+
+def session_response(out: IntakeSessionOutput) -> IntakeSessionResponseModel:
+    return IntakeSessionResponseModel(**out.__dict__)
+
+
+def progress_response(out: IntakeProgressOutput) -> IntakeProgressResponseModel:
+    return IntakeProgressResponseModel(**out.__dict__)
+
+
+def item_response(out: IntakeItemOutput) -> IntakeItemResponseModel:
+    return IntakeItemResponseModel(**out.__dict__)

@@ -2183,3 +2183,149 @@ export interface SuggestedCatalogue {
   suggested: SuggestedPrompt[];
   intents: { group: string; codes: { code: string; label: string }[] }[];
 }
+// --------------------------------------------------------------------------
+// Intake Foundations (v2) — mirrors backend dtos/intake.py field-for-field
+// --------------------------------------------------------------------------
+
+export type IntakeSourceKind = "folder" | "files";
+export type IntakeSessionStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "cancelled"
+  | "completed"
+  | "failed";
+export type IntakeItemStatus = "pending" | "staged" | "awaiting_review" | "error";
+export type IntakeStageName =
+  | "enumerate"
+  | "stage"
+  | "hash"
+  | "extract"
+  | "classify"
+  | "match"
+  | "propose"
+  | "review"
+  | "commit";
+
+export interface IntakeSource {
+  kind: IntakeSourceKind;
+  path?: string;
+  paths?: string[];
+  display: string;
+}
+
+export interface IntakeSessionProgress {
+  total: number;
+  processed: number;
+  percent: number;
+  pending: number;
+  staged: number;
+  hashed: number;
+  awaiting_review: number;
+  errors: number;
+}
+
+export interface IntakeStatistics {
+  total_items: number;
+  processed_items: number;
+  percent: number;
+  pending: number;
+  staged: number;
+  hashed: number;
+  staged_items: number;
+  awaiting_review: number;
+  errors: number;
+  total_bytes: number;
+  by_extension: Record<string, number>;
+  by_mime: Record<string, number>;
+  skipped_junk: number;
+  skipped_junk_samples: string[];
+}
+
+export interface IntakeError {
+  stage: string;
+  message: string;
+}
+
+export interface IntakeSession {
+  id: string;
+  title: string;
+  source: IntakeSource;
+  status: IntakeSessionStatus;
+  current_stage: string;
+  progress: IntakeSessionProgress;
+  statistics: IntakeStatistics;
+  summary: string | null;
+  error: IntakeError | null;
+  created_at: string | null;
+  updated_at: string | null;
+  version: number;
+}
+
+export interface IntakeProgressCounts {
+  pending: number;
+  staged: number;
+  hashed: number;
+  awaiting_review: number;
+  errors: number;
+}
+
+export interface IntakeProgressUpdate {
+  session_id: string;
+  status: IntakeSessionStatus;
+  current_stage: string;
+  total_items: number;
+  processed_items: number;
+  percent: number;
+  counts: IntakeProgressCounts;
+  updated_at: string | null;
+}
+
+export interface IntakeStageRecord {
+  stage: string;
+  entered_at: string;
+  exited_at: string;
+  result: Record<string, unknown>;
+}
+
+export interface IntakeItem {
+  id: string;
+  session_id: string;
+  title: string;
+  original_path: string;
+  relative_path: string;
+  extension: string;
+  size_bytes: number;
+  mime_type: string | null;
+  sha256: string | null;
+  staged_key: string | null;
+  status: IntakeItemStatus;
+  stage: string;
+  attempts: number;
+  stage_history: IntakeStageRecord[];
+  error: IntakeError | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ListIntakeSessionsResponse {
+  items: IntakeSession[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ListIntakeItemsResponse {
+  items: IntakeItem[];
+  total_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CreateIntakeSessionPayload {
+  source_kind: IntakeSourceKind;
+  path?: string;
+  paths?: string[];
+  actor?: string;
+  title?: string;
+}
