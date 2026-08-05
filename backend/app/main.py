@@ -9,25 +9,26 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import settings
-from app.core.exceptions import AcademicosError
-from app.core.logging import logger
-from app.api.routes.documents import router as documents_router
-from app.api.routes.committees import router as committees_router
-from app.api.routes.events import router as events_router
-from app.api.routes.reports import router as reports_router
-from app.api.routes.productivity import router as productivity_router
-from app.api.routes.settings import router as settings_router
 from app.api.routes.assistant import router as assistant_router
-from app.api.routes.intake import router as intake_router
+from app.api.routes.committees import router as committees_router
+from app.api.routes.documents import router as documents_router
+from app.api.routes.events import router as events_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
+from app.api.routes.intake import router as intake_router
 from app.api.routes.objects import router as objects_router
+from app.api.routes.productivity import router as productivity_router
 from app.api.routes.publications import router as publications_router
+from app.api.routes.reports import router as reports_router
 from app.api.routes.research import router as research_router
+from app.api.routes.settings import router as settings_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
+from app.core.config import settings
+from app.core.exceptions import AcademicosError
+from app.core.logging import logger
+from app.domain.exceptions import OptimisticConcurrencyError
 
 
 def create_app() -> FastAPI:
@@ -52,6 +53,15 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.http_status,
             content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    @app.exception_handler(OptimisticConcurrencyError)
+    async def handle_optimistic_concurrency_error(
+        _: Request, exc: OptimisticConcurrencyError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": exc.code, "message": str(exc)}},
         )
 
     @app.get("/")

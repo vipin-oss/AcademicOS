@@ -131,3 +131,37 @@ def test_delete_object(client):
 def test_delete_missing_object_returns_404(client):
     resp = client.delete("/api/v1/objects/obj:course:NOPE")
     assert resp.status_code == 404
+
+
+def test_update_concurrency_conflict_maps_to_409(client):
+    """R3 — a refused stale write surfaces as HTTP 409, not a 500."""
+    from app.api.routes import objects as objects_route
+    from app.domain.entities.object import UniversalObject
+    from app.domain.exceptions import OptimisticConcurrencyError
+    from app.domain.value_objects.enums import ObjectType
+
+    class ConflictingRepository:
+        """A repository whose save() loses to a concurrent writer every time."""
+
+        def get_by_id(self, object_id):
+            return UniversalObject.create(
+                ObjectType.COURSE, "Raced", created_by="faculty:1"
+            )
+
+        def save(self, entity):
+            raise OptimisticConcurrencyError(
+                f"Object {entity.id} changed since it was loaded (expected version 1)."
+            )
+
+    app.dependency_overrides[objects_route._repository] = lambda: ConflictingRepository()
+    try:
+        resp = client.put(
+            "/api/v1/objects/obj:course:RACED",
+            json={"updated_by": "faculty:1", "status": "active"},
+        )
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["error"]["code"] == "optimistic_concurrency_conflict"
+        assert "changed since it was loaded" in body["error"]["message"]
+    finally:
+        app.dependency_overrides.pop(objects_route._repository, None)
