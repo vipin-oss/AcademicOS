@@ -377,3 +377,128 @@ def test_edge_table_enforces_domain_identity_uniqueness(session):
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
+
+
+# ------------------------------------------------- R2 — repository projections
+# (SQL pagination + count on find()). These pin the physical read contract:
+# page_size=0 preserves the historical load-all behaviour, page_size>0
+# returns a deterministic page ordered by the requested column (id as
+# tie-break), and count() answers total_count for the same filters.
+
+
+def _save_n_courses(session, n: int) -> SQLAlchemyObjectRepository:
+    repo = SQLAlchemyObjectRepository(session)
+    for i in range(n):
+        obj = UniversalObject.create(
+            ObjectType.COURSE, f"Course {i}", created_by="faculty:1"
+        )
+        obj.pop_domain_events()
+        repo.save(obj)
+    return repo
+
+
+def test_find_pagination_and_count(session):
+    repo = _save_n_courses(session, 5)
+
+    assert repo.count() == 5
+    # page_size=0 (default) preserves load-all behaviour.
+    assert len(repo.find()) == 5
+    assert len(repo.find(page=2)) == 5  # page ignored when unpaginated
+
+    sorted_ids = sorted(str(o.id) for o in repo.find())
+    page1 = repo.find(page=1, page_size=2)
+    assert [str(o.id) for o in page1] == sorted_ids[:2]
+    page2 = repo.find(page=2, page_size=2)
+    assert [str(o.id) for o in page2] == sorted_ids[2:4]
+    page3 = repo.find(page=3, page_size=2)
+    assert [str(o.id) for o in page3] == sorted_ids[4:]
+    # Past the end: empty page, never an error.
+    assert repo.find(page=4, page_size=2) == []
+
+
+def test_find_pagination_with_filters(session):
+    repo = SQLAlchemyObjectRepository(session)
+    for i in range(3):
+        obj = UniversalObject.create(
+            ObjectType.COURSE, f"C{i}", created_by="faculty:1"
+        )
+        obj.pop_domain_events()
+        repo.save(obj)
+    for i in range(4):
+        obj = UniversalObject.create(
+            ObjectType.PUBLICATION, f"P{i}", created_by="faculty:1"
+        )
+        obj.pop_domain_events()
+        repo.save(obj)
+
+    assert repo.count(object_type=ObjectType.COURSE) == 3
+    assert repo.count(object_type=ObjectType.PUBLICATION) == 4
+
+    page = repo.find(object_type=ObjectType.PUBLICATION, page=1, page_size=2)
+    assert len(page) == 2
+    assert all(o.object_type == ObjectType.PUBLICATION for o in page)
+    assert len(repo.find(object_type=ObjectType.COURSE, page=2, page_size=2)) == 1
+    # Count and page filters must agree.
+    total = repo.count(object_type=ObjectType.PUBLICATION)
+    pages = []
+    collected = []
+    for p in range(1, total + 1):
+        items = repo.find(object_type=ObjectType.PUBLICATION, page=p, page_size=2)
+        if not items:
+            break
+        pages.append(items)
+        collected.extend(items)
+    assert sum(len(p) for p in pages) == total
+    assert len({str(o.id) for o in collected}) == total  # no overlap, no loss
+
+
+def test_count_metadata_filter(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "With Code", created_by="faculty:1")
+    obj.set_metadata(
+        MetadataEntry("code", "CS101", MetadataLayer.L6_HUMAN_ASSERTED, Provenance.ASSERTED),
+        actor="faculty:1",
+    )
+    obj.pop_domain_events()
+    repo.save(obj)
+    other = UniversalObject.create(ObjectType.COURSE, "No Code", created_by="faculty:1")
+    other.pop_domain_events()
+    repo.save(other)
+
+    # A key that exists nowhere matches on every engine (exercises the
+    # count() SQL path without JSONB containment).
+    assert repo.count(metadata_key="missing") == 0
+
+    if session.bind.dialect.name != "postgresql":
+        pytest.skip("JSONB containment is asserted against PostgreSQL")
+
+    assert repo.count(metadata_key="code") == 1
+    assert repo.count(metadata_key="code", metadata_value="CS101") == 1
+    assert repo.count(metadata_key="code", metadata_value="PHY101") == 0
+
+
+def test_find_sort_and_order(session):
+    repo = SQLAlchemyObjectRepository(session)
+    for i in range(3):
+        obj = UniversalObject.create(
+            ObjectType.COURSE, f"Title {i}", created_by="faculty:1"
+        )
+        obj.pop_domain_events()
+        repo.save(obj)
+
+    desc = repo.find(page=1, page_size=10, sort_by="title", order="desc")
+    assert [o.title for o in desc] == ["Title 2", "Title 1", "Title 0"]
+    asc = repo.find(page=1, page_size=10, sort_by="title", order="asc")
+    assert [o.title for o in asc] == ["Title 0", "Title 1", "Title 2"]
+
+
+def test_find_rejects_invalid_sort_and_order(session):
+    repo = _save_n_courses(session, 1)
+    with pytest.raises(ValueError):
+        repo.find(page=1, page_size=10, sort_by="bogus")
+    with pytest.raises(ValueError):
+        repo.find(page=1, page_size=10, order="sideways")
+    with pytest.raises(ValueError):
+        repo.find(page=0, page_size=10)
+    with pytest.raises(ValueError):
+        repo.find(page=1, page_size=-1)

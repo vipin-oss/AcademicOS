@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,17 @@ _LOCK_RETRY_ATTEMPTS = 5
 _LOCK_RETRY_BACKOFF_SECONDS = (0.05, 0.1, 0.2, 0.4)  # slept before retries 2..5
 _SQLITE_BUSY = 5  # primary sqlite error code for lock contention
 _LOCK_MESSAGE_TOKENS = ("database is locked", "database table is locked", "database is busy")
+
+# R2 — repository projections: the only sortable columns (scalar object
+# columns; metadata/audit live in JSON and are not orderable in SQL).
+_FIND_SORT_COLUMNS = {
+    "id": ObjectModel.id,
+    "object_type": ObjectModel.object_type,
+    "title": ObjectModel.title,
+    "status": ObjectModel.status,
+    "version": ObjectModel.version,
+}
+_FIND_ORDERS = ("asc", "desc")
 
 
 def _is_lock_contention(exc: OperationalError) -> bool:
@@ -227,8 +238,65 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str = "id",
+        order: str = "asc",
     ) -> list[UniversalObject]:
-        stmt = select(ObjectModel)
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 0:
+            raise ValueError("page_size must be >= 0.")
+        sort_column = _FIND_SORT_COLUMNS.get(sort_by)
+        if sort_column is None:
+            raise ValueError(f"Unsupported sort_by: {sort_by!r}")
+        if order not in _FIND_ORDERS:
+            raise ValueError(f"Unsupported order: {order!r}")
+
+        stmt = self._apply_object_filters(
+            select(ObjectModel),
+            object_type=object_type,
+            status=status,
+            metadata_key=metadata_key,
+            metadata_value=metadata_value,
+        )
+        if page_size > 0:
+            # Deterministic pagination: requested sort + id tie-break.
+            if order == "asc":
+                stmt = stmt.order_by(sort_column.asc(), ObjectModel.id.asc())
+            else:
+                stmt = stmt.order_by(sort_column.desc(), ObjectModel.id.asc())
+            stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+        models = self._session.execute(stmt).scalars().all()
+        return self._to_domain_many(models)
+
+    def count(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+    ) -> int:
+        stmt = self._apply_object_filters(
+            select(func.count(ObjectModel.id)),
+            object_type=object_type,
+            status=status,
+            metadata_key=metadata_key,
+            metadata_value=metadata_value,
+        )
+        return int(self._session.execute(stmt).scalar() or 0)
+
+    @staticmethod
+    def _apply_object_filters(
+        stmt,
+        *,
+        object_type: ObjectType | None,
+        status: ObjectStatus | None,
+        metadata_key: str | None,
+        metadata_value: str | None,
+    ):
+        """Apply the shared filter predicates to a SELECT (find or count)."""
         if object_type is not None:
             value = object_type.value if isinstance(object_type, ObjectType) else object_type
             stmt = stmt.where(ObjectModel.object_type == value)
@@ -240,8 +308,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             if metadata_value is not None:
                 clause["value"] = metadata_value
             stmt = stmt.where(ObjectModel.metadata_json.contains([clause]))
-        models = self._session.execute(stmt).scalars().all()
-        return self._to_domain_many(models)
+        return stmt
 
     def _to_domain_many(self, models: Sequence[ObjectModel]) -> list[UniversalObject]:
         """Bulk load: one edge query for all objects instead of N+1."""

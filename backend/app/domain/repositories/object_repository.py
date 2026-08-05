@@ -32,3 +32,41 @@ class ObjectRepository(Repository[UniversalObject]):
     @abc.abstractmethod
     def find_by_metadata(self, key: str, value: str | None = None) -> list[UniversalObject]:
         """Objects carrying a metadata key, optionally constrained to a value."""
+
+    @abc.abstractmethod
+    def find(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str = "id",
+        order: str = "asc",
+    ) -> list[UniversalObject]:
+        """Objects matching the optional filters (R2 — repository projections).
+
+        ``page_size=0`` (default) returns every match, preserving the
+        historical load-all behaviour exactly. With ``page_size > 0`` the
+        result is the requested page, ordered by ``sort_by`` — one of
+        ``id``, ``object_type``, ``title``, ``status``, ``version`` — in
+        ``order`` (``asc``/``desc``), with ``id`` as a deterministic
+        tie-break. Unsupported sort/order values raise ``ValueError``.
+        """
+
+    @abc.abstractmethod
+    def count(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+    ) -> int:
+        """Total number of Objects matching the filters (unpaginated).
+
+        Required by pagination consumers: the page size cannot expose the
+        total, so ``count`` answers ``total_count`` for the same filters.
+        """
