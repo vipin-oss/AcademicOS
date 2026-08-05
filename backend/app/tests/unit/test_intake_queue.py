@@ -13,6 +13,7 @@ import hashlib
 import queue
 import threading
 
+import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.application.dtos.intake import (
@@ -848,3 +849,30 @@ class TestOptimisticConcurrencyRecovery:
         )
         runner.run()  # must not raise, must not write anything back
         assert str(session.id) not in repo.store
+
+    def test_repeated_conflicts_escalate_after_bound(self) -> None:
+        repo, storage = InMemoryRepo(), FakeStorage()
+        session = mk_session(repo)
+        mk_item(repo, session, "a.txt", blob=b"hello", storage=storage)
+
+        # A pathological writer lands a conflicting save on every attempt:
+        # the runner must escalate (raise) after the bound, never spin.
+        original_save = repo.save
+
+        def always_conflict(obj: UniversalObject) -> UniversalObject:
+            if obj.object_type is ObjectType.INTAKE_SESSION:
+                raise OptimisticConcurrencyError(
+                    f"Object {obj.id} changed since it was loaded."
+                )
+            return original_save(obj)
+
+        repo.save = always_conflict
+        runner = IntakeRunner(
+            repo,
+            storage,
+            str(session.id),
+            lambda: "go",
+            build_document_parsers(),
+        )
+        with pytest.raises(OptimisticConcurrencyError):
+            runner.run()

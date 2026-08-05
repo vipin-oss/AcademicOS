@@ -100,6 +100,13 @@ _PAUSE = "pause"
 _CANCEL = "cancel"
 _DELETED = "deleted"
 
+# R3 — a session-save conflict (a concurrent control write landing mid-drain)
+# restarts the drain on the authoritative row. Bounded, like every other
+# conflict retry in the system: beyond this many restarts the conflict is
+# escalated (the dispatcher's _fail_after_crash marks the session failed and
+# resumable) instead of spinning against a pathological writer.
+_MAX_CONFLICT_RESTARTS = 5
+
 
 def _entry(key: str, value: str) -> MetadataEntry:
     """All intake writes are system facts: L1 layer, SYSTEM provenance."""
@@ -154,6 +161,7 @@ class IntakeRunner:
         session = self._load_session()
         if session is None:
             return  # deleted before the dispatcher picked it up
+        restarts = 0
         while True:
             try:
                 self._checkpoint()
@@ -173,6 +181,12 @@ class IntakeRunner:
                 # decide. The drain is resumable by design (stage/item work is
                 # idempotent), so a restart repeats no work and a stale write
                 # never fails the session.
+                restarts += 1
+                if restarts > _MAX_CONFLICT_RESTARTS:
+                    # Pathological contention: escalate instead of spinning.
+                    # The dispatcher's crash path marks the session failed
+                    # (resumable) with a fresh read.
+                    raise
                 session = self._load_session()
                 if session is None:
                     return  # deleted underneath — nothing left to annotate
