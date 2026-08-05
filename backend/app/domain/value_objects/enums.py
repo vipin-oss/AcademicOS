@@ -173,3 +173,19 @@ class RelationshipKind(str, Enum):
     ALLOCATED_TO = "allocated_to"
     # AI-proposed
     SMART_LINK = "smart_link"
+
+
+class PermissionAction(str, Enum):
+    """Permission actions (R4 — permission planning seam).
+
+    Vocabulary derived from the SRS §3.3 capability matrix: view-class
+    capabilities (view, read, export) map to READ; create/edit/upload/
+    delete capabilities map to WRITE; administrative/approval/configure
+    capabilities map to MANAGE. The permission evaluator consumes these
+    actions; enforcement itself lands in S2 (edge ACL) and S5 (search
+    pre-filtering) on top of this seam.
+    """
+
+    READ = "read"
+    WRITE = "write"
+    MANAGE = "manage"
