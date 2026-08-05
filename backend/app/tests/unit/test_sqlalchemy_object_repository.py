@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.value_objects.enums import (
     MetadataLayer,
     ObjectStatus,
@@ -510,3 +511,106 @@ def test_find_rejects_invalid_sort_and_order(session):
         repo.find(page=0, page_size=10)
     with pytest.raises(ValueError):
         repo.find(page=1, page_size=-1)
+
+
+# ------------------------------------------------- R3 — optimistic concurrency
+# save() is a compare-and-swap on version: a stale aggregate is refused with
+# OptimisticConcurrencyError instead of silently overwriting a newer row.
+
+
+def test_save_chains_versions_after_each_mutation(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Chain", created_by="faculty:1")
+    obj.pop_domain_events()
+    repo.save(obj)  # INSERT, version 1
+
+    obj.rename("Chain v2", actor="faculty:1")
+    repo.save(obj)  # CAS 1 -> 2
+    obj.set_metadata(
+        MetadataEntry("k", "v", MetadataLayer.L6_HUMAN_ASSERTED, Provenance.ASSERTED),
+        actor="faculty:1",
+    )
+    repo.save(obj)  # CAS 2 -> 3
+
+    got = repo.get(obj.id)
+    assert got is not None
+    assert got.version == 3
+    assert got.title == "Chain v2"
+
+
+def test_stale_save_raises_optimistic_concurrency_error(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Racer", created_by="faculty:1")
+    obj.pop_domain_events()
+    repo.save(obj)  # version 1
+
+    # A second writer loads the same row, mutates, and wins.
+    other = repo.get(obj.id)
+    assert other is not None
+    other.rename("Winner", actor="faculty:2")
+    repo.save(other)  # CAS 1 -> 2
+
+    # The first writer's stale instance must be refused — no lost update.
+    obj.rename("Loser", actor="faculty:1")
+    with pytest.raises(OptimisticConcurrencyError):
+        repo.save(obj)
+
+    got = repo.get(obj.id)
+    assert got is not None
+    assert got.title == "Winner"
+    assert got.version == 2
+
+
+def test_save_after_delete_raises_conflict(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Doomed", created_by="faculty:1")
+    obj.pop_domain_events()
+    repo.save(obj)
+    repo.delete(obj.id)
+
+    obj.rename("Zombie", actor="faculty:1")
+    with pytest.raises(OptimisticConcurrencyError):
+        repo.save(obj)
+
+
+def test_duplicate_create_raises_conflict(session):
+    repo = SQLAlchemyObjectRepository(session)
+    first = UniversalObject.create(ObjectType.COURSE, "Solo", created_by="faculty:1")
+    first.pop_domain_events()
+    repo.save(first)
+
+    second = UniversalObject.create(
+        ObjectType.COURSE, "Twin", created_by="faculty:1", object_id=first.id
+    )
+    second.pop_domain_events()
+    with pytest.raises(OptimisticConcurrencyError):
+        repo.save(second)
+
+
+def test_unchanged_resave_is_idempotent(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Steady", created_by="faculty:1")
+    obj.pop_domain_events()
+    repo.save(obj)
+    repo.save(obj)  # no mutation: same version must not false-conflict
+    got = repo.get(obj.id)
+    assert got is not None and got.version == 1
+
+
+def test_conflict_leaves_session_usable(session):
+    repo = SQLAlchemyObjectRepository(session)
+    a = UniversalObject.create(ObjectType.COURSE, "A", created_by="faculty:1")
+    a.pop_domain_events()
+    repo.save(a)
+    b = repo.get(a.id)
+    assert b is not None
+    b.rename("B wins", actor="faculty:2")
+    repo.save(b)
+    a.rename("A stale", actor="faculty:1")
+    with pytest.raises(OptimisticConcurrencyError):
+        repo.save(a)
+    # The same session still serves fresh writes after the conflict.
+    c = UniversalObject.create(ObjectType.COURSE, "C", created_by="faculty:1")
+    c.pop_domain_events()
+    repo.save(c)
+    assert repo.get(c.id) is not None

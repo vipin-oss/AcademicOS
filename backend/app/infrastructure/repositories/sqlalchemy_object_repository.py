@@ -11,17 +11,24 @@ Relationship persistence: ``save`` replaces the whole edge set of an object in
 the same transaction as the object row (delete + insert), preserving the
 aggregate's list order via row order. Reads load edges in bulk, grouped by
 source, with one query.
+
+Optimistic concurrency (R3): ``save`` compares the stored row's ``version``
+against the version the aggregate was loaded at (``_expected_version``) and
+raises ``OptimisticConcurrencyError`` on mismatch — stale snapshots are never
+merged over newer rows. New aggregates are inserted; a duplicate id surfaces
+as the same conflict.
 """
 from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.value_objects.object_id import ObjectId
@@ -99,18 +106,6 @@ class SQLAlchemyObjectRepository(ObjectRepository):
 
     # --- internal mapping (Snapshot <-> Model, via SnapshotMapper) ---
     @staticmethod
-    def _model_from_snapshot(snap: ObjectSnapshot) -> ObjectModel:
-        return ObjectModel(
-            id=snap.id,
-            object_type=snap.object_type,
-            title=snap.title,
-            status=snap.status,
-            version=snap.version,
-            metadata_json=[m.to_dict() for m in snap.metadata],
-            audit_json=snap.audit.to_dict() if snap.audit else None,
-        )
-
-    @staticmethod
     def _edge_models_from_snapshot(snap: ObjectSnapshot) -> list[ObjectRelationshipModel]:
         """One edge row per RelationshipSnapshot, in aggregate list order.
 
@@ -181,18 +176,66 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def _to_domain(
         self, model: ObjectModel, relationships: Sequence[ObjectRelationshipModel]
     ) -> UniversalObject:
-        return SnapshotMapper.from_snapshot(self._to_snapshot(model, relationships))
+        obj = SnapshotMapper.from_snapshot(self._to_snapshot(model, relationships))
+        # R3: record the version the aggregate was loaded at, so a later
+        # save() can refuse to overwrite a row a concurrent writer advanced.
+        obj._expected_version = model.version
+        return obj
 
     # --- requested public surface ---
     def save(self, entity: UniversalObject) -> None:
-        # The snapshot is built once; retries re-issue the same write lambda,
-        # which is idempotent (same object row merged, same edge set replaced).
+        """Persist the aggregate with optimistic concurrency (R3).
+
+        A freshly created aggregate (never loaded from storage) is inserted;
+        a duplicate id means a concurrent creator won the race and surfaces
+        as ``OptimisticConcurrencyError``. A loaded aggregate is written with
+        a compare-and-swap on ``version``: the row must still carry the
+        version the aggregate was loaded at (``entity._expected_version``),
+        otherwise a concurrent writer landed and the save is refused — never
+        a silent lost update.
+
+        The snapshot and the write lambda are built once; lock-contention
+        retries re-issue the same lambda, which is idempotent (same CAS
+        predicate, same edge set).
+        """
         snap = SnapshotMapper.to_snapshot(entity)
-        model = self._model_from_snapshot(snap)
         edge_models = self._edge_models_from_snapshot(snap)
+        expected_version = entity._expected_version
+        values = {
+            "object_type": snap.object_type,
+            "title": snap.title,
+            "status": snap.status,
+            "version": snap.version,
+            "metadata_json": [m.to_dict() for m in snap.metadata],
+            "audit_json": snap.audit.to_dict() if snap.audit else None,
+        }
 
         def write() -> None:
-            self._session.merge(model)
+            if expected_version is None:
+                try:
+                    self._session.execute(
+                        insert(ObjectModel).values(id=snap.id, **values)
+                    )
+                except IntegrityError:
+                    self._session.rollback()
+                    raise OptimisticConcurrencyError(
+                        f"Object {snap.id} was created concurrently."
+                    ) from None
+            else:
+                result = self._session.execute(
+                    update(ObjectModel)
+                    .where(
+                        ObjectModel.id == snap.id,
+                        ObjectModel.version == expected_version,
+                    )
+                    .values(**values)
+                )
+                if result.rowcount == 0:
+                    self._session.rollback()
+                    raise OptimisticConcurrencyError(
+                        f"Object {snap.id} changed since it was loaded "
+                        f"(expected version {expected_version})."
+                    )
             self._session.execute(
                 delete(ObjectRelationshipModel).where(
                     ObjectRelationshipModel.source_id == snap.id
@@ -201,6 +244,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             self._session.add_all(edge_models)
 
         self._commit_with_retry(write)
+        entity._expected_version = snap.version
 
     def get(self, id: ObjectId) -> UniversalObject | None:
         model = self._session.get(ObjectModel, str(id))
