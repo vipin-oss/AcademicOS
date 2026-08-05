@@ -43,17 +43,22 @@ class ObjectRepository(Repository[UniversalObject]):
         metadata_value: str | None = None,
         page: int = 1,
         page_size: int = 0,
-        sort_by: str = "id",
+        sort_by: str | None = None,
         order: str = "asc",
     ) -> list[UniversalObject]:
         """Objects matching the optional filters (R2 — repository projections).
 
         ``page_size=0`` (default) returns every match, preserving the
         historical load-all behaviour exactly. With ``page_size > 0`` the
-        result is the requested page, ordered by ``sort_by`` — one of
-        ``id``, ``object_type``, ``title``, ``status``, ``version`` — in
-        ``order`` (``asc``/``desc``), with ``id`` as a deterministic
-        tie-break. Unsupported sort/order values raise ``ValueError``.
+        result is the requested page.
+
+        Ordering: when ``sort_by`` is given, the result is ordered by that
+        column (``id``, ``object_type``, ``title``, ``status`` or
+        ``version``) in ``order`` (``asc``/``desc``), with ``id`` as a
+        deterministic tie-break — whether or not pagination is active.
+        Paginating without ``sort_by`` defaults to ``id`` ascending so
+        pages are stable across calls. Unsupported sort/order values raise
+        ``ValueError``.
         """
 
     @abc.abstractmethod

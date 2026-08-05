@@ -76,7 +76,7 @@ class InMemoryObjectRepository(ObjectRepository):
         metadata_value=None,
         page: int = 1,
         page_size: int = 0,
-        sort_by: str = "id",
+        sort_by: str | None = None,
         order: str = "asc",
     ) -> list[UniversalObject]:
         return []

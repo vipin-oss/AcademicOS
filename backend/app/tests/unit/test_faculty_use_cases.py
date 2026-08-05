@@ -91,9 +91,20 @@ class InMemoryObjectRepository(ObjectRepository):
         metadata_value: str | None = None,
         page: int = 1,
         page_size: int = 0,
-        sort_by: str = "id",
+        sort_by: str | None = None,
         order: str = "asc",
     ) -> list[UniversalObject]:
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 0:
+            raise ValueError("page_size must be >= 0.")
+        if sort_by is not None and sort_by not in (
+            "id", "object_type", "title", "status", "version",
+        ):
+            raise ValueError(f"Unsupported sort_by: {sort_by!r}")
+        if order not in ("asc", "desc"):
+            raise ValueError(f"Unsupported order: {order!r}")
+
         items = [
             o
             for o in self._store.values()
@@ -102,27 +113,24 @@ class InMemoryObjectRepository(ObjectRepository):
             and (
                 metadata_key is None
                 or (
-                    o.metadata.get_value(metadata_key) is not None
-                    and (
-                        metadata_value is None
-                        or o.metadata.get_value(metadata_key) == metadata_value
-                    )
+                    (value := o.metadata.get_value(metadata_key)) is not None
+                    and (metadata_value is None or value == metadata_value)
                 )
             )
         ]
-        reverse = order == "desc"
-        if sort_by == "id":
-            items.sort(key=lambda o: str(o.id), reverse=reverse)
-        elif sort_by == "object_type":
-            items.sort(key=lambda o: o.object_type.value, reverse=reverse)
-        elif sort_by == "title":
-            items.sort(key=lambda o: o.title, reverse=reverse)
-        elif sort_by == "status":
-            items.sort(key=lambda o: o.status.value, reverse=reverse)
-        elif sort_by == "version":
-            items.sort(key=lambda o: o.version, reverse=reverse)
-        else:
-            raise ValueError(f"Unsupported sort_by: {sort_by!r}")
+        effective_sort = sort_by if sort_by is not None else ("id" if page_size > 0 else None)
+        if effective_sort is not None:
+            reverse = order == "desc"
+            if effective_sort == "id":
+                items.sort(key=lambda o: str(o.id), reverse=reverse)
+            elif effective_sort == "object_type":
+                items.sort(key=lambda o: o.object_type.value, reverse=reverse)
+            elif effective_sort == "title":
+                items.sort(key=lambda o: o.title, reverse=reverse)
+            elif effective_sort == "status":
+                items.sort(key=lambda o: o.status.value, reverse=reverse)
+            elif effective_sort == "version":
+                items.sort(key=lambda o: o.version, reverse=reverse)
         if page_size > 0:
             start = (page - 1) * page_size
             items = items[start : start + page_size]

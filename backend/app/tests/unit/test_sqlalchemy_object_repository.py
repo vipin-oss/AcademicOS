@@ -490,6 +490,10 @@ def test_find_sort_and_order(session):
     assert [o.title for o in desc] == ["Title 2", "Title 1", "Title 0"]
     asc = repo.find(page=1, page_size=10, sort_by="title", order="asc")
     assert [o.title for o in asc] == ["Title 0", "Title 1", "Title 2"]
+    # Sorting applies with or without pagination.
+    all_desc = repo.find(sort_by="title", order="desc")
+    assert [o.title for o in all_desc] == ["Title 2", "Title 1", "Title 0"]
+    assert len(all_desc) == 3
 
 
 def test_find_rejects_invalid_sort_and_order(session):
@@ -497,7 +501,11 @@ def test_find_rejects_invalid_sort_and_order(session):
     with pytest.raises(ValueError):
         repo.find(page=1, page_size=10, sort_by="bogus")
     with pytest.raises(ValueError):
+        repo.find(sort_by="bogus")  # rejected even when unpaginated
+    with pytest.raises(ValueError):
         repo.find(page=1, page_size=10, order="sideways")
+    with pytest.raises(ValueError):
+        repo.find(order="sideways")  # rejected even when unpaginated
     with pytest.raises(ValueError):
         repo.find(page=0, page_size=10)
     with pytest.raises(ValueError):

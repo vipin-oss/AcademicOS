@@ -240,15 +240,14 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         metadata_value: str | None = None,
         page: int = 1,
         page_size: int = 0,
-        sort_by: str = "id",
+        sort_by: str | None = None,
         order: str = "asc",
     ) -> list[UniversalObject]:
         if page < 1:
             raise ValueError("page must be >= 1.")
         if page_size < 0:
             raise ValueError("page_size must be >= 0.")
-        sort_column = _FIND_SORT_COLUMNS.get(sort_by)
-        if sort_column is None:
+        if sort_by is not None and sort_by not in _FIND_SORT_COLUMNS:
             raise ValueError(f"Unsupported sort_by: {sort_by!r}")
         if order not in _FIND_ORDERS:
             raise ValueError(f"Unsupported order: {order!r}")
@@ -260,12 +259,16 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             metadata_key=metadata_key,
             metadata_value=metadata_value,
         )
-        if page_size > 0:
-            # Deterministic pagination: requested sort + id tie-break.
+        if page_size > 0 and sort_by is None:
+            # Deterministic pages need a stable order; default to id.
+            sort_by = "id"
+        if sort_by is not None:
+            sort_column = _FIND_SORT_COLUMNS[sort_by]
             if order == "asc":
                 stmt = stmt.order_by(sort_column.asc(), ObjectModel.id.asc())
             else:
                 stmt = stmt.order_by(sort_column.desc(), ObjectModel.id.asc())
+        if page_size > 0:
             stmt = stmt.offset((page - 1) * page_size).limit(page_size)
         models = self._session.execute(stmt).scalars().all()
         return self._to_domain_many(models)
