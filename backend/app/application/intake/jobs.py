@@ -56,6 +56,7 @@ from app.application.intake.runner import IntakeRunner
 from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import MetadataLayer, ObjectType, Provenance
 from app.domain.value_objects.metadata import MetadataEntry
@@ -211,6 +212,20 @@ class IntakeJobManager:
         adopted with the prior acquired_at preserved for audit.
         """
 
+        try:
+            return self._acquire_on(repository, session)
+        except OptimisticConcurrencyError:
+            # R3 — a control write (pause/cancel) landed between the
+            # dispatcher's load and this lease write. The row is
+            # authoritative: re-load and re-apply the lease once; the
+            # record is computed from the row, so the retry is honest.
+            fresh = repository.get_by_id(ObjectId(str(session.id)))
+            if fresh is None:
+                return False
+            return self._acquire_on(repository, fresh)
+
+    def _acquire_on(self, repository: ObjectRepository, session: UniversalObject) -> bool:
+        """Single lease-write attempt on a given session instance."""
         lease = self._lease_of(session)
         if (
             lease is not None
@@ -418,7 +433,14 @@ class IntakeJobManager:
                 )
                 # The orphan lease is spent — drop it with the same write.
                 session.set_metadata(_lease_entry(None), actor=INTAKE_ACTOR)
-                repository.save(session)
+                try:
+                    repository.save(session)
+                except OptimisticConcurrencyError:
+                    # R3 — the row moved under reconcile (e.g. a control
+                    # write landed while we were marking it failed). Skip:
+                    # the row is authoritative and the next reconcile pass
+                    # re-evaluates it.
+                    continue
                 count += 1
             return count
         finally:

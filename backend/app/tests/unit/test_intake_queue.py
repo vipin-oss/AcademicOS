@@ -43,6 +43,7 @@ from app.application.intake.jobs import IntakeJobManager
 from app.application.intake.pipeline import extracted_key_for, utcnow_iso
 from app.application.intake.runner import IntakeRunner
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.value_objects.enums import (
     MetadataLayer,
     ObjectStatus,
@@ -780,3 +781,70 @@ class TestCrashContainment:
         assert (settled.metadata.get_value(KEY_INTAKE_STATUS) or "") == "failed"
         assert json_decode(settled.metadata.get_value(KEY_LEASE), "x") is None
         assert manager.active_session() is None
+
+
+class TestOptimisticConcurrencyRecovery:
+    """R3 — a stale session save must never fail the drain: the runner
+    re-loads the row and lets the cooperative checkpoint decide."""
+
+    def test_conflict_reloads_and_persists_paused(self) -> None:
+        repo, storage = InMemoryRepo(), FakeStorage()
+        session = mk_session(repo)
+        mk_item(repo, session, "a.txt", blob=b"hello", storage=storage)
+
+        # The first session save loses to a concurrent control write (the
+        # pause endpoint persisted its flag between two drain saves).
+        state = {"conflicted": False, "pause_requested": False}
+        original_save = repo.save
+
+        def flaky_save(obj: UniversalObject) -> UniversalObject:
+            if obj.object_type is ObjectType.INTAKE_SESSION and not state["conflicted"]:
+                state["conflicted"] = True
+                stored = repo.store[str(obj.id)]
+                _put(stored, "intake.control", json_encode({"pause": True, "cancel": False}))
+                state["pause_requested"] = True
+                raise OptimisticConcurrencyError(
+                    f"Object {obj.id} changed since it was loaded (expected version 1)."
+                )
+            return original_save(obj)
+
+        repo.save = flaky_save
+        runner = IntakeRunner(
+            repo,
+            storage,
+            str(session.id),
+            lambda: "pause" if state["pause_requested"] else "go",
+            build_document_parsers(),
+        )
+        runner.run()
+
+        stored = repo.store[str(session.id)]
+        assert (stored.metadata.get_value(KEY_INTAKE_STATUS) or "") == "paused"
+
+    def test_conflict_when_row_deleted_stops_silently(self) -> None:
+        repo, storage = InMemoryRepo(), FakeStorage()
+        session = mk_session(repo)
+        mk_item(repo, session, "a.txt", blob=b"hello", storage=storage)
+
+        state = {"deleted": False}
+        original_save = repo.save
+
+        def flaky_save(obj: UniversalObject) -> UniversalObject:
+            if obj.object_type is ObjectType.INTAKE_SESSION and not state["deleted"]:
+                state["deleted"] = True
+                repo.store.pop(str(obj.id), None)  # the row vanished (delete)
+                raise OptimisticConcurrencyError(
+                    f"Object {obj.id} changed since it was loaded."
+                )
+            return original_save(obj)
+
+        repo.save = flaky_save
+        runner = IntakeRunner(
+            repo,
+            storage,
+            str(session.id),
+            lambda: "go",
+            build_document_parsers(),
+        )
+        runner.run()  # must not raise, must not write anything back
+        assert str(session.id) not in repo.store

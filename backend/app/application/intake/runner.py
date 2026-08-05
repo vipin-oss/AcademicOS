@@ -82,6 +82,7 @@ from app.application.intake.pipeline import (
 from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import (
     MetadataLayer,
@@ -153,17 +154,31 @@ class IntakeRunner:
         session = self._load_session()
         if session is None:
             return  # deleted before the dispatcher picked it up
-        try:
-            self._checkpoint()
-            self._mark_running(session)
-            self._enumerate(session)
-            self._process_items(session)
-            self._complete(session)
-        except RunAborted as abort:
-            if abort.persist:
-                self._persist_abort(session, abort.outcome)
-        except Exception as exc:  # noqa: BLE001 — systemic failure is session-level
-            self._fail(session, exc)
+        while True:
+            try:
+                self._checkpoint()
+                self._mark_running(session)
+                self._enumerate(session)
+                self._process_items(session)
+                self._complete(session)
+                return
+            except RunAborted as abort:
+                if abort.persist:
+                    self._persist_abort(session, abort.outcome)
+                return
+            except OptimisticConcurrencyError:
+                # R3 — a concurrent control write (pause/cancel) landed on the
+                # session row mid-drain, so this instance is stale. The row is
+                # authoritative: re-load and let the cooperative checkpoint
+                # decide. The drain is resumable by design (stage/item work is
+                # idempotent), so a restart repeats no work and a stale write
+                # never fails the session.
+                session = self._load_session()
+                if session is None:
+                    return  # deleted underneath — nothing left to annotate
+            except Exception as exc:  # noqa: BLE001 — systemic failure is session-level
+                self._fail(session, exc)
+                return
 
     # ------------------------------------------------------ session verbs
     def _load_session(self) -> UniversalObject | None:
