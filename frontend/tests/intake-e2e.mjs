@@ -10,7 +10,7 @@
  *     skip count, hidden-dir pruning, live stage cursor, summary line
  *   - items: sha-256 parity with node-side digest, staged blob byte parity,
  *     magic-byte MIME detection incl. OOXML refinement, 8-entry stage
- *     history with honest deferred records (milestone owners named)
+ *     history — extract real since M2, later deferred owners still named
  *   - explicit files drop: relative paths collapse to basenames
  *   - job controls: pause freezes a 240-file bulk import, resume drains it
  *     to 100%, cancel stops a second bulk import; invalid transitions are
@@ -56,9 +56,43 @@ const FOLDER_A = path.join(FIX, "papers");
 fs.mkdirSync(path.join(FOLDER_A, ".hidden"), { recursive: true });
 const NOTE_BYTES = Buffer.from(`AcademicOS intake E2E note ${STAMP}\n`);
 fs.writeFileSync(path.join(FOLDER_A, "note.txt"), NOTE_BYTES);
+// Real one-page PDF (M2: the extraction engine now actually parses the file —
+// a magic-byte stub would honestly surface as an item error). Header still
+// starts "%PDF-" so the M1 MIME-magic assertions keep their original intent.
+function makePdfBytes(text, title) {
+  const esc = (s) => s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const content = Buffer.from(`BT /F1 12 Tf 72 720 Td (${esc(text)}) Tj ET`, "latin1");
+  const info = title ? `<< /Title (${esc(title)}) >>` : "<< >>";
+  const objects = [
+    Buffer.from("<< /Type /Catalog /Pages 2 0 R >>"),
+    Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+    Buffer.from(
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    ),
+    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`), content, Buffer.from("\nendstream")]),
+    Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+    Buffer.from(info),
+  ];
+  const chunks = [Buffer.from("%PDF-1.4\n")];
+  const offsets = [];
+  let length = chunks[0].length;
+  objects.forEach((body, i) => {
+    offsets.push(length);
+    const head = Buffer.from(`${i + 1} 0 obj\n`);
+    const tail = Buffer.from("\nendobj\n");
+    chunks.push(head, body, tail);
+    length += head.length + body.length + tail.length;
+  });
+  const xrefAt = length;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  xref += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+  xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  chunks.push(Buffer.from(xref));
+  return Buffer.concat(chunks);
+}
 fs.writeFileSync(
   path.join(FOLDER_A, "paper.pdf"),
-  Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(64, 0x25)]),
+  makePdfBytes(`Intake E2E paper ${STAMP}`, `Intake E2E ${STAMP}`),
 );
 fs.writeFileSync(
   path.join(FOLDER_A, "data.xlsx"),
@@ -282,13 +316,18 @@ async function apiPhase() {
   );
   const stages = (note?.stage_history ?? []).map((entry) => entry.stage);
   const extractStep = (note?.stage_history ?? []).find((entry) => entry.stage === "extract");
+  const classifyStep = (note?.stage_history ?? []).find((entry) => entry.stage === "classify");
   check(
-    "api: 8-step stage history with honest deferred records (no stubs)",
+    "api: 8-step stage history — extract is real since M2, later stages stay honestly deferred",
     JSON.stringify(stages) ===
       JSON.stringify(["enumerate", "stage", "hash", "extract", "classify", "match", "propose", "review"]) &&
-      extractStep?.result?.deferred === true &&
-      String(extractStep?.result?.milestone).includes("M3"),
-    stages.join(">"),
+      extractStep?.result?.status === "extracted" &&
+      typeof extractStep?.result?.text_key === "string" &&
+      (extractStep?.result?.chars ?? 0) > 0 &&
+      note?.extraction?.status === "extracted" &&
+      classifyStep?.result?.deferred === true &&
+      String(classifyStep?.result?.milestone).includes("M5"),
+    `extract=${JSON.stringify(extractStep?.result ?? null)} stages=${stages.join(">")}`,
   );
 
   // ---------------------------- invalid control transitions
@@ -498,17 +537,31 @@ async function uiPhase() {
       ),
     );
     check(
-      "details: stage tracker marks deferred stages with their milestone owners",
+      "details: stage tracker — extract is live (no milestone marker), deferred owners stay named",
       await page.evaluate(() => {
         const tracker = document.querySelector('[aria-label="Pipeline stages"]');
         return (
           Boolean(tracker) &&
           tracker.textContent.includes("Enumerate") &&
+          tracker.textContent.includes("Extract") &&
           tracker.textContent.includes("Review") &&
-          tracker.textContent.includes("M3") &&
+          !tracker.textContent.includes("M3") &&
+          tracker.textContent.includes("M5") &&
           tracker.textContent.includes("M9")
         );
       }),
+    );
+    check(
+      "details: extraction rollup card counts real engine output (M2)",
+      await page.evaluate(
+        () =>
+          document
+            .querySelector('[aria-label="Progress card: Extracted"]')
+            ?.textContent.includes("2") &&
+          document
+            .querySelector('[aria-label="Progress card: Extracted"]')
+            ?.textContent.includes("2 unsupported"),
+      ),
     );
     check(
       "details: summary line renders for the completed import",

@@ -28,6 +28,8 @@ from app.application.use_cases.intake.list_sessions import ListIntakeSessionsUse
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectType
 from app.domain.value_objects.object_id import ObjectId
+from app.infrastructure.extraction import build_document_parsers
+from app.tests.unit.extraction_fixtures import make_pdf_bytes
 
 
 # ---------------------------------------------------------------- fakes
@@ -88,9 +90,10 @@ class FakeJobs:
 
 
 def _mk_fixture_folder(root: Path) -> None:
+    # M2: extraction is real — the PDF fixture must be genuinely parseable.
     (root / "Sub").mkdir(parents=True)
     (root / "a.txt").write_bytes(b"alpha")
-    (root / "Sub" / "b.pdf").write_bytes(b"%PDF-1.4 two")
+    (root / "Sub" / "b.pdf").write_bytes(make_pdf_bytes("two"))
     (root / ".DS_Store").write_bytes(b"junk")
 
 
@@ -106,7 +109,7 @@ def _mk_session(repo: FakeRepo, storage_root: Path, source: Path, **kwargs) -> s
 
 
 def _run(repo: FakeRepo, storage: FakeStorage, sid: str, control=lambda: "go") -> None:
-    IntakeRunner(repo, storage, sid, control).run()
+    IntakeRunner(repo, storage, sid, control, build_document_parsers()).run()
 
 
 def _status(repo: FakeRepo, sid: str) -> str:
@@ -314,11 +317,23 @@ class TestRunner:
         from app.application.intake.pipeline import staging_key_for
         assert key == staging_key_for(sid, "Sub/b.pdf")
         assert ".." not in key and ":" not in key
-        assert storage.blobs[key] == b"%PDF-1.4 two"
+        assert storage.blobs[key].startswith(b"%PDF-1.4")  # staged bytes intact (never rewritten)
+
+        # M2: the extract step is real now — a complete honest descriptor.
+        extraction = pdf.metadata.get_value("intake.extraction")
+        assert '"status":"extracted"' in extraction
+        assert '"engine":"pypdf' in extraction
+        assert '"page_count":1' in extraction
+        assert '"word_count":1' in extraction
+        assert '"preview_text":"two"' in extraction
+        text_key = pdf.metadata.get_value("intake.extracted_key")
+        assert text_key.startswith("intake-extracted/") and text_key.endswith(".txt")
+        assert storage.blobs[text_key] == b"two"  # text blob kept separate from staging
 
         history = pdf.metadata.get_value("intake.stage_history")
         for stage in ("enumerate", "stage", "hash", "extract", "classify", "match", "propose", "review"):
             assert f'"stage":"{stage}"' in history
+        assert '"status":"extracted"' in history  # real extract step recorded
         assert "M5" in history and "M7" in history  # deferred milestones recorded
 
         stats = repo.store[sid].metadata.get_value("intake.statistics")
@@ -390,7 +405,7 @@ class TestRunner:
         sid = _mk_session(repo, tmp_path / "st", source)
 
         # Stage 1: vanish the file after enumeration -> item error, session completes.
-        runner = IntakeRunner(repo, storage, sid, lambda: "go")
+        runner = IntakeRunner(repo, storage, sid, lambda: "go", build_document_parsers())
         session = runner._load_session()
         runner._mark_running(session)
         runner._enumerate(session)

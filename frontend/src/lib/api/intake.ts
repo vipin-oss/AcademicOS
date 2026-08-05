@@ -63,8 +63,30 @@ export function pauseIntakeSession(sessionId: string): Promise<IntakeSession> {
   return api.post<IntakeSession>(`/intake/sessions/${sessionId}/pause`);
 }
 
+/**
+ * M2: the raw extracted text of one item. Resolves to the exact bytes the
+ * extraction engine produced (never assembled client-side); a 404 `ApiError`
+ * is the honest answer for unsupported/unextracted items — callers render
+ * that as an empty state, never as fabricated text.
+ */
+export function getIntakeExtractedText(
+  sessionId: string,
+  itemId: string,
+  options?: { signal?: AbortSignal },
+): Promise<string> {
+  return api.getText(`/intake/sessions/${sessionId}/items/${itemId}/extraction/text`, options);
+}
+
 export function resumeIntakeSession(sessionId: string): Promise<IntakeSession> {
   return api.post<IntakeSession>(`/intake/sessions/${sessionId}/resume`);
+}
+
+/**
+ * M2.3: re-run ONLY the failed items that still own retry attempts (max 3
+ * attempts each). A 422 is the honest answer when nothing is retryable.
+ */
+export function retryIntakeSession(sessionId: string): Promise<IntakeSession> {
+  return api.post<IntakeSession>(`/intake/sessions/${sessionId}/retry`);
 }
 
 export function cancelIntakeSession(sessionId: string): Promise<IntakeSession> {

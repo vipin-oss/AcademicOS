@@ -8,7 +8,11 @@ here — only persistence plumbing.
 """
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.domain.entities.object import UniversalObject
@@ -25,10 +29,53 @@ from app.infrastructure.persistence.snapshots import (
     RelationshipSnapshot,
 )
 
+# Transient lock contention (SQLite single-writer reality): bounded, fixed
+# backoff — deterministic by contract, no jitter, no unbounded stalls. The
+# driver's own busy timeout waits inside each attempt, so five attempts
+# tolerate seconds-scale contention bursts on loaded machines.
+_LOCK_RETRY_ATTEMPTS = 5
+_LOCK_RETRY_BACKOFF_SECONDS = (0.05, 0.1, 0.2, 0.4)  # slept before retries 2..5
+_SQLITE_BUSY = 5  # primary sqlite error code for lock contention
+_LOCK_MESSAGE_TOKENS = ("database is locked", "database table is locked", "database is busy")
+
+
+def _is_lock_contention(exc: OperationalError) -> bool:
+    """True ONLY for transient lock contention — never for real errors (I/O,
+    constraint, syntax), which must fail fast and surface immediately."""
+
+    orig = getattr(exc, "orig", None)
+    if getattr(orig, "sqlite_errorcode", None) == _SQLITE_BUSY:
+        return True
+    message = str(exc).lower()
+    return any(token in message for token in _LOCK_MESSAGE_TOKENS)
+
 
 class SQLAlchemyObjectRepository(ObjectRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def _commit_with_retry(self, write: Callable[[], None]) -> None:
+        """Write + commit with bounded protection against lock contention.
+
+        A transient "database is locked" is inherent to a single-writer DB
+        whose readers (live progress polls) overlap the drain's per-item
+        commits; without a retry it escapes mid-drain — past the runner's
+        own failure handlers — and can wedge a job in a non-terminal state.
+        The write is idempotent (the same snapshot merged again), so a fixed
+        backoff and re-issue is honest. Non-lock errors raise on first
+        failure; lock errors raise after the bound is spent.
+        """
+
+        for attempt in range(_LOCK_RETRY_ATTEMPTS):
+            try:
+                write()
+                self._session.commit()
+                return
+            except OperationalError as exc:
+                self._session.rollback()
+                if not _is_lock_contention(exc) or attempt == _LOCK_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(_LOCK_RETRY_BACKOFF_SECONDS[attempt])
 
     # --- internal mapping (Snapshot <-> Model, via SnapshotMapper) ---
     @staticmethod
@@ -65,8 +112,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
 
     # --- requested public surface ---
     def save(self, entity: UniversalObject) -> None:
-        self._session.merge(self._to_model(entity))
-        self._session.commit()
+        model = self._to_model(entity)  # snapshot is built once; retries re-merge it
+        self._commit_with_retry(lambda: self._session.merge(model))
 
     def get(self, id: ObjectId) -> UniversalObject | None:
         model = self._session.get(ObjectModel, str(id))
@@ -78,8 +125,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def delete(self, id: ObjectId) -> None:
         model = self._session.get(ObjectModel, str(id))
         if model is not None:
-            self._session.delete(model)
-            self._session.commit()
+            self._commit_with_retry(lambda: self._session.delete(model))
 
     def list(self) -> list[UniversalObject]:
         models = self._session.execute(select(ObjectModel)).scalars().all()

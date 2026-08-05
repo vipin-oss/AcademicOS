@@ -9,9 +9,12 @@ PostgreSQL.
 from __future__ import annotations
 
 import os
+import sqlite3
+import time
 
 import pytest
 from sqlalchemy import StaticPool, create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.entities.object import UniversalObject
@@ -134,3 +137,77 @@ def test_find_by_metadata_requires_postgres(session):
     found = repo.find_by_metadata("code", "CS101")
     assert len(found) == 1
     assert found[0].metadata.get_value("code") == "CS101"
+
+
+# ------------------------------------------------- lock-contention persistence
+# SQLite is single-writer: readers (live progress polling) overlap the drain's
+# per-item commits, and a loaded machine (AV scanning, full-suite churn, slow
+# disks) stretches that overlap past the driver's busy timeout. The driver then
+# hands back a TRANSIENT "database is locked". These pins lock the adapter's
+# contract: absorb the transient deterministically, never retry real errors,
+# and never stall without bound. Injection is a shadowed session.commit — the
+# exact failure site, zero wall-clock dependence.
+
+
+def _locked() -> OperationalError:
+    """The exact transient the pysqlite driver hands back under contention."""
+
+    return OperationalError(
+        "UPDATE objects", (), sqlite3.OperationalError("database is locked")
+    )
+
+
+def test_save_retries_transient_lock_contention_and_lands(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = _sample()
+    calls = {"n": 0}
+    real_commit = session.commit
+
+    def flaky_commit() -> None:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise _locked()
+        real_commit()
+
+    session.commit = flaky_commit  # instance shadow — deterministic injection
+    repo.save(obj)  # must heal, must not raise
+    assert calls["n"] == 3  # two transient failures absorbed, third lands
+
+    session.commit = real_commit
+    landed = repo.get(obj.id)
+    assert landed is not None and landed.title == "Intro to CS"
+
+
+def test_save_fails_fast_on_non_lock_errors(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = _sample()
+    calls = {"n": 0}
+
+    def broken_commit() -> None:
+        calls["n"] += 1
+        raise OperationalError(
+            "UPDATE objects", (), sqlite3.OperationalError("disk I/O error")
+        )
+
+    session.commit = broken_commit
+    with pytest.raises(OperationalError):
+        repo.save(obj)
+    assert calls["n"] == 1  # real errors are never retried, never hidden
+
+
+def test_lock_retry_is_bounded_and_deterministic(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = _sample()
+    calls = {"n": 0}
+
+    def locked_forever() -> None:
+        calls["n"] += 1
+        raise _locked()
+
+    session.commit = locked_forever
+    started = time.monotonic()
+    with pytest.raises(OperationalError):
+        repo.save(obj)
+    elapsed = time.monotonic() - started
+    assert calls["n"] == 5  # hard bound — a wedge surfaces, never a stall
+    assert elapsed < 2.0, elapsed  # fixed backoff schedule, no jitter

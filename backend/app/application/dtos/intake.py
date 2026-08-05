@@ -7,14 +7,16 @@ frozen enum, richer state held as JSON-encoded metadata entries written with
 ``L1_SYSTEM`` / ``Provenance.SYSTEM`` so a human-asserted value can never be
 silently overwritten by the pipeline (FR-MET-009).
 
-Structural information only: path, name, extension, size, detected MIME,
-SHA-256 hash and stage cursor. NO extracted content metadata (that lands in
-milestones M3+), no classification, no relationships.
+Structural information plus the M2 extraction summary: path, name, extension,
+size, detected MIME, SHA-256 hash, stage cursor and — since M2 landed — the
+extraction descriptor (text itself lives in separate ``intake-extracted/``
+storage blobs). Still no classification, no relationships.
 
 No framework imports here — pure boundary shapes mirroring ``dtos/document.py``.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -51,6 +53,10 @@ class IntakeItemStatus(str, Enum):
 
     PENDING = "pending"
     STAGED = "staged"
+    # M2 Part 3: visible while a worker actively processes the item.
+    # ``EXTRACTING`` is the first attempt; ``RETRYING`` every later one.
+    EXTRACTING = "extracting"
+    RETRYING = "retrying"
     AWAITING_REVIEW = "awaiting_review"
     ERROR = "error"
 
@@ -69,9 +75,10 @@ class IntakeStage(str, Enum):
     COMMIT = "commit"
 
 
-#: Stages every item walks in M1. Everything past HASH is executed by the
-#: structurally-real *deferred* handler: the transition, timing and stage
-#: record are production code; the domain work arrives in later milestones.
+#: Stages every item walks in M1. EXTRACT became real in M2 (deterministic
+#: engine); everything past EXTRACT is executed by the structurally-real
+#: *deferred* handler: the transition, timing and stage record are production
+#: code; the domain work arrives in later milestones.
 ITEM_STAGE_SEQUENCE: tuple[IntakeStage, ...] = (
     IntakeStage.STAGE,
     IntakeStage.HASH,
@@ -84,8 +91,9 @@ ITEM_STAGE_SEQUENCE: tuple[IntakeStage, ...] = (
 
 #: Which milestone will replace each deferred stage with real logic. Surfaced
 #: in stage records so the roadmap is readable from data, not comments.
+#: (EXTRACT left this map when the M2 deterministic engine landed; OCR for
+#: scans/images of it remains M10.)
 DEFERRED_STAGE_MILESTONES: dict[IntakeStage, str] = {
-    IntakeStage.EXTRACT: "M3 (extraction) / M10 (OCR)",
     IntakeStage.CLASSIFY: "M5 (classification)",
     IntakeStage.MATCH: "M7 (record matching)",
     IntakeStage.PROPOSE: "M8 (proposal engine)",
@@ -154,6 +162,12 @@ KEY_ERROR = "intake.error"
 KEY_CONTROL = "intake.control"
 KEY_CURRENT_STAGE = "intake.current_stage"
 KEY_ENDED_AT = "intake.ended_at"
+# M2 Part 3 (queue & recovery):
+# - durable single-worker lease on the session (crash witness + cross-instance
+#   guard): JSON {"owner", "acquired_at", "heartbeat_at"}
+KEY_LEASE = "intake.worker"
+# - the item currently being processed (live progress: current filename)
+KEY_CURRENT_ITEM = "intake.current_item"
 # Item-only keys
 KEY_RELATIVE_PATH = "intake.relative_path"
 KEY_ORIGINAL_PATH = "intake.original_path"
@@ -165,6 +179,10 @@ KEY_STAGED_KEY = "intake.staged_key"
 KEY_ITEM_STAGE = "intake.stage"
 KEY_STAGE_HISTORY = "intake.stage_history"
 KEY_ATTEMPTS = "intake.attempts"
+# M2 extraction keys (descriptor JSON + text-blob key — text itself is a
+# separate storage blob under the intake-extracted/ prefix, never staged data)
+KEY_EXTRACTION = "intake.extraction"
+KEY_EXTRACTED_KEY = "intake.extracted_key"
 
 
 # --------------------------------------------------------------------------
@@ -222,6 +240,10 @@ class IntakeItemFacts:
     mime_type: str | None
     has_hash: bool
     has_staged_key: bool
+    extraction_status: str | None  # M2: "extracted" / "unsupported" / None
+    attempts: int = 0  # M2.3: retry mechanics (terminal at RETRY_LIMIT)
+    needs_ocr: bool = False  # M2.3: pdf + extracted + zero characters (real)
+    extract_seconds: float | None = None  # M2.3: last extract-step duration
 
 
 def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[str, Any]:
@@ -231,11 +253,17 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
     counts = {
         IntakeItemStatus.PENDING.value: 0,
         IntakeItemStatus.STAGED.value: 0,
+        IntakeItemStatus.EXTRACTING.value: 0,
+        IntakeItemStatus.RETRYING.value: 0,
         IntakeItemStatus.AWAITING_REVIEW.value: 0,
         IntakeItemStatus.ERROR.value: 0,
     }
     hashed = 0
     staged = 0
+    extracted = 0
+    unsupported = 0
+    needs_ocr = 0
+    retryable = 0
     total_bytes = 0
     by_extension: dict[str, int] = {}
     by_mime: dict[str, int] = {}
@@ -250,6 +278,14 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
             hashed += 1
         if fact.has_staged_key:
             staged += 1
+        if fact.extraction_status == "extracted":
+            extracted += 1
+        elif fact.extraction_status == "unsupported":
+            unsupported += 1
+        if fact.needs_ocr:
+            needs_ocr += 1
+        if fact.status is IntakeItemStatus.ERROR and fact.attempts < RETRY_LIMIT:
+            retryable += 1
     processed = counts[IntakeItemStatus.AWAITING_REVIEW.value] + counts[IntakeItemStatus.ERROR.value]
     percent = round(100.0 * processed / total, 1) if total else (100.0 if enumerated else 0.0)
     return {
@@ -265,6 +301,36 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         "total_bytes": total_bytes,
         "by_extension": dict(sorted(by_extension.items(), key=lambda kv: (-kv[1], kv[0]))),
         "by_mime": dict(sorted(by_mime.items(), key=lambda kv: (-kv[1], kv[0]))),
+        # M2 extraction rollups (live like everything else — no checkpoints)
+        "extracted_items": extracted,
+        "unsupported_items": unsupported,
+        # M2.3 queue counters (live while a worker drains)
+        "extracting": counts[IntakeItemStatus.EXTRACTING.value],
+        "retrying": counts[IntakeItemStatus.RETRYING.value],
+        "needs_ocr_items": needs_ocr,
+        "retryable_items": retryable,
+    }
+
+
+def extraction_timing(facts: list[IntakeItemFacts]) -> dict[str, Any]:
+    """Measured extraction speed over the items that honestly produced a
+    duration — never estimated from wall clocks or fabricated when empty.
+
+    Averages come from real ``extract`` stage-history durations; the ETA is
+    ``remaining unfinished items × average`` and stays ``None`` until at
+    least one finished extraction exists to measure.
+    """
+
+    durations = [f.extract_seconds for f in facts if f.extract_seconds is not None]
+    if not durations:
+        return {
+            "avg_seconds_per_item": None,
+            "items_per_minute": None,
+        }
+    avg = sum(durations) / len(durations)
+    return {
+        "avg_seconds_per_item": round(avg, 3),
+        "items_per_minute": round(60.0 / avg, 1) if avg > 0 else None,
     }
 
 
@@ -275,7 +341,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
 
 @dataclass(frozen=True)
 class IntakeProgressOutput:
-    """Lightweight polling payload for one session."""
+    """Full polling payload for one session (M2.3: live queue + speed/ETA)."""
 
     session_id: str
     status: str
@@ -285,6 +351,12 @@ class IntakeProgressOutput:
     percent: float
     counts: dict[str, int]
     updated_at: str | None
+    # M2.3 additive fields (None until honestly measurable)
+    current_item: str | None = None
+    remaining_items: int = 0
+    avg_seconds_per_item: float | None = None
+    items_per_minute: float | None = None
+    eta_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -324,6 +396,7 @@ class IntakeItemOutput:
     attempts: int
     stage_history: list[dict[str, Any]]
     error: dict[str, Any] | None
+    extraction: dict[str, Any] | None  # M2 descriptor (None until EXTRACT runs)
     created_at: str | None
     updated_at: str | None
 
@@ -366,6 +439,7 @@ def _meta_int(obj: UniversalObject, key: str, default: int = 0) -> int:
 def intake_item_facts(obj: UniversalObject) -> IntakeItemFacts:
     """Fold one item object into the facts used by live aggregation."""
 
+    descriptor = _extraction_dict_of(obj)
     return IntakeItemFacts(
         status=IntakeItemStatus(obj.metadata.get_value(KEY_INTAKE_STATUS) or "pending"),
         stage=IntakeStage(obj.metadata.get_value(KEY_ITEM_STAGE) or "enumerate"),
@@ -374,7 +448,60 @@ def intake_item_facts(obj: UniversalObject) -> IntakeItemFacts:
         mime_type=obj.metadata.get_value(KEY_MIME_TYPE),
         has_hash=bool(obj.metadata.get_value(KEY_SHA256)),
         has_staged_key=bool(obj.metadata.get_value(KEY_STAGED_KEY)),
+        extraction_status=str(descriptor["status"]) if descriptor else None,
+        attempts=_meta_int(obj, KEY_ATTEMPTS),
+        needs_ocr=_needs_ocr_of(descriptor),
+        extract_seconds=_extract_seconds_of(obj),
     )
+
+
+def _extraction_dict_of(obj: UniversalObject) -> dict[str, Any] | None:
+    """The decoded M2 descriptor dict, or ``None`` when absent/malformed."""
+
+    data = json_decode(obj.metadata.get_value(KEY_EXTRACTION), None)
+    if isinstance(data, dict) and data.get("status") in ("extracted", "unsupported"):
+        return data
+    return None
+
+
+def _needs_ocr_of(descriptor: dict[str, Any] | None) -> bool:
+    """Honest needs-OCR signal: a PDF whose extraction yielded zero characters
+    (no text layer). The discriminator is ``format``, not the engine name."""
+
+    if not isinstance(descriptor, dict):
+        return False
+    return (
+        descriptor.get("status") == "extracted"
+        and descriptor.get("format") == "pdf"
+        and (descriptor.get("character_count") or 0) == 0
+    )
+
+
+def _extract_seconds_of(obj: UniversalObject) -> float | None:
+    """Duration of the *last* recorded extract step (real wall time), or None."""
+
+    history = json_decode(obj.metadata.get_value(KEY_STAGE_HISTORY), [])
+    if not isinstance(history, list):
+        return None
+    for record in reversed(history):
+        if not isinstance(record, dict) or record.get("stage") != IntakeStage.EXTRACT.value:
+            continue
+        try:
+            entered = dt.datetime.fromisoformat(str(record.get("entered_at") or ""))
+            exited = dt.datetime.fromisoformat(str(record.get("exited_at") or ""))
+        except ValueError:
+            return None
+        return max(0.0, (exited - entered).total_seconds())
+    return None
+
+
+def intake_item_extraction(obj: UniversalObject) -> dict[str, Any] | None:
+    """The full M2 descriptor as an API-ready dict (None before EXTRACT)."""
+
+    data = json_decode(obj.metadata.get_value(KEY_EXTRACTION), None)
+    if not isinstance(data, dict) or data.get("status") not in ("extracted", "unsupported"):
+        return None
+    return data
 
 
 def intake_item_output(obj: UniversalObject) -> IntakeItemOutput:
@@ -396,6 +523,7 @@ def intake_item_output(obj: UniversalObject) -> IntakeItemOutput:
         attempts=_meta_int(obj, KEY_ATTEMPTS),
         stage_history=json_decode(obj.metadata.get_value(KEY_STAGE_HISTORY), []),
         error=json_decode(obj.metadata.get_value(KEY_ERROR), None),
+        extraction=intake_item_extraction(obj),
         created_at=obj.audit.created_at.isoformat() if obj.audit else None,
         updated_at=obj.audit.updated_at.isoformat() if obj.audit and obj.audit.updated_at else None,
     )
@@ -409,11 +537,29 @@ def intake_session_status_of(obj: UniversalObject) -> IntakeSessionStatus:
 def intake_session_progress_of(
     obj: UniversalObject, items: list[UniversalObject]
 ) -> dict[str, Any]:
-    """Progress payload recomputed from live items (never from checkpoints)."""
+    """Progress payload recomputed from live items (never from checkpoints).
+
+    M2.3 additions (all live, all additive): queue counters, the currently
+    processed filename, measured extraction speed and a data-driven ETA —
+    every number derived from recorded stage history, nothing simulated.
+    """
 
     checkpoint = json_decode(obj.metadata.get_value(KEY_PROGRESS), {})
     enumerated = bool(checkpoint.get("enumerated"))
-    summary = summarize_items([intake_item_facts(i) for i in items], enumerated=enumerated)
+    facts = [intake_item_facts(i) for i in items]
+    summary = summarize_items(facts, enumerated=enumerated)
+    timing = extraction_timing(facts)
+    # Work the queue still HONESTLY owes: everything not in a final resting
+    # state — pending/staged/active attempts PLUS failed items that still own
+    # retry attempts. A permanently-failed item (attempts exhausted) is at
+    # rest and stays out; a completed-with-errors session keeps its retryable
+    # remainder visible until someone acts on it.
+    remaining = (
+        summary["total_items"]
+        - summary["awaiting_review"]
+        - (summary["errors"] - summary["retryable_items"])
+    )
+    avg = timing["avg_seconds_per_item"]
     return {
         "total": summary["total_items"],
         "processed": summary["processed_items"],
@@ -423,6 +569,21 @@ def intake_session_progress_of(
         "hashed": summary["hashed"],
         "awaiting_review": summary["awaiting_review"],
         "errors": summary["errors"],
+        # M2.3 — queue counters
+        "extracting": summary["extracting"],
+        "retrying": summary["retrying"],
+        "retryable_items": summary["retryable_items"],
+        "remaining_items": remaining,
+        "extracted_items": summary["extracted_items"],
+        "unsupported_items": summary["unsupported_items"],
+        "needs_ocr_items": summary["needs_ocr_items"],
+        # M2.3 — live foreground (current filename + measured speed + ETA)
+        "current_item": json_decode(obj.metadata.get_value(KEY_CURRENT_ITEM), None),
+        "current_stage": obj.metadata.get_value(KEY_CURRENT_STAGE)
+        or IntakeStage.ENUMERATE.value,
+        "avg_seconds_per_item": avg,
+        "items_per_minute": timing["items_per_minute"],
+        "eta_seconds": round(remaining * avg) if avg is not None else None,
     }
 
 
@@ -463,7 +624,7 @@ def intake_session_output(obj: UniversalObject, items: list[UniversalObject]) ->
 
 
 def intake_progress_output(obj: UniversalObject, items: list[UniversalObject]) -> IntakeProgressOutput:
-    """Lean polling payload."""
+    """Full polling payload (queue counters + current item + speed/ETA)."""
 
     progress = intake_session_progress_of(obj, items)
     return IntakeProgressOutput(
@@ -479,6 +640,17 @@ def intake_progress_output(obj: UniversalObject, items: list[UniversalObject]) -
             "hashed": progress["hashed"],
             "awaiting_review": progress["awaiting_review"],
             "errors": progress["errors"],
+            "extracting": progress["extracting"],
+            "retrying": progress["retrying"],
+            "retryable": progress["retryable_items"],
+            "extracted": progress["extracted_items"],
+            "unsupported": progress["unsupported_items"],
+            "needs_ocr": progress["needs_ocr_items"],
         },
         updated_at=obj.audit.updated_at.isoformat() if obj.audit and obj.audit.updated_at else None,
+        current_item=progress["current_item"],
+        remaining_items=progress["remaining_items"],
+        avg_seconds_per_item=progress["avg_seconds_per_item"],
+        items_per_minute=progress["items_per_minute"],
+        eta_seconds=progress["eta_seconds"],
     )

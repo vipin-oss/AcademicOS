@@ -107,6 +107,21 @@ def staging_key_for(session_id: str, relative_path: str) -> str:
     return f"{STAGING_PREFIX}/{sanitize_segment(session_id)}/{sanitize_relative_path(relative_path)}"
 
 
+def extracted_key_for(session_id: str, relative_path: str) -> str:
+    """``intake-extracted/<session>/<sanitised relative path>.txt`` — the M2
+    extraction-text twin of :func:`staging_key_for`.
+
+    Same traversal/sanitisation doctrine; a different *top-level* prefix plus
+    a ``.txt`` suffix, so an extracted text blob can never collide with or
+    overwrite a staged source file, and session cleanup covers both.
+    """
+
+    return (
+        f"intake-extracted/{sanitize_segment(session_id)}/"
+        f"{sanitize_relative_path(relative_path)}.txt"
+    )
+
+
 # --------------------------------------------------------------------------
 # MIME sniffing (magic bytes first; extension refines container formats)
 # --------------------------------------------------------------------------

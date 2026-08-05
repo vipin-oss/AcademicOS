@@ -171,7 +171,9 @@ class TestStageVocabulary:
         ]
 
     def test_every_deferred_stage_names_its_milestone(self) -> None:
-        for stage in (IntakeStage.EXTRACT, IntakeStage.CLASSIFY, IntakeStage.MATCH, IntakeStage.PROPOSE):
+        # M2: EXTRACT left the deferred map when the deterministic engine landed.
+        assert IntakeStage.EXTRACT not in DEFERRED_STAGE_MILESTONES
+        for stage in (IntakeStage.CLASSIFY, IntakeStage.MATCH, IntakeStage.PROPOSE):
             result = deferred_stage_result(stage)
             assert result["deferred"] is True
             assert result["milestone"] == DEFERRED_STAGE_MILESTONES[stage]
@@ -189,10 +191,10 @@ class TestStageVocabulary:
 class TestAggregation:
     def _facts(self) -> list[IntakeItemFacts]:
         return [
-            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 100, "pdf", "application/pdf", True, True),
-            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 300, "pdf", "application/pdf", True, True),
-            IntakeItemFacts(IntakeItemStatus.ERROR, IntakeStage.STAGE, 50, "png", None, False, False),
-            IntakeItemFacts(IntakeItemStatus.PENDING, IntakeStage.ENUMERATE, 10, "txt", None, False, False),
+            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 100, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 300, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.ERROR, IntakeStage.STAGE, 50, "png", None, False, False, "unsupported"),
+            IntakeItemFacts(IntakeItemStatus.PENDING, IntakeStage.ENUMERATE, 10, "txt", None, False, False, None),
         ]
 
     def test_summarize_items_counts_everything(self) -> None:
@@ -207,6 +209,8 @@ class TestAggregation:
         assert summary["total_bytes"] == 460
         assert summary["by_extension"] == {"pdf": 2, "png": 1, "txt": 1}
         assert summary["by_mime"] == {"application/pdf": 2}
+        assert summary["extracted_items"] == 2
+        assert summary["unsupported_items"] == 1
 
     def test_empty_totals(self) -> None:
         assert summarize_items([], enumerated=True)["percent"] == 100.0

@@ -9,11 +9,12 @@ import {
   listIntakeItems,
   pauseIntakeSession,
   resumeIntakeSession,
+  retryIntakeSession,
 } from "@/lib/api/intake";
 import { ACTIVE_STATUSES, INTAKE_ACTIVE_POLL_MS, INTAKE_ITEMS_PAGE_SIZE } from "@/lib/intake/constants";
 import type { IntakeItem, IntakeSession } from "@/types";
 
-export type IntakeAction = "pause" | "resume" | "cancel";
+export type IntakeAction = "pause" | "resume" | "cancel" | "retry";
 
 export interface UseIntakeSessionResult {
   session: IntakeSession | null;
@@ -114,7 +115,9 @@ export function useIntakeSession(
           ? pauseIntakeSession
           : action === "resume"
             ? resumeIntakeSession
-            : cancelIntakeSession;
+            : action === "retry"
+              ? retryIntakeSession
+              : cancelIntakeSession;
       try {
         const updated = await call(sessionId);
         if (!mounted.current) return true;

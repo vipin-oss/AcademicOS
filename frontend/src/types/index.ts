@@ -2195,7 +2195,15 @@ export type IntakeSessionStatus =
   | "cancelled"
   | "completed"
   | "failed";
-export type IntakeItemStatus = "pending" | "staged" | "awaiting_review" | "error";
+export type IntakeItemStatus =
+  | "pending"
+  | "staged"
+  /** M2.3: an extraction attempt is actively running on this item. */
+  | "extracting"
+  /** M2.3: attempt 2..N running after a failure (retry budget: 3). */
+  | "retrying"
+  | "awaiting_review"
+  | "error";
 export type IntakeStageName =
   | "enumerate"
   | "stage"
@@ -2223,6 +2231,20 @@ export interface IntakeSessionProgress {
   hashed: number;
   awaiting_review: number;
   errors: number;
+  /** M2.3 — queue counters (live, recomputed from items every read). */
+  extracting: number;
+  retrying: number;
+  retryable_items: number;
+  remaining_items: number;
+  extracted_items: number;
+  unsupported_items: number;
+  needs_ocr_items: number;
+  /** M2.3 — live foreground: current filename/stage, measured speed, ETA. */
+  current_item: string | null;
+  current_stage: string;
+  avg_seconds_per_item: number | null;
+  items_per_minute: number | null;
+  eta_seconds: number | null;
 }
 
 export interface IntakeStatistics {
@@ -2235,6 +2257,17 @@ export interface IntakeStatistics {
   staged_items: number;
   awaiting_review: number;
   errors: number;
+  /** M2: items whose extraction engine produced a text record. */
+  extracted_items: number;
+  /** M2: items recorded as UNSUPPORTED (format outside the engine table). */
+  unsupported_items: number;
+  /** M2.3: items in an active attempt (first run / later attempts). */
+  extracting: number;
+  retrying: number;
+  /** M2.3: pdf-derived items whose text layer is empty (need OCR later). */
+  needs_ocr_items: number;
+  /** M2.3: failed items still owning retry attempts (< 3 attempts). */
+  retryable_items: number;
   total_bytes: number;
   by_extension: Record<string, number>;
   by_mime: Record<string, number>;
@@ -2268,6 +2301,13 @@ export interface IntakeProgressCounts {
   hashed: number;
   awaiting_review: number;
   errors: number;
+  /** M2.3 — queue counters (all live, all additive). */
+  extracting: number;
+  retrying: number;
+  retryable: number;
+  extracted: number;
+  unsupported: number;
+  needs_ocr: number;
 }
 
 export interface IntakeProgressUpdate {
@@ -2279,6 +2319,12 @@ export interface IntakeProgressUpdate {
   percent: number;
   counts: IntakeProgressCounts;
   updated_at: string | null;
+  /** M2.3 — live foreground: current filename, remaining work, speed, ETA. */
+  current_item: string | null;
+  remaining_items: number;
+  avg_seconds_per_item: number | null;
+  items_per_minute: number | null;
+  eta_seconds: number | null;
 }
 
 export interface IntakeStageRecord {
@@ -2286,6 +2332,35 @@ export interface IntakeStageRecord {
   entered_at: string;
   exited_at: string;
   result: Record<string, unknown>;
+}
+
+/** M2 extraction outcome for one staged file (backend `ExtractionStatus`). */
+export type IntakeExtractionStatus = "extracted" | "unsupported";
+
+/**
+ * M2 extraction descriptor — mirrors the backend `ExtractionDescriptor.to_dict()`
+ * contract field-for-field. `null` on fields the file honestly does not carry;
+ * `null` on the whole `extraction` field until the extract stage has run.
+ * Nothing here is inferred client-side.
+ */
+export interface IntakeExtractionDescriptor {
+  status: IntakeExtractionStatus;
+  engine: string | null;
+  format: "pdf" | "docx" | "text" | "markdown" | "csv" | "json" | null;
+  sha256: string | null;
+  page_count: number | null;
+  word_count: number | null;
+  character_count: number | null;
+  document_title: string | null;
+  author: string | null;
+  created_at: string | null;
+  modified_at: string | null;
+  embedded_metadata: Record<string, string>;
+  text_key: string | null;
+  text_bytes: number | null;
+  preview_text: string | null;
+  warnings: string[];
+  extracted_at: string | null;
 }
 
 export interface IntakeItem {
@@ -2304,6 +2379,8 @@ export interface IntakeItem {
   attempts: number;
   stage_history: IntakeStageRecord[];
   error: IntakeError | null;
+  /** M2 extraction descriptor; `null` until the extract stage has run. */
+  extraction: IntakeExtractionDescriptor | null;
   created_at: string | null;
   updated_at: string | null;
 }

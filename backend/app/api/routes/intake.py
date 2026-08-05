@@ -23,6 +23,7 @@ Composition root notes:
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.api.mappers.intake_mapper import (
@@ -44,6 +45,7 @@ from app.application.commands.create_intake_session import CreateIntakeSessionCo
 from app.application.commands.delete_intake_session import DeleteIntakeSessionCommand
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.intake.jobs import IntakeJobManager
+from app.application.queries.get_intake_extracted_text import GetIntakeExtractedTextQuery
 from app.application.queries.get_intake_progress import GetIntakeProgressQuery
 from app.application.queries.get_intake_session import GetIntakeSessionQuery
 from app.application.queries.list_intake_items import ListIntakeItemsQuery
@@ -55,12 +57,15 @@ from app.application.use_cases.intake.control_session import (
 )
 from app.application.use_cases.intake.create_session import CreateIntakeSessionUseCase
 from app.application.use_cases.intake.delete_session import DeleteIntakeSessionUseCase
+from app.application.use_cases.intake.get_extracted_text import GetIntakeExtractedTextUseCase
 from app.application.use_cases.intake.get_progress import GetIntakeProgressUseCase
 from app.application.use_cases.intake.get_session import GetIntakeSessionUseCase
 from app.application.use_cases.intake.list_items import ListIntakeItemsUseCase
 from app.application.use_cases.intake.list_sessions import ListIntakeSessionsUseCase
+from app.application.use_cases.intake.retry_session import RetryIntakeSessionUseCase
 from app.core.config import settings
 from app.infrastructure.db.session import SessionLocal, get_db
+from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -88,11 +93,20 @@ def _repository_factory() -> tuple[SQLAlchemyObjectRepository, object]:
 
 
 def get_job_manager(request: Request) -> IntakeJobManager:
-    """Lazy app-state singleton (first intake request constructs it)."""
+    """Lazy app-state singleton (first intake request constructs it).
+
+    Composition note (M2): the deterministic parser registry is built here,
+    at the composition root, from infrastructure adapters — never inside the
+    application layer.
+    """
 
     manager = getattr(request.app.state, "intake_jobs", None)
     if manager is None:
-        manager = IntakeJobManager(_repository_factory, LocalFileStorage(settings.storage_dir))
+        manager = IntakeJobManager(
+            _repository_factory,
+            LocalFileStorage(settings.storage_dir),
+            build_document_parsers(),
+        )
         manager.reconcile_interrupted()
         request.app.state.intake_jobs = manager
     return manager
@@ -194,6 +208,27 @@ def list_intake_items(
     )
 
 
+@router.get(
+    "/sessions/{session_id}/items/{item_id}/extraction/text",
+    response_class=PlainTextResponse,
+)
+def get_intake_extracted_text(
+    session_id: str,
+    item_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    storage: LocalFileStorage = Depends(get_storage),
+) -> PlainTextResponse:
+    """M2: the raw extracted text of one item (404 until honestly available)."""
+
+    try:
+        text = GetIntakeExtractedTextUseCase(repo, storage).execute(
+            GetIntakeExtractedTextQuery(session_id=session_id, item_id=item_id)
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+
 @router.post("/sessions/{session_id}/pause", response_model=IntakeSessionResponseModel)
 def pause_intake_session(
     session_id: str,
@@ -202,6 +237,23 @@ def pause_intake_session(
 ) -> IntakeSessionResponseModel:
     try:
         out = PauseIntakeSessionUseCase(repo, jobs).execute(
+            ControlIntakeSessionCommand(session_id=session_id)
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    return session_response(out)
+
+
+@router.post("/sessions/{session_id}/retry", response_model=IntakeSessionResponseModel)
+def retry_intake_session(
+    session_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    jobs: IntakeJobManager = Depends(get_job_manager),
+) -> IntakeSessionResponseModel:
+    try:
+        out = RetryIntakeSessionUseCase(repo, jobs).execute(
             ControlIntakeSessionCommand(session_id=session_id)
         )
     except ObjectNotFoundError as exc:

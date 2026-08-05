@@ -246,8 +246,86 @@ async function request<T>(
   }
 }
 
+/**
+ * Plain-text variant of {@link request} (Intake M2 raw extracted text).
+ * Identical transport guarantees — offline/timeout/abort, status-normalised
+ * `ApiError`s — but the success body is returned verbatim, never parsed.
+ */
+async function requestText(path: string, options: RequestOptions = {}): Promise<string> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new ApiError("You appear to be offline. Check your connection and try again.", {
+      kind: "offline",
+    });
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const external = options.signal;
+  const forwardAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", forwardAbort);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method: "GET",
+      signal: controller.signal,
+      headers: { Accept: "text/plain" },
+    });
+  } catch (error) {
+    if (external?.aborted) {
+      throw new ApiError("Request cancelled.", { kind: "aborted" });
+    }
+    if (timedOut) {
+      throw new ApiError(
+        `The server did not respond within ${Math.round(timeoutMs / 1000)}s. Please try again.`,
+        { kind: "timeout" },
+      );
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new ApiError("You appear to be offline. Check your connection and try again.", {
+        kind: "offline",
+      });
+    }
+    throw new ApiError(
+      `Cannot reach the API at ${API_BASE_URL}. Make sure the backend is running.`,
+      { kind: "network", details: error },
+    );
+  } finally {
+    clearTimeout(timer);
+    external?.removeEventListener("abort", forwardAbort);
+  }
+
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      const text = await res.text();
+      body = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      /* non-JSON error body — fall back to the status message */
+    }
+    const message =
+      extractMessage(body) ??
+      STATUS_FALLBACK[res.status] ??
+      `Request failed: ${res.status} ${res.statusText}`;
+    throw new ApiError(message, { kind: "http", status: res.status, details: body });
+  }
+
+  return res.text();
+}
+
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>(path, { method: "GET" }, options),
+  /** Raw `text/plain` GET — response returned verbatim (Intake M2). */
+  getText: (path: string, options?: RequestOptions) => requestText(path, options),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(
       path,

@@ -66,6 +66,12 @@ class IntakeProgressResponseModel(BaseModel):
     percent: float
     counts: dict[str, int]
     updated_at: str | None
+    # M2.3 additive queue/live fields (None until honestly measurable)
+    current_item: str | None = None
+    remaining_items: int = 0
+    avg_seconds_per_item: float | None = None
+    items_per_minute: float | None = None
+    eta_seconds: int | None = None
 
 
 class IntakeItemResponseModel(BaseModel):
@@ -84,6 +90,7 @@ class IntakeItemResponseModel(BaseModel):
     attempts: int
     stage_history: list[dict[str, Any]]
     error: dict[str, Any] | None
+    extraction: dict[str, Any] | None = None  # M2 descriptor (pre-EXTRACT: null)
     created_at: str | None
     updated_at: str | None
 

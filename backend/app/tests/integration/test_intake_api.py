@@ -23,16 +23,18 @@ from app.domain.value_objects.enums import ObjectType
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.session import get_db
+from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 from app.infrastructure.storage.local import LocalFileStorage
 from app.main import app
+from app.tests.unit.extraction_fixtures import make_docx_bytes, make_pdf_bytes
 
 API = "/api/v1/intake"
 
 
-def wait_terminal(client: TestClient, sid: str, *, timeout: float = 20.0) -> dict:
+def wait_terminal(client: TestClient, sid: str, *, timeout: float = 60.0) -> dict:
     """Poll the progress endpoint until the session reaches a settled state."""
 
     deadline = time.monotonic() + timeout
@@ -51,9 +53,12 @@ def fixture_root(tmp_path: Path) -> Path:
     root = tmp_path / "source"
     (root / "Sub Folder").mkdir(parents=True)
     (root / "notes.txt").write_bytes(b"hello world")
-    (root / "paper one.pdf").write_bytes(b"%PDF-1.4 fake")
+    (root / "paper one.pdf").write_bytes(make_pdf_bytes("M1 lifecycle paper"))
     (root / "img.png").write_bytes(b"\x89PNG\r\n\x1a\nDATA")
-    (root / "Sub Folder" / "report.docx").write_bytes(b"PK\x03\x04zip-data")
+    # M2: extraction is real — the DOCX fixture must be genuinely parseable.
+    (root / "Sub Folder" / "report.docx").write_bytes(
+        make_docx_bytes(["M1 integration report", "second paragraph"])
+    )
     (root / ".DS_Store").write_bytes(b"junk")
     (root / "~$lock.docx").write_bytes(b"junk")
     (root / "movie.part").write_bytes(b"junk")
@@ -90,7 +95,7 @@ def harness(tmp_path: Path):
         return SQLAlchemyObjectRepository(session), session.close
 
     storage = LocalFileStorage(str(tmp_path / "storage"))
-    manager = IntakeJobManager(factory, storage)
+    manager = IntakeJobManager(factory, storage, build_document_parsers())
 
     def _override_db():
         yield request_session
@@ -195,7 +200,19 @@ class TestFullLifecycle:
             "hashed": 4,
             "awaiting_review": 4,
             "errors": 0,
+            # M2.3 additive queue counters (all settled post-drain)
+            "extracting": 0,
+            "retrying": 0,
+            "retryable": 0,
+            "extracted": 3,
+            "unsupported": 1,
+            "needs_ocr": 0,
         }
+        # M2.3 additive live fields, settled terminal state:
+        assert progress["current_item"] is None
+        assert progress["remaining_items"] == 0
+        assert progress["avg_seconds_per_item"] is not None  # measured, real
+        assert progress["eta_seconds"] == 0  # nothing left: remaining=0 × avg
 
         session = client.get(f"{API}/sessions/{sid}").json()
         assert session["current_stage"] == "review"
@@ -221,9 +238,24 @@ class TestFullLifecycle:
         assert by_rel["img.png"]["mime_type"] == "image/png"
         assert by_rel["notes.txt"]["mime_type"] == "text/plain"
 
-        # Staged bytes landed under the storage root via the FileStorage port.
+            # M2: the extract step ran for real — parseable files end up extracted.
+        progress = client.get(f"{API}/sessions/{sid}/progress").json()
+        assert progress["counts"]["errors"] == 0
+        session2 = client.get(f"{API}/sessions/{sid}").json()
+        assert session2["statistics"]["extracted_items"] == 3  # pdf, docx, txt
+        assert session2["statistics"]["unsupported_items"] == 1  # png
+        assert docx["extraction"]["status"] == "extracted"
+        assert docx["extraction"]["document_title"] is None  # fixture docx has no title meta
+        assert by_rel["img.png"]["extraction"]["status"] == "unsupported"
+
+        # Staged source bytes AND extracted text blobs coexist, never clobbered.
         stored = list(Path(storage._root).rglob("*"))  # noqa: SLF001
-        assert any(p.is_file() and p.read_bytes() == b"%PDF-1.4 fake" for p in stored)
+        assert any(
+            p.is_file() and p.read_bytes().startswith(b"%PDF-1.4") for p in stored
+        )
+        assert any(
+            p.is_file() and p.read_bytes() == b"M1 lifecycle paper" for p in stored
+        )
 
     def test_items_pagination(self, harness, fixture_root: Path) -> None:
         client, *_ = harness
@@ -384,7 +416,11 @@ class TestReconcile:
         set_system_metadata(obj, "intake.progress", '{"enumerated": false}')
         repo.save(obj)
 
-        stale = IntakeJobManager(lambda: (SQLAlchemyObjectRepository(db), lambda: None), storage)
+        stale = IntakeJobManager(
+            lambda: (SQLAlchemyObjectRepository(db), lambda: None),
+            storage,
+            build_document_parsers(),
+        )
         try:
             assert stale.reconcile_interrupted() == 1
         finally:

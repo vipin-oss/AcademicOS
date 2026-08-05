@@ -2,13 +2,14 @@
 
 Safety: a live drain is first signalled cancel + deleted, so its next
 cooperative checkpoint aborts *without* writing back over the removed rows.
-Blobs are deleted best-effort per recorded staging key — the staging prefix
-is per-session, so nothing else can own those keys.
+Blobs are deleted best-effort per recorded staging key (and, since M2, per
+recorded extraction-text key) — both prefixes are per-session, so nothing
+else can own those keys.
 """
 from __future__ import annotations
 
 from app.application.commands.delete_intake_session import DeleteIntakeSessionCommand
-from app.application.dtos.intake import KEY_STAGED_KEY
+from app.application.dtos.intake import KEY_EXTRACTED_KEY, KEY_STAGED_KEY
 from app.application.intake.jobs import IntakeJobManager
 from app.application.ports.file_storage import FileStorage
 from app.application.use_cases.intake.helpers import (
@@ -39,12 +40,15 @@ class DeleteIntakeSessionUseCase:
         self._jobs.mark_deleted(session_id)
 
         for item in items_of_session(self._repository, session_id):
-            key = item.metadata.get_value(KEY_STAGED_KEY)
-            if key and self._storage.exists(key):
-                try:
-                    self._storage.delete(key)
-                except Exception:  # noqa: BLE001 — blob cleanup is best-effort;
-                    # object deletion must not fail on a filesystem hiccup.
-                    pass
+            for key in (
+                item.metadata.get_value(KEY_STAGED_KEY),
+                item.metadata.get_value(KEY_EXTRACTED_KEY),
+            ):
+                if key and self._storage.exists(key):
+                    try:
+                        self._storage.delete(key)
+                    except Exception:  # noqa: BLE001 — blob cleanup is best-effort;
+                        # object deletion must not fail on a filesystem hiccup.
+                        pass
             self._repository.delete(item.id)
         self._repository.delete(ObjectId(session_id))

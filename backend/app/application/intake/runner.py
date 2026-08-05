@@ -33,6 +33,7 @@ from app.application.dtos.intake import (
     ITEM_STAGE_SEQUENCE,
     KEY_ATTEMPTS,
     KEY_CONTROL,
+    KEY_CURRENT_ITEM,
     KEY_CURRENT_STAGE,
     KEY_ENDED_AT,
     KEY_ERROR,
@@ -62,6 +63,7 @@ from app.application.dtos.intake import (
     json_encode,
     summarize_items,
 )
+from app.application.intake.extraction.service import ExtractionService
 from app.application.intake.pipeline import (
     _CHUNK,
     ItemStageError,
@@ -77,6 +79,7 @@ from app.application.intake.pipeline import (
     staging_key_for,
     utcnow_iso,
 )
+from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
@@ -129,11 +132,19 @@ class IntakeRunner:
         storage: FileStorage,
         session_id: str,
         control: Callable[[], str],
+        parsers: DocumentParsers,
+        on_item: Callable[[UniversalObject], None] | None = None,
     ) -> None:
         self._repository = repository
         self._storage = storage
         self._session_id = session_id
         self._control = control
+        # M2: deterministic extraction over the injected parser registry
+        # (infrastructure adapters — application code never imports readers).
+        self._extraction = ExtractionService(parsers)
+        # M2.3: the job manager's lease heartbeat — folded into the per-item
+        # session save (zero extra writes, fresh-by-construction).
+        self._on_item = on_item
 
     # -------------------------------------------------------------- main
     def run(self) -> None:
@@ -304,15 +315,40 @@ class IntakeRunner:
 
     def _needs_work(self, item: UniversalObject) -> bool:
         status = item.metadata.get_value(KEY_INTAKE_STATUS) or IntakeItemStatus.PENDING.value
-        if status == IntakeItemStatus.PENDING.value or status == IntakeItemStatus.STAGED.value:
+        if status in (
+            IntakeItemStatus.PENDING.value,
+            IntakeItemStatus.STAGED.value,
+            # M2.3: crash/pause leftovers — an item frozen mid-attempt always
+            # resumes (its already-finished steps detect themselves idempotently).
+            IntakeItemStatus.EXTRACTING.value,
+            IntakeItemStatus.RETRYING.value,
+        ):
             return True
         if status == IntakeItemStatus.ERROR.value:
+            # Retry discipline: retrying stops at RETRY_LIMIT attempts; the
+            # item is then terminally Failed and the batch simply moves on.
             return self._attempts(item) < RETRY_LIMIT
         return False
 
     def _run_item(self, session: UniversalObject, item: UniversalObject) -> None:
-        _put(item, KEY_ATTEMPTS, str(self._attempts(item) + 1))
+        attempts = self._attempts(item) + 1
+        _put(item, KEY_ATTEMPTS, str(attempts))
         _put(item, KEY_ERROR, json_encode(None))
+        # M2.3: the visible attempt status — first run ``extracting``, every
+        # later attempt ``retrying``. Persisted before work starts so the
+        # queue view is always live (and a crash leaves a resumable state).
+        _put(
+            item,
+            KEY_INTAKE_STATUS,
+            IntakeItemStatus.EXTRACTING.value
+            if attempts == 1
+            else IntakeItemStatus.RETRYING.value,
+        )
+        self._repository.save(item)
+        rel = item.metadata.get_value(KEY_RELATIVE_PATH) or item.title
+        # "Currently processing" is live from the item's first checkpoint.
+        _put(session, KEY_CURRENT_ITEM, json_encode(rel))
+        self._repository.save(session)
         stage = IntakeStage.STAGE
         try:
             for stage in ITEM_STAGE_SEQUENCE:
@@ -328,7 +364,14 @@ class IntakeRunner:
             _put(item, KEY_ERROR, json_encode({"stage": stage.value, "message": str(exc)}))
             _put(item, KEY_INTAKE_STATUS, IntakeItemStatus.ERROR.value)
             self._repository.save(item)
+        # M2.3 live foreground: the stage cursor plus the manager's lease
+        # heartbeat — all folded into the one session row update.
         _put(session, KEY_CURRENT_STAGE, stage.value)
+        if self._on_item is not None:
+            try:
+                self._on_item(session)
+            except Exception:  # noqa: BLE001 — a lease hiccup must never
+                pass  # corrupt the item that just finished safely.
         self._repository.save(session)
 
     def _execute_stage(self, item: UniversalObject, stage: IntakeStage) -> dict:
@@ -336,6 +379,9 @@ class IntakeRunner:
             return self._stage_blob(item)
         if stage is IntakeStage.HASH:
             return self._verify_and_sniff(item)
+        if stage is IntakeStage.EXTRACT:
+            # M2: real deterministic extraction (descriptor + text blob).
+            return self._extraction.extract_item(item, self._storage, session_id=self._session_id)
         if stage is IntakeStage.REVIEW:
             return {"awaiting": "human review", "commit": "M9 (commit engine)"}
         return deferred_stage_result(stage)
@@ -425,6 +471,7 @@ class IntakeRunner:
         fresh = self._load_session()
         if fresh is None:
             return  # deleted mid-abort — nothing left to annotate
+        _put(fresh, KEY_CURRENT_ITEM, json_encode(None))
         if outcome == _PAUSE:
             _put(fresh, KEY_INTAKE_STATUS, IntakeSessionStatus.PAUSED.value)
         else:
@@ -459,11 +506,31 @@ class IntakeRunner:
             )
             if errors == 0:
                 summary = summary.replace(" — 0 error(s).", ".")
+            # M2: extraction rollups are part of the honest completion story.
+            extracted = live["extracted_items"]
+            unsupported = live["unsupported_items"]
+            if extracted + unsupported > 0:
+                summary += (
+                    f" Extracted text from {extracted} file(s)"
+                    + (f"; {unsupported} unsupported (kept staged)" if unsupported else "")
+                    + "."
+                )
             summary += " Files await your review; commit arrives with the proposal engine (M9)."
 
         stored = json_decode(session.metadata.get_value(KEY_STATISTICS), {})
+        # Cooperative control wins the finish line: every other boundary in
+        # the run lifecycle probes the control flags; this rollup is the only
+        # blind spot. A pause/cancel accepted while completion work ran must
+        # persist as the control state — the terminal write never swallows it.
+        outcome = self._control()
+        if outcome == _DELETED:
+            return  # deleted underneath the completion rollup — persist nothing
+        if outcome in (_PAUSE, _CANCEL):
+            self._persist_abort(session, outcome)
+            return
         _put(session, KEY_STATISTICS, json_encode({**live, **{"skipped_junk": stored.get("skipped_junk", 0), "skipped_junk_samples": stored.get("skipped_junk_samples", [])}}))
         _put(session, KEY_SUMMARY, summary)
+        _put(session, KEY_CURRENT_ITEM, json_encode(None))
         _put(session, KEY_CURRENT_STAGE, IntakeStage.REVIEW.value)
         _put(session, KEY_ENDED_AT, utcnow_iso())
         _put(session, KEY_INTAKE_STATUS, IntakeSessionStatus.COMPLETED.value)
@@ -472,6 +539,7 @@ class IntakeRunner:
     def _fail(self, session: UniversalObject, exc: Exception) -> None:
         stage = session.metadata.get_value(KEY_CURRENT_STAGE) or IntakeStage.ENUMERATE.value
         message = f"{type(exc).__name__}: {exc}"
+        _put(session, KEY_CURRENT_ITEM, json_encode(None))
         _put(session, KEY_ERROR, json_encode({"stage": stage, "message": message}))
         _put(session, KEY_SUMMARY, f"Import failed at the {stage} step: {message} — resume to retry.")
         _put(session, KEY_ENDED_AT, utcnow_iso())

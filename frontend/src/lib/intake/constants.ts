@@ -30,6 +30,9 @@ export const ITEM_STATUS_META: Record<
 > = {
   pending: { label: "Pending", tone: "muted" },
   staged: { label: "Staged", tone: "accent" },
+  // M2.3: live attempt states from the extraction queue.
+  extracting: { label: "Extracting", tone: "accent" },
+  retrying: { label: "Retrying", tone: "warning" },
   awaiting_review: { label: "Awaiting review", tone: "success" },
   error: { label: "Error", tone: "danger" },
 };
@@ -48,7 +51,9 @@ export const INTAKE_STAGES: IntakeStageMeta[] = [
   { key: "enumerate", label: "Enumerate" },
   { key: "stage", label: "Stage" },
   { key: "hash", label: "Hash" },
-  { key: "extract", label: "Extract", milestone: "M3" },
+  // Extract is real since M2 — no milestone marker (the remaining markers
+  // name the deferred stages' owners, same doctrine as M1).
+  { key: "extract", label: "Extract" },
   { key: "classify", label: "Classify", milestone: "M5" },
   { key: "match", label: "Match", milestone: "M7" },
   { key: "propose", label: "Propose", milestone: "M8" },

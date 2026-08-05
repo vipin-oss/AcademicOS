@@ -310,7 +310,9 @@ async function seed() {
     Boolean(committee.id && meeting.id) && action.status === 201,
   );
 
-  const gstDigits = (`${STAMP.replace(/\D/g, "")}1234`).slice(0, 4);
+  // Unique-per-run gst digits off the ms-clock tail: zero-digit base36
+  // stamps would otherwise collapse every same-era run onto one GST number.
+  const gstDigits = String(Date.now()).slice(-4);
   const vendor = await postJson("/finance/vendors", {
     name: VENDOR_NAME,
     uploaded_by: "assistant:e2e",

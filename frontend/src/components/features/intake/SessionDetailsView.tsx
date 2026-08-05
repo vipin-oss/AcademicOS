@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
   Ban,
   CirclePause,
   CirclePlay,
+  FileSearch,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/features/objects/ConfirmDialog";
@@ -14,6 +16,8 @@ import { Pagination } from "@/components/features/objects/Pagination";
 import { useIntakeSession } from "@/hooks/useIntakeSession";
 import { INTAKE_STAGES, formatBytes } from "@/lib/intake/constants";
 import { StatusChip } from "./StatusChip";
+import { ExtractionBadges } from "./ExtractionBadges";
+import { ExtractionViewer } from "./ExtractionViewer";
 import { cn } from "@/lib/utils";
 
 function ProgressCard({
@@ -99,6 +103,24 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleted, setDeleted] = useState(false);
 
+  // M2 Part 2: the item whose extraction viewer is open (null = closed).
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
+  // Trigger buttons per row — focus returns here when the viewer closes.
+  const openTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openItem = items.find((item) => item.id === openItemId) ?? null;
+
+  const closeViewer = () => {
+    setOpenItemId(null);
+    // Focus management: hand focus back to the row action that opened it.
+    window.setTimeout(() => openTriggerRef.current?.focus(), 0);
+  };
+
+  const changePage = (next: number) => {
+    // The viewer is bound to the current page's rows; close it on paging.
+    setOpenItemId(null);
+    setPage(next);
+  };
+
   if (deleted || notFound) {
     return (
       <section
@@ -142,6 +164,13 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
   const canPause = session.status === "queued" || session.status === "running";
   const canResume = session.status === "paused" || session.status === "failed";
   const canCancel = canPause || session.status === "paused";
+  // M2.3: retry only the failed items that still own attempts (max 3).
+  const retryable = statistics.retryable_items ?? 0;
+  const canRetry =
+    retryable > 0 &&
+    (session.status === "completed" || session.status === "failed");
+  const liveNow =
+    session.status === "queued" || session.status === "running";
 
   return (
     <section aria-label="Session details" className="flex flex-col gap-5">
@@ -197,6 +226,18 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
               {busyAction === "resume" ? "Resuming…" : "Resume"}
             </button>
           )}
+          {canRetry && (
+            <button
+              type="button"
+              aria-label="Retry failed items"
+              disabled={busyAction !== null}
+              onClick={() => void act("retry")}
+              className="flex items-center gap-1.5 rounded-lg border border-[var(--warning-subtle,#fde68a)] px-3 py-2 text-sm text-[var(--warning,#b45309)] hover:bg-[var(--warning-subtle,#fde68a)] disabled:opacity-50"
+            >
+              <RotateCcw className="h-4 w-4" />
+              {busyAction === "retry" ? "Retrying…" : `Retry failed (${retryable})`}
+            </button>
+          )}
           {canCancel && (
             <button
               type="button"
@@ -241,13 +282,22 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <ProgressCard
           label="Items"
           value={`${progress.processed}/${progress.total}`}
           hint={`${progress.percent}% processed`}
         />
         <ProgressCard label="Hashed" value={String(progress.hashed)} hint="sha-256 verified" />
+        <ProgressCard
+          label="Extracted"
+          value={String(statistics.extracted_items ?? 0)}
+          hint={
+            (statistics.unsupported_items ?? 0) > 0
+              ? `${statistics.unsupported_items} unsupported`
+              : "all parsed formats"
+          }
+        />
         <ProgressCard
           label="Awaiting review"
           value={String(progress.awaiting_review)}
@@ -262,6 +312,46 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
               : "no junk skipped"
           }
         />
+      </div>
+
+      {/* M2.3: live queue foreground — real measured numbers only, no mock. */}
+      <div
+        aria-label="Queue live details"
+        aria-live="polite"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2.5 text-xs text-[var(--text-secondary)]"
+      >
+        <span aria-label="Current file">
+          {liveNow && progress.current_item
+            ? `Processing: ${progress.current_item}`
+            : liveNow
+              ? "Processing: enumerating…"
+              : `Stage at rest: ${progress.current_stage ?? session.current_stage}`}
+        </span>
+        <span aria-label="Remaining items">
+          Remaining: {progress.remaining_items ?? 0}
+        </span>
+        <span aria-label="Active attempts">
+          Extracting {progress.extracting ?? 0} · Retrying {progress.retrying ?? 0}
+        </span>
+        <span aria-label="Extraction speed">
+          Speed:{" "}
+          {progress.items_per_minute != null
+            ? `${progress.items_per_minute.toFixed(1)} files/min`
+            : "measuring…"}
+        </span>
+        <span aria-label="Estimated time remaining">
+          ETA: {progress.eta_seconds != null ? `~${progress.eta_seconds}s` : "—"}
+        </span>
+        {(statistics.needs_ocr_items ?? 0) > 0 && (
+          <span aria-label="Needs OCR" className="text-[var(--warning,#b45309)]">
+            {statistics.needs_ocr_items} scanned (no text layer)
+          </span>
+        )}
+        {retryable > 0 && (
+          <span aria-label="Retryable failures" className="text-[var(--danger)]">
+            {retryable} failed (retryable)
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -282,7 +372,7 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
             Files ({itemsTotal})
           </h2>
           <p className="text-xs text-[var(--text-tertiary)]">
-            structure only — extraction lands in M3
+            select a file to inspect its extraction
           </p>
         </div>
         {items.length === 0 ? (
@@ -302,6 +392,10 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
                   <th className="px-4 py-2 font-medium">MIME</th>
                   <th className="px-4 py-2 font-medium">Stage</th>
                   <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Extraction</th>
+                  <th className="px-4 py-2 font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -335,6 +429,34 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
                     <td className="px-4 py-2.5">
                       <StatusChip kind="item" status={item.status} />
                     </td>
+                    <td className="px-4 py-2.5">
+                      <ExtractionBadges item={item} size="xs" />
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        type="button"
+                        aria-label={`View extraction for ${item.relative_path}`}
+                        aria-expanded={openItemId === item.id}
+                        aria-controls="extraction-viewer"
+                        onClick={(event) => {
+                          if (openItemId === item.id) {
+                            closeViewer();
+                          } else {
+                            openTriggerRef.current = event.currentTarget;
+                            setOpenItemId(item.id);
+                          }
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs",
+                          openItemId === item.id
+                            ? "border-[var(--accent)] bg-[var(--accent-subtle)] font-medium text-[var(--accent)]"
+                            : "border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+                        )}
+                      >
+                        <FileSearch className="h-3.5 w-3.5" />
+                        {openItemId === item.id ? "Close" : "View"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -347,12 +469,17 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
               page={page}
               pageSize={pageSize}
               total={itemsTotal}
-              onPageChange={setPage}
+              onPageChange={changePage}
               disabled={refreshing}
             />
           </div>
         )}
       </div>
+
+      {/* M2 Part 2: inline extraction viewer for the selected file. */}
+      {openItem && session && (
+        <ExtractionViewer session={session} item={openItem} onClose={closeViewer} />
+      )}
 
       <ConfirmDialog
         open={confirmCancel}

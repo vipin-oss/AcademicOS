@@ -21,11 +21,23 @@ Architecture contract (V2 §3, scoped down to M1):
 
 Framework-free: ``threading`` + ``queue`` from the stdlib, the repository
 *factory* injected so every drain runs on its own session.
+
+M2 Part 3 (queue & recovery): every drain additionally holds a **durable
+single-worker lease** (``intake.worker``) on the session row. The lease is
+the deterministic answer to three failure modes: a second manager racing to
+drain the same session (acquire verifies ownership after write), a process
+dying mid-drain (heartbeat goes stale → another manager's reconcile or
+resume may adopt), and double-processing (the runner only runs while leased).
 """
 from __future__ import annotations
 
+import datetime as dt
+import logging
+import os
 import queue
+import socket
 import threading
+import uuid
 from collections.abc import Callable
 
 from app.application.dtos.intake import (
@@ -34,15 +46,20 @@ from app.application.dtos.intake import (
     KEY_ENDED_AT,
     KEY_ERROR,
     KEY_INTAKE_STATUS,
+    KEY_LEASE,
     IntakeSessionStatus,
+    json_decode,
     json_encode,
 )
 from app.application.intake.pipeline import utcnow_iso
 from app.application.intake.runner import IntakeRunner
+from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
+from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import MetadataLayer, ObjectType, Provenance
 from app.domain.value_objects.metadata import MetadataEntry
+from app.domain.value_objects.object_id import ObjectId
 
 # How the factory hands a short-lived repository to one drain: a pair of the
 # repository plus its cleanup callable (e.g. closing the DB session).
@@ -57,13 +74,31 @@ _TRANSIENT_STATUSES = frozenset(
     {IntakeSessionStatus.QUEUED.value, IntakeSessionStatus.RUNNING.value}
 )
 
+_log = logging.getLogger(__name__)
+
+
+def _lease_entry(value: dict | None) -> MetadataEntry:
+    return MetadataEntry(KEY_LEASE, json_encode(value), MetadataLayer.L1_SYSTEM, Provenance.SYSTEM)
+
 
 class IntakeJobManager:
     """Single-dispatcher job framework for intake sessions."""
 
-    def __init__(self, repository_factory: RepositoryFactory, storage: FileStorage) -> None:
+    def __init__(
+        self,
+        repository_factory: RepositoryFactory,
+        storage: FileStorage,
+        parsers: DocumentParsers,
+        *,
+        lease_stale_seconds: float = 30.0,
+    ) -> None:
         self._repository_factory = repository_factory
         self._storage = storage
+        self._parsers = parsers
+        self._lease_stale_seconds = lease_stale_seconds
+        # Deterministic, unique worker identity (host + pid + process-unique
+        # suffix): two managers can never collide, one manager is stable.
+        self._owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._lock = threading.Lock()
         self._flags: dict[str, dict[str, bool]] = {}
@@ -74,6 +109,12 @@ class IntakeJobManager:
             target=self._drain_loop, name="intake-dispatcher", daemon=True
         )
         self._worker.start()
+
+    @property
+    def owner_id(self) -> str:
+        """This manager's lease identity (diagnostics + tests)."""
+
+        return self._owner
 
     # ---------------------------------------------------------- control
     def _flags_locked(self, session_id: str) -> dict[str, bool]:
@@ -141,25 +182,185 @@ class IntakeJobManager:
 
         return probe
 
+    # ----------------------------------------------------- durable lease
+    def _lease_of(self, session: UniversalObject | None) -> dict | None:
+        """Decode the lease record on the session (``None`` when none)."""
+
+        if session is None:
+            return None
+        data = json_decode(session.metadata.get_value(KEY_LEASE), None)
+        return data if isinstance(data, dict) else None
+
+    def _lease_fresh(self, lease: dict) -> bool:
+        """A lease is alive while its heartbeat is newer than the stale TTL."""
+
+        try:
+            heartbeat = dt.datetime.fromisoformat(str(lease.get("heartbeat_at") or ""))
+        except ValueError:
+            return False
+        age = (dt.datetime.now(dt.UTC) - heartbeat).total_seconds()
+        return age < self._lease_stale_seconds
+
+    def acquire_session(self, repository: ObjectRepository, session: UniversalObject) -> bool:
+        """Take the durable worker lease on the session.
+
+        Deterministic protocol: a fresh foreign lease means *busy* (the
+        other worker legitimately owns the drain — never duplicate it);
+        write ours and **verify ownership after write** — a lost race is
+        detected, not papered over. Stale/absent leases (crash orphans) are
+        adopted with the prior acquired_at preserved for audit.
+        """
+
+        lease = self._lease_of(session)
+        if (
+            lease is not None
+            and lease.get("owner") != self._owner
+            and self._lease_fresh(lease)
+        ):
+            return False
+        now = utcnow_iso()
+        still_ours = lease is not None and lease.get("owner") == self._owner
+        record = {
+            "owner": self._owner,
+            "acquired_at": lease.get("acquired_at") if still_ours else now,
+            "heartbeat_at": now,
+        }
+        session.set_metadata(_lease_entry(record), actor=INTAKE_ACTOR)
+        repository.save(session)
+        fresh = repository.get_by_id(ObjectId(str(session.id)))
+        verify = self._lease_of(fresh)
+        return (
+            verify is not None
+            and verify.get("owner") == self._owner
+            and verify.get("heartbeat_at") == now
+        )
+
+    def heartbeat_session(self, session: UniversalObject) -> None:
+        """Refresh the lease heartbeat. The caller persists the row (the
+        runner folds this into its per-item session save — zero extra I/O)."""
+
+        lease = self._lease_of(session) or {}
+        record = {
+            "owner": self._owner,
+            "acquired_at": lease.get("acquired_at") or utcnow_iso(),
+            "heartbeat_at": utcnow_iso(),
+        }
+        session.set_metadata(_lease_entry(record), actor=INTAKE_ACTOR)
+
+    def release_session(self, repository: ObjectRepository, session_id: str) -> None:
+        """Drop our lease (only ours — never a foreign worker's)."""
+
+        fresh = repository.get_by_id(ObjectId(session_id))
+        lease = self._lease_of(fresh)
+        if fresh is not None and lease is not None and lease.get("owner") == self._owner:
+            fresh.set_metadata(_lease_entry(None), actor=INTAKE_ACTOR)
+            repository.save(fresh)
+
+    def _fail_after_crash(self, repository: ObjectRepository, session_id: str) -> None:
+        """Best-effort FAILED write when a drain escapes unexpectedly.
+
+        The runner persists its own failures (control aborts and systemic
+        errors); this fires only when even those guards couldn't write — the
+        classic case being a transient DB lock error that beat the failure
+        persist itself. An honestly failed session beats a silently wedged
+        one: the row becomes resumable *now* instead of stuck queued/running
+        until a process restart lets ``reconcile_interrupted`` adopt it.
+
+        Discipline: never clobbers a settled state (pause/cancel/complete
+        that did land), never fights a live foreign worker (fresh lease),
+        never resurrects a deleted session, and ignore-errors by contract —
+        the lease TTL plus reconcile remain the backstop.
+        """
+
+        try:
+            fresh = repository.get_by_id(ObjectId(session_id))
+            if fresh is None:
+                return  # deleted underneath the crash — rows are gone
+            status = fresh.metadata.get_value(KEY_INTAKE_STATUS) or ""
+            if status not in _TRANSIENT_STATUSES:
+                return  # already settled honestly — leave it untouched
+            lease = self._lease_of(fresh)
+            if (
+                lease is not None
+                and lease.get("owner") != self._owner
+                and self._lease_fresh(lease)
+            ):
+                return  # a live worker owns this session — never duplicate it
+            stage = fresh.metadata.get_value(KEY_CURRENT_STAGE) or "session"
+            message = "Worker crashed unexpectedly — resume to continue."
+            fresh.set_metadata(
+                MetadataEntry(
+                    KEY_ERROR,
+                    json_encode({"stage": stage, "message": message}),
+                    MetadataLayer.L1_SYSTEM,
+                    Provenance.SYSTEM,
+                ),
+                actor=INTAKE_ACTOR,
+            )
+            fresh.set_metadata(
+                MetadataEntry(
+                    KEY_ENDED_AT, utcnow_iso(), MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
+                ),
+                actor=INTAKE_ACTOR,
+            )
+            fresh.set_metadata(
+                MetadataEntry(
+                    KEY_INTAKE_STATUS,
+                    IntakeSessionStatus.FAILED.value,
+                    MetadataLayer.L1_SYSTEM,
+                    Provenance.SYSTEM,
+                ),
+                actor=INTAKE_ACTOR,
+            )
+            repository.save(fresh)
+        except Exception:  # noqa: BLE001 — best effort by contract; a stale
+            pass  # lease self-expires and reconcile is the restart backstop.
+
     def _drain_loop(self) -> None:
         while True:
             session_id = self._queue.get()
+            acquired = False
             try:
                 if session_id is None:  # shutdown sentinel
                     return
                 with self._lock:
                     self._enqueued.discard(session_id)
-                    self._active_id = session_id
                 repository, cleanup = self._repository_factory()
                 try:
+                    session = repository.get_by_id(ObjectId(session_id))
+                    if session is None:
+                        continue  # deleted before the dispatcher picked it up
+                    if session.metadata.get_value(KEY_INTAKE_STATUS) in (
+                        IntakeSessionStatus.CANCELLED.value,
+                        IntakeSessionStatus.COMPLETED.value,
+                    ):
+                        continue  # terminal between enqueue and pickup
+                    acquired = self.acquire_session(repository, session)
+                    if not acquired:
+                        continue  # a live worker owns it — no duplicate drain
+                    with self._lock:
+                        # Claim only proven ownership: before this line the
+                        # manager must never report the session as active.
+                        self._active_id = session_id
                     runner = IntakeRunner(
-                        repository, self._storage, session_id, self._control_probe(session_id)
+                        repository,
+                        self._storage,
+                        session_id,
+                        self._control_probe(session_id),
+                        self._parsers,
+                        on_item=self.heartbeat_session,
                     )
                     runner.run()
-                except Exception:  # noqa: BLE001 — runner already persisted;
-                    # the dispatcher must never die with a job.
-                    pass
+                except Exception:  # noqa: BLE001 — the dispatcher must never
+                    # die with a job — but it never swallows a crash silently.
+                    _log.exception("Intake drain crashed for %s", session_id)
+                    self._fail_after_crash(repository, session_id)
                 finally:
+                    try:
+                        if acquired:
+                            self.release_session(repository, session_id)
+                    except Exception:  # noqa: BLE001 — release is best-effort;
+                        pass  # a stale lease expires on its own TTL.
                     cleanup()
             finally:
                 with self._lock:
@@ -169,8 +370,14 @@ class IntakeJobManager:
 
     # --------------------------------------------------------- reconcile
     def reconcile_interrupted(self) -> int:
-        """Mark sessions left queued/running by a previous process as FAILED
-        (resumable — the resume endpoint continues them). Returns the count."""
+        """Mark sessions left queued/running by a *dead* process as FAILED
+        (resumable — the resume endpoint continues them). Returns the count.
+
+        M2.3: a session carrying a **fresh** lease belongs to a live worker
+        (possibly this very manager mid-drain) and is skipped — reconcile
+        must never fight a healthy drain. Stale or absent leases are crash
+        orphans and adoptable.
+        """
 
         repository, cleanup = self._repository_factory()
         try:
@@ -180,6 +387,9 @@ class IntakeJobManager:
                 status = session.metadata.get_value(KEY_INTAKE_STATUS) or ""
                 if status not in _TRANSIENT_STATUSES:
                     continue
+                lease = self._lease_of(session)
+                if lease is not None and self._lease_fresh(lease):
+                    continue  # a live worker owns this session
                 stage = session.metadata.get_value(KEY_CURRENT_STAGE) or "session"
                 message = "Interrupted by an application restart — resume to continue."
                 session.set_metadata(
@@ -206,6 +416,8 @@ class IntakeJobManager:
                     ),
                     actor=INTAKE_ACTOR,
                 )
+                # The orphan lease is spent — drop it with the same write.
+                session.set_metadata(_lease_entry(None), actor=INTAKE_ACTOR)
                 repository.save(session)
                 count += 1
             return count
