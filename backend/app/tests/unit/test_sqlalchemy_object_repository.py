@@ -13,8 +13,8 @@ import sqlite3
 import time
 
 import pytest
-from sqlalchemy import StaticPool, create_engine
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import StaticPool, create_engine, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.entities.object import UniversalObject
@@ -27,8 +27,10 @@ from app.domain.value_objects.enums import (
 )
 from app.domain.value_objects.metadata import MetadataEntry
 from app.domain.value_objects.object_id import ObjectId
-
-from app.infrastructure.db.models.object_model import Base, ObjectModel
+from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_relationship_model import (
+    ObjectRelationshipModel,
+)
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -211,3 +213,167 @@ def test_lock_retry_is_bounded_and_deterministic(session):
     elapsed = time.monotonic() - started
     assert calls["n"] == 5  # hard bound — a wedge surfaces, never a stall
     assert elapsed < 2.0, elapsed  # fixed backoff schedule, no jitter
+
+
+# ------------------------------------------------- R1 — object graph physical
+# model (object_relationships edge table). These pin the physical contract:
+# full-fidelity round-trip, replace-on-save semantics, cascade on delete,
+# kind-filtered traversal, bulk reads carrying edges, and the physical
+# uniqueness mirror of the domain's Relationship.identity key.
+
+
+def test_relationships_roundtrip_full_fidelity(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Graphs", created_by="faculty:1")
+    target_a = ObjectId.generate(ObjectType.FACULTY)
+    target_b = ObjectId.generate(ObjectType.COURSE)
+    obj.add_relationship(
+        target_a,
+        RelationshipKind.TAUGHT_BY,
+        Provenance.ASSERTED,
+        confidence=0.95,
+        evidence=("syllabus.pdf", "page 3"),
+        acl_scope="dept:cs",
+    )
+    obj.add_relationship(
+        target_b,
+        RelationshipKind.PREREQUISITE_OF,
+        Provenance.INFERRED,
+        confidence=None,
+        evidence=(),
+        acl_scope=None,
+    )
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    got = repo.get(obj.id)
+    assert got is not None
+    assert len(got.relationships) == 2
+    first, second = got.relationships
+    assert first.target == target_a
+    assert first.kind == RelationshipKind.TAUGHT_BY
+    assert first.provenance == Provenance.ASSERTED
+    assert first.confidence == 0.95
+    assert first.evidence == ("syllabus.pdf", "page 3")
+    assert first.acl_scope == "dept:cs"
+    assert second.target == target_b
+    assert second.kind == RelationshipKind.PREREQUISITE_OF
+    assert second.provenance == Provenance.INFERRED
+    assert second.confidence is None
+    assert second.evidence == ()
+    assert second.acl_scope is None
+    # Aggregate list order is preserved.
+    assert [r.target for r in got.relationships] == [target_a, target_b]
+
+
+def test_save_replaces_whole_edge_set(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Replaced", created_by="faculty:1")
+    obj.add_relationship(
+        ObjectId.generate(ObjectType.FACULTY), RelationshipKind.TAUGHT_BY
+    )
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    # Re-save with a completely different edge set: old edges must vanish.
+    other = ObjectId.generate(ObjectType.COURSE)
+    obj.relationships.clear()
+    obj.add_relationship(other, RelationshipKind.PREREQUISITE_OF)
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    got = repo.get(obj.id)
+    assert got is not None
+    assert len(got.relationships) == 1
+    assert got.relationships[0].target == other
+    assert got.relationships[0].kind == RelationshipKind.PREREQUISITE_OF
+
+
+def test_delete_removes_edges(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Doomed", created_by="faculty:1")
+    obj.add_relationship(
+        ObjectId.generate(ObjectType.FACULTY), RelationshipKind.TAUGHT_BY
+    )
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    repo.delete(obj.id)
+    assert repo.get(obj.id) is None
+    remaining = session.execute(
+        select(ObjectRelationshipModel).where(
+            ObjectRelationshipModel.source_id == str(obj.id)
+        )
+    ).scalars().all()
+    assert remaining == []
+
+
+def test_find_related_is_a_direct_edge_query(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Traversal", created_by="faculty:1")
+    teacher = ObjectId.generate(ObjectType.FACULTY)
+    successor = ObjectId.generate(ObjectType.COURSE)
+    obj.add_relationship(teacher, RelationshipKind.TAUGHT_BY)
+    obj.add_relationship(successor, RelationshipKind.PREREQUISITE_OF)
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    assert repo.find_related(obj.id) == [teacher, successor]
+    assert repo.find_related(obj.id, RelationshipKind.TAUGHT_BY) == [teacher]
+    assert repo.find_related(obj.id, RelationshipKind.PREREQUISITE_OF) == [successor]
+    # Missing source behaves as before: empty, never an error.
+    assert repo.find_related(ObjectId.generate(ObjectType.COURSE)) == []
+
+
+def test_bulk_reads_carry_relationships(session):
+    repo = SQLAlchemyObjectRepository(session)
+    objs = []
+    for i in range(3):
+        obj = UniversalObject.create(
+            ObjectType.COURSE, f"Bulk {i}", created_by="faculty:1"
+        )
+        obj.add_relationship(
+            ObjectId.generate(ObjectType.FACULTY), RelationshipKind.TAUGHT_BY
+        )
+        obj.pop_domain_events()
+        objs.append(obj)
+        repo.save(obj)
+
+    listed = repo.list()
+    assert len(listed) == 3
+    assert all(len(o.relationships) == 1 for o in listed)
+
+    by_ids = repo.find_by_ids([o.id for o in objs])
+    assert len(by_ids) == 3
+    assert all(len(o.relationships) == 1 for o in by_ids)
+
+    by_type = repo.find_by_type(ObjectType.COURSE)
+    assert len(by_type) == 3
+    assert all(len(o.relationships) == 1 for o in by_type)
+
+
+def test_edge_table_enforces_domain_identity_uniqueness(session):
+    repo = SQLAlchemyObjectRepository(session)
+    obj = UniversalObject.create(ObjectType.COURSE, "Unique", created_by="faculty:1")
+    target = ObjectId.generate(ObjectType.FACULTY)
+    obj.add_relationship(target, RelationshipKind.TAUGHT_BY)
+    obj.pop_domain_events()
+    repo.save(obj)
+
+    # The physical UNIQUE (source_id, target_id, kind, provenance) mirrors the
+    # aggregate's Relationship.identity de-dup key.
+    session.add(
+        ObjectRelationshipModel(
+            source_id=str(obj.id),
+            target_id=str(target),
+            kind=RelationshipKind.TAUGHT_BY.value,
+            provenance=Provenance.ASSERTED.value,
+            confidence=None,
+            evidence=[],
+            acl_scope=None,
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
