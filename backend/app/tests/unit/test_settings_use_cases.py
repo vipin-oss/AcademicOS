@@ -67,6 +67,30 @@ class InMemoryObjectRepository(ObjectRepository):
 
     def find_related(self, id, *, relation_type=None, direction="outgoing") -> list:
         return []
+    def find(
+        self,
+        *,
+        object_type=None,
+        status=None,
+        metadata_key=None,
+        metadata_value=None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str = "id",
+        order: str = "asc",
+    ) -> list[UniversalObject]:
+        return []
+
+    def count(
+        self,
+        *,
+        object_type=None,
+        status=None,
+        metadata_key=None,
+        metadata_value=None,
+    ) -> int:
+        return 0
+
 
 
 class InMemoryStorage(FileStorage):

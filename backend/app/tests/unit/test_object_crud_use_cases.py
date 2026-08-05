@@ -58,7 +58,69 @@ class InMemoryObjectRepository(ObjectRepository):
             v = o.metadata.get_value(key)
             if v is not None and (value is None or v == value):
                 out.append(o)
-        return out
+    def find(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str = "id",
+        order: str = "asc",
+    ) -> list[UniversalObject]:
+        items = [
+            o
+            for o in self._store.values()
+            if (object_type is None or o.object_type == object_type)
+            and (status is None or o.status == status)
+            and (
+                metadata_key is None
+                or (
+                    o.metadata.get_value(metadata_key) is not None
+                    and (
+                        metadata_value is None
+                        or o.metadata.get_value(metadata_key) == metadata_value
+                    )
+                )
+            )
+        ]
+        reverse = order == "desc"
+        if sort_by == "id":
+            items.sort(key=lambda o: str(o.id), reverse=reverse)
+        elif sort_by == "object_type":
+            items.sort(key=lambda o: o.object_type.value, reverse=reverse)
+        elif sort_by == "title":
+            items.sort(key=lambda o: o.title, reverse=reverse)
+        elif sort_by == "status":
+            items.sort(key=lambda o: o.status.value, reverse=reverse)
+        elif sort_by == "version":
+            items.sort(key=lambda o: o.version, reverse=reverse)
+        else:
+            raise ValueError(f"Unsupported sort_by: {sort_by!r}")
+        if page_size > 0:
+            start = (page - 1) * page_size
+            items = items[start : start + page_size]
+        return items
+
+    def count(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+    ) -> int:
+        return len(
+            self.find(
+                object_type=object_type,
+                status=status,
+                metadata_key=metadata_key,
+                metadata_value=metadata_value,
+            )
+        )
+
 
     def list(self) -> list[UniversalObject]:
         return list(self._store.values())
