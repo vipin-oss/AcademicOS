@@ -5,6 +5,7 @@ the *durable* state change is persisted either by the dispatcher at its next
 cooperative checkpoint (queued/running sessions) or immediately by the use
 case when no drain is alive (paused sessions being cancelled, any resume).
 """
+
 from __future__ import annotations
 
 from app.application.commands.control_intake_session import ControlIntakeSessionCommand
@@ -45,11 +46,21 @@ class PauseIntakeSessionUseCase:
         status = intake_session_status_of(obj)
         if status not in PAUSABLE:
             raise ValidationError(f"Cannot pause: session is {status.value}.")
-        self._jobs.request_pause(str(obj.id))
         control = json_decode(obj.metadata.get_value(KEY_CONTROL), {})
         control["pause"] = True
         set_system_metadata(obj, KEY_CONTROL, json_encode(control))
+        # Ordering invariant: this row write must COMMIT before the in-memory
+        # pause flag exists. The drain's cooperative abort (``_persist_abort``)
+        # fires only after the flag is observable, so its fresh-load merge —
+        # which includes this ``control`` update — is always the LAST writer
+        # of the session row. Flag-then-save inverted that order: on any
+        # storage where this commit queues behind the drain's own commits,
+        # the stale snapshot loaded above (status ``running``) landed AFTER
+        # the abort persist and clobbered ``paused`` back to ``running`` —
+        # a permanently wedged session (lease released, dispatcher idle,
+        # no writer left to settle it).
         self._repository.save(obj)
+        self._jobs.request_pause(str(obj.id))
         return session_view(obj, items_of_session(self._repository, str(obj.id)))
 
 
