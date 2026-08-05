@@ -3,15 +3,21 @@
 The single concrete infrastructure adapter so far. It implements every method of
 the frozen ``ObjectRepository`` abstract interface AND the requested public
 surface (save / get / exists / delete / list / find). All mapping goes through
-the frozen ``SnapshotMapper`` plus the ``ObjectModel``; there is no domain logic
-here — only persistence plumbing.
+the frozen ``SnapshotMapper`` plus the ``ObjectModel`` and the
+``ObjectRelationshipModel`` edge table (R1 — Object Graph physical model);
+there is no domain logic here — only persistence plumbing.
+
+Relationship persistence: ``save`` replaces the whole edge set of an object in
+the same transaction as the object row (delete + insert), preserving the
+aggregate's list order via row order. Reads load edges in bulk, grouped by
+source, with one query.
 """
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -21,6 +27,9 @@ from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.value_objects.object_id import ObjectId
 from app.domain.value_objects.relationship import RelationshipKind
 from app.infrastructure.db.models.object_model import ObjectModel
+from app.infrastructure.db.models.object_relationship_model import (
+    ObjectRelationshipModel,
+)
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.snapshots import (
     AuditSnapshot,
@@ -79,8 +88,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
 
     # --- internal mapping (Snapshot <-> Model, via SnapshotMapper) ---
     @staticmethod
-    def _to_model(obj: UniversalObject) -> ObjectModel:
-        snap = SnapshotMapper.to_snapshot(obj)
+    def _model_from_snapshot(snap: ObjectSnapshot) -> ObjectModel:
         return ObjectModel(
             id=snap.id,
             object_type=snap.object_type,
@@ -88,12 +96,64 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             status=snap.status,
             version=snap.version,
             metadata_json=[m.to_dict() for m in snap.metadata],
-            relationships_json=[r.to_dict() for r in snap.relationships],
             audit_json=snap.audit.to_dict() if snap.audit else None,
         )
 
     @staticmethod
-    def _to_snapshot(model: ObjectModel) -> ObjectSnapshot:
+    def _edge_models_from_snapshot(snap: ObjectSnapshot) -> list[ObjectRelationshipModel]:
+        """One edge row per RelationshipSnapshot, in aggregate list order.
+
+        Insertion order becomes the physical row order (autoincrement ``id``),
+        so reading back ``ORDER BY id`` reproduces the aggregate's
+        relationship list exactly.
+        """
+        return [
+            ObjectRelationshipModel(
+                source_id=snap.id,
+                target_id=r.target,
+                kind=r.kind,
+                provenance=r.provenance,
+                confidence=r.confidence,
+                evidence=list(r.evidence),
+                acl_scope=r.acl_scope,
+                created_at=r.created_at,
+            )
+            for r in snap.relationships
+        ]
+
+    @staticmethod
+    def _relationship_snapshot_from_edge(
+        edge: ObjectRelationshipModel,
+    ) -> RelationshipSnapshot:
+        return RelationshipSnapshot(
+            target=edge.target_id,
+            kind=edge.kind,
+            provenance=edge.provenance,
+            confidence=edge.confidence,
+            evidence=tuple(edge.evidence or ()),
+            acl_scope=edge.acl_scope,
+            created_at=edge.created_at,
+        )
+
+    def _load_relationships(
+        self, ids: Sequence[str]
+    ) -> dict[str, list[ObjectRelationshipModel]]:
+        """All edges for the given source ids, grouped by source, in row order."""
+        if not ids:
+            return {}
+        rows = self._session.execute(
+            select(ObjectRelationshipModel)
+            .where(ObjectRelationshipModel.source_id.in_(ids))
+            .order_by(ObjectRelationshipModel.id)
+        ).scalars().all()
+        grouped: dict[str, list[ObjectRelationshipModel]] = {}
+        for row in rows:
+            grouped.setdefault(row.source_id, []).append(row)
+        return grouped
+
+    def _to_snapshot(
+        self, model: ObjectModel, relationships: Sequence[ObjectRelationshipModel]
+    ) -> ObjectSnapshot:
         return ObjectSnapshot(
             id=model.id,
             object_type=model.object_type,
@@ -102,22 +162,41 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             version=model.version,
             metadata=tuple(MetadataSnapshot(**d) for d in (model.metadata_json or [])),
             relationships=tuple(
-                RelationshipSnapshot(**d) for d in (model.relationships_json or [])
+                self._relationship_snapshot_from_edge(e) for e in relationships
             ),
             audit=AuditSnapshot(**model.audit_json) if model.audit_json else None,
         )
 
-    def _to_domain(self, model: ObjectModel) -> UniversalObject:
-        return SnapshotMapper.from_snapshot(self._to_snapshot(model))
+    def _to_domain(
+        self, model: ObjectModel, relationships: Sequence[ObjectRelationshipModel]
+    ) -> UniversalObject:
+        return SnapshotMapper.from_snapshot(self._to_snapshot(model, relationships))
 
     # --- requested public surface ---
     def save(self, entity: UniversalObject) -> None:
-        model = self._to_model(entity)  # snapshot is built once; retries re-merge it
-        self._commit_with_retry(lambda: self._session.merge(model))
+        # The snapshot is built once; retries re-issue the same write lambda,
+        # which is idempotent (same object row merged, same edge set replaced).
+        snap = SnapshotMapper.to_snapshot(entity)
+        model = self._model_from_snapshot(snap)
+        edge_models = self._edge_models_from_snapshot(snap)
+
+        def write() -> None:
+            self._session.merge(model)
+            self._session.execute(
+                delete(ObjectRelationshipModel).where(
+                    ObjectRelationshipModel.source_id == snap.id
+                )
+            )
+            self._session.add_all(edge_models)
+
+        self._commit_with_retry(write)
 
     def get(self, id: ObjectId) -> UniversalObject | None:
         model = self._session.get(ObjectModel, str(id))
-        return self._to_domain(model) if model is not None else None
+        if model is None:
+            return None
+        relationships = self._load_relationships([str(id)]).get(str(id), [])
+        return self._to_domain(model, relationships)
 
     def exists(self, id: ObjectId) -> bool:
         return self._session.get(ObjectModel, str(id)) is not None
@@ -125,11 +204,21 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def delete(self, id: ObjectId) -> None:
         model = self._session.get(ObjectModel, str(id))
         if model is not None:
-            self._commit_with_retry(lambda: self._session.delete(model))
+            def write() -> None:
+                # Explicit edge deletion keeps SQLite behaviour identical to
+                # PostgreSQL's ON DELETE CASCADE.
+                self._session.execute(
+                    delete(ObjectRelationshipModel).where(
+                        ObjectRelationshipModel.source_id == str(id)
+                    )
+                )
+                self._session.delete(model)
+
+            self._commit_with_retry(write)
 
     def list(self) -> list[UniversalObject]:
         models = self._session.execute(select(ObjectModel)).scalars().all()
-        return [self._to_domain(m) for m in models]
+        return self._to_domain_many(models)
 
     def find(
         self,
@@ -152,7 +241,14 @@ class SQLAlchemyObjectRepository(ObjectRepository):
                 clause["value"] = metadata_value
             stmt = stmt.where(ObjectModel.metadata_json.contains([clause]))
         models = self._session.execute(stmt).scalars().all()
-        return [self._to_domain(m) for m in models]
+        return self._to_domain_many(models)
+
+    def _to_domain_many(self, models: Sequence[ObjectModel]) -> list[UniversalObject]:
+        """Bulk load: one edge query for all objects instead of N+1."""
+        relationships = self._load_relationships([m.id for m in models])
+        return [
+            self._to_domain(m, relationships.get(m.id, [])) for m in models
+        ]
 
     # --- abstract interface satisfaction (delegate to the surface above) ---
     def get_by_id(self, id: ObjectId) -> UniversalObject | None:
@@ -163,7 +259,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             return []
         stmt = select(ObjectModel).where(ObjectModel.id.in_([str(i) for i in ids]))
         models = self._session.execute(stmt).scalars().all()
-        return [self._to_domain(m) for m in models]
+        return self._to_domain_many(models)
 
     def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
         return self.find(object_type=object_type)
@@ -179,7 +275,14 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def find_related(
         self, object_id: ObjectId, kind: RelationshipKind | None = None
     ) -> list[ObjectId]:
-        obj = self.get(object_id)
-        if obj is None:
-            return []
-        return obj.related_ids(kind)
+        """Direct edge query — the physical table makes traversal a lookup."""
+        stmt = select(ObjectRelationshipModel.target_id).where(
+            ObjectRelationshipModel.source_id == str(object_id)
+        )
+        if kind is not None:
+            stmt = stmt.where(ObjectRelationshipModel.kind == kind.value)
+        stmt = stmt.order_by(ObjectRelationshipModel.id)
+        return [
+            ObjectId.parse(target)
+            for target in self._session.execute(stmt).scalars().all()
+        ]

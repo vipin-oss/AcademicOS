@@ -1,9 +1,10 @@
 """SQLAlchemy model for the single ``objects`` table.
 
 One table, one row per Universal Object. Structured columns (id, type, title,
-status, version) are scalar; the rich, schema-less parts (metadata,
-relationships, audit) are stored as JSONB on PostgreSQL (and as JSON on other
-engines via ``JSONBType``). The repository maps this model to/from a
+status, version) are scalar; the rich, schema-less parts (metadata, audit) are
+stored as JSONB on PostgreSQL (and as JSON on other engines via ``JSONBType``).
+Graph edges live in ``object_relationships`` (see ``object_relationship_model``)
+— R1 Object Graph physical model. The repository maps this model to/from a
 ``ObjectSnapshot`` using the frozen ``SnapshotMapper`` — no domain logic here.
 """
 from __future__ import annotations
@@ -27,5 +28,4 @@ class ObjectModel(Base):
 
     # JSONB on PostgreSQL; JSON elsewhere.
     metadata_json: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
-    relationships_json: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     audit_json: Mapped[dict | None] = mapped_column(JSONBType, nullable=True)
