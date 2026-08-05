@@ -35,6 +35,10 @@ class RelationshipConflictError(DomainError):
     code = "relationship_conflict"
 
 
+class OptimisticConcurrencyError(DomainError):
+    code = "optimistic_concurrency_conflict"
+
+
 class MetadataOverwriteError(DomainError):
     code = "metadata_overwrite"
 

@@ -19,7 +19,6 @@ from app.domain.entities.base import AggregateRoot
 from app.domain.events import (
     DomainEvent,
     MetadataChanged,
-    ObjectArchived,
     ObjectCreated,
     ObjectRenamed,
     ObjectStatusChanged,
@@ -54,6 +53,12 @@ class UniversalObject(AggregateRoot):
     relationships: list[Relationship] = field(default_factory=list)
     audit: AuditFields | None = None
     version: int = 1
+    # R3 — optimistic concurrency bookkeeping: the version this aggregate was
+    # loaded at, recorded by the persistence adapter (``None`` for a freshly
+    # created aggregate). ``save`` compares it against the stored row and
+    # refuses to persist when a concurrent writer advanced the row. The
+    # domain itself never reads or writes it.
+    _expected_version: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # AggregateRoot.__init__ is not invoked by the dataclass generator,
@@ -74,7 +79,7 @@ class UniversalObject(AggregateRoot):
         object_id: ObjectId | None = None,
         status: ObjectStatus = ObjectStatus.DRAFT,
         metadata: Metadata | None = None,
-    ) -> "UniversalObject":
+    ) -> UniversalObject:
         obj_id = object_id or ObjectId.generate(object_type)
         obj = cls(
             id=obj_id,
