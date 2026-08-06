@@ -37,6 +37,7 @@ from app.application.exceptions import (
 )
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.token_service import TokenService
+from app.application.use_cases.auth.helpers import user_output
 from app.application.use_cases.auth.login_user import LoginUserUseCase
 from app.application.use_cases.auth.refresh_tokens import RefreshTokensUseCase
 from app.application.use_cases.auth.register_user import RegisterUserUseCase
@@ -154,8 +155,4 @@ def refresh(
 
 @router.get("/me", response_model=UserResponse)
 def me(user: UniversalObject = Depends(get_current_user)) -> UserResponse:
-    return UserResponse(
-        id=str(user.id),
-        username=user.title,
-        created_at=user.audit.created_at.isoformat() if user.audit else "",
-    )
+    return UserResponse(**to_user_response(user_output(user)))

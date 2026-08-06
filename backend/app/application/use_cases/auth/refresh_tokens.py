@@ -22,8 +22,6 @@ class RefreshTokensUseCase:
 
         try:
             claims = self._token_service.decode_token(token)
-        except AuthenticationError:
-            raise
         except Exception as exc:  # noqa: BLE001 — normalise any decode failure
             raise AuthenticationError("Invalid or expired refresh token.") from exc
 
