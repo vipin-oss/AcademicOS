@@ -372,3 +372,56 @@ def test_ask_memory_works_with_the_review_gate(harness):
     finally:
         settings.assistant_review_enabled = previous
         app.dependency_overrides.pop(get_assistant_provider, None)
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M3 — review-ranked recall over HTTP (real wiring)
+# ---------------------------------------------------------------------------
+def test_recall_ranks_approved_above_rejected_over_http(harness):
+    client, repo, session, vectors, embedder = harness
+    first = _conversation(repo, question="find quantum", answer="First answer")
+    second = _conversation(repo, question="find quantum", answer="Second answer")
+    _index(session, vectors, embedder, first, second)
+
+    # Human review via the real workspace endpoints: approve the first,
+    # reject the second.
+    assert client.post(
+        f"{API}/review/approve",
+        json={"conversation_id": str(first.id), "rating": 5, "confidence": 1.0},
+    ).status_code == 200
+    assert client.post(
+        f"{API}/review/reject",
+        json={"conversation_id": str(second.id), "rating": 2, "confidence": 0.4},
+    ).status_code == 200
+
+    r = client.get(f"{API}/memory/recall", params={"q": "find quantum"})
+    assert r.status_code == 200
+    conversations = r.json()["conversations"]
+    assert len(conversations) == 2
+    # The approved conversation ranks first; the rejected one last.
+    assert conversations[0]["conversation_id"] == str(first.id)
+    assert conversations[-1]["conversation_id"] == str(second.id)
+    # review_score is exposed with the correct sign and magnitude.
+    scores = {c["conversation_id"]: c["review_score"] for c in conversations}
+    assert scores[str(first.id)] == pytest.approx(1.0)
+    assert scores[str(second.id)] == pytest.approx(-0.16)
+
+
+def test_recall_unreviewed_memories_keep_retrieval_order_over_http(harness):
+    client, repo, session, vectors, embedder = harness
+    first = _conversation(repo, question="find quantum", answer="First answer")
+    second = _conversation(repo, question="find quantum", answer="Second answer")
+    _index(session, vectors, embedder, first, second)
+
+    r = client.get(f"{API}/memory/recall", params={"q": "find quantum"})
+    conversations = r.json()["conversations"]
+    assert len(conversations) == 2
+    # No reviews: all review_scores are neutral, order is the retrieval
+    # order, and both recalls agree (deterministic).
+    assert all(c["review_score"] == 0.0 for c in conversations)
+    again = client.get(f"{API}/memory/recall", params={"q": "find quantum"}).json()[
+        "conversations"
+    ]
+    assert [c["conversation_id"] for c in again] == [
+        c["conversation_id"] for c in conversations
+    ]
