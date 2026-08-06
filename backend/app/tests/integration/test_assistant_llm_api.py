@@ -299,3 +299,73 @@ def test_restricted_object_never_cited_over_http(harness):
     assert all("Secret" not in c["title"] for c in out["answer"]["citations"])
     assert all("Secret" not in c["title"] for c in out["answer"]["cards"])
     assert "Secret" not in captured["requests"][0]["messages"][1]["content"]
+
+
+def test_ask_stream_sse_over_http(harness):
+    """The SSE endpoint streams tokens then a completion whose stored answer
+    matches the streamed text; reload confirms persistence."""
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed(harness, doc)
+    _install_llm_chain(
+        lambda request: httpx.Response(
+            200,
+            content=(
+                b'data: {"choices": [{"delta": {"content": "Streamed"}}]}\n\n'
+                b'data: {"choices": [{"delta": {"content": " answer"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        ),
+        repo,
+    )
+
+    res = client.post(f"{API}/ask/stream", json={"question": "find quantum"})
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/event-stream")
+
+    text = res.text
+    assert "event: token" in text
+    assert "Streamed" in text
+    assert "answer" in text
+    assert "event: completion" in text
+
+    # The completion data mirrors the sync shape: verified citations,
+    # evidence cards, persisted conversation.
+    import re
+
+    frames = re.findall(r"event: (\w+)\ndata: (.*?)\n\n", text, re.S)
+    events = [name for name, _data in frames]
+    assert events[-1] == "completion"
+    completion_data = json.loads(frames[-1][1])
+    assert completion_data["answer"]["summary"] == "Streamed answer"
+    assert completion_data["answer"]["citations"][0]["object_id"] == str(doc.id)
+    assert completion_data["answer"]["cards"]
+    assert completion_data["conversation"]["message_count"] == 2
+
+    # Reload: the stored message equals the streamed answer.
+    conv_id = completion_data["conversation"]["id"]
+    got = client.get(f"{API}/conversations/{conv_id}").json()
+    assert got["messages"][1]["content"] == "Streamed answer"
+    assert got["messages"][1]["answer"]["citations"][0]["object_id"] == str(doc.id)
+
+
+def test_ask_stream_requires_auth_and_validates(harness):
+    client, _, _, _ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    assert client.post(f"{API}/ask/stream", json={"question": "x"}).status_code == 401
+    app.dependency_overrides[get_current_user] = lambda: None  # restore marker
+    app.dependency_overrides.clear()
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectStatus as OS
+
+    fake = U.create(
+        ObjectType.USER, "test.user", created_by="system", status=OS.ACTIVE,
+        object_id=ObjectId(FAKE_USER),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake
+    # Empty question -> 422.
+    assert client.post(f"{API}/ask/stream", json={"question": ""}).status_code == 422

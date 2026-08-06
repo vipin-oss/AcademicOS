@@ -25,8 +25,11 @@ Surface:
 """
 from __future__ import annotations
 
+import json
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -196,15 +199,7 @@ def ask_question(
     user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = AskQuestionUseCase(
-            repo,
-            provider,
-            retrieval=retrieval,
-            context_builder=AssistantContextBuilder(),
-            prompt_builder=AssistantPromptBuilder(),
-            citation_builder=CitationBuilder(),
-            verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        ).execute(
+        out = _ask_use_case(repo, provider, retrieval).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
@@ -212,6 +207,66 @@ def ask_question(
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
     return output_dict(out)
+
+
+def _ask_use_case(
+    repo: SQLAlchemyObjectRepository,
+    provider: AssistantProvider,
+    retrieval: AssistantRetrievalService,
+) -> AskQuestionUseCase:
+    """One construction site for the ask pipeline (sync and stream modes)."""
+    return AskQuestionUseCase(
+        repo,
+        provider,
+        retrieval=retrieval,
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+    )
+
+
+def _sse(event: str, data: dict) -> str:
+    """One Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/ask/stream")
+def ask_question_stream(
+    body: AskBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    provider: AssistantProvider = Depends(get_assistant_provider),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Streaming ask (Sprint-6 M4): Server-Sent Events over the SAME
+    pipeline as ``POST /ask``. Events: ``token`` (partial deltas),
+    ``completion`` (verified answer + persisted conversation, mirroring
+    the sync response shape) or ``error`` (nothing persisted). The client
+    can disconnect at any time — partial tokens are never stored."""
+    use_case = _ask_use_case(repo, provider, retrieval)
+    command = AskQuestionCommand(
+        input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
+    )
+    from app.application.validators.assistant import assert_valid_ask_input
+
+    try:
+        assert_valid_ask_input(command.input)
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+
+    def events():
+        for event in use_case.stream(command):
+            yield _sse(event["event"], event["data"])
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/suggested")
@@ -288,6 +343,8 @@ def _update_conversation(
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
     return output_dict(out)
+
+
 
 
 @router.put("/conversations/{conversation_id}")

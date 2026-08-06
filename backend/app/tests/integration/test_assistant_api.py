@@ -258,4 +258,5 @@ def test_health_regression_and_openapi_tags(client: TestClient):
     assert client.get("/api/v1/health").status_code == 200
     openapi = client.get("/openapi.json").json()
     assistant_paths = [p for p in openapi["paths"] if p.startswith("/api/v1/assistant")]
-    assert len(assistant_paths) == 5  # home / ask / suggested / conversations / {id}
+    assert len(assistant_paths) == 6  # home / ask / ask/stream / suggested / conversations / {id}
+    assert "/api/v1/assistant/ask/stream" in assistant_paths  # S6 M4 SSE
