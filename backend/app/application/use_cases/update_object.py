@@ -13,7 +13,6 @@ from app.application.dtos.object import CreateObjectOutput
 from app.application.exceptions import ObjectNotFoundError
 from app.application.ports.event_publisher import DomainEventPublisher
 from app.application.validators.object import assert_valid_update_object_input
-from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 
 

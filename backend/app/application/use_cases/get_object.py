@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.application.dtos.object import CreateObjectOutput
 from app.application.exceptions import ObjectNotFoundError
 from app.application.queries.get_object import GetObjectQuery
-from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 
 

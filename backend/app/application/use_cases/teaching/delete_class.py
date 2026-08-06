@@ -16,6 +16,7 @@ from app.application.commands.delete_class import DeleteClassCommand
 from app.application.dtos.teaching import KEY_ATTACHMENT_PATH, KEY_FILE_PATH
 from app.application.exceptions import ObjectNotFoundError
 from app.application.ports.file_storage import FileStorage
+from app.application.services.graph_integrity import assert_no_inbound_edges
 from app.application.use_cases.teaching.helpers import (
     assignments_of_class,
     attendance_sessions_of_class,
@@ -73,5 +74,6 @@ class DeleteClassUseCase:
             student.pop_domain_events()
             deleted["unenrolled_students"] += 1
 
+        assert_no_inbound_edges(self._repository, command.object_id)
         self._repository.delete(command.object_id)
         return deleted

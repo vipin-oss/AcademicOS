@@ -11,6 +11,7 @@ from app.application.commands.delete_document import DeleteDocumentCommand
 from app.application.dtos.document import KEY_FILE_PATH
 from app.application.exceptions import ObjectNotFoundError
 from app.application.ports.file_storage import FileStorage
+from app.application.services.graph_integrity import assert_no_inbound_edges
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType
 
@@ -28,4 +29,5 @@ class DeleteDocumentUseCase:
         file_key = obj.metadata.get_value(KEY_FILE_PATH)
         if file_key:
             self._storage.delete(file_key)
+        assert_no_inbound_edges(self._repository, command.object_id)
         self._repository.delete(command.object_id)

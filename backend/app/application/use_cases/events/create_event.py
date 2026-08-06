@@ -37,6 +37,7 @@ from app.application.dtos.events import (
 )
 from app.application.exceptions import ObjectAlreadyExistsError, ValidationError
 from app.application.ports.event_publisher import DomainEventPublisher
+from app.application.services.graph_integrity import assert_edge_targets
 from app.application.use_cases.events.helpers import (
     SECTION_KEYS,
     SECTION_META_KEY,
@@ -256,16 +257,17 @@ class CreateEventUseCase:
             metadata=Metadata(entries=tuple(entries)),
         )
         all_link_ids: list[ObjectId] = []
+        link_targets: list[tuple[ObjectId, object]] = []
         for group in EVENT_INPUT_LINK_GROUPS:
             for target_id in link_ids[group]:
-                obj.add_relationship(
-                    target_id, RelationshipKind.RELATED_TO, Provenance.ASSERTED,
-                    actor=data.created_by.strip(),
-                )
-                all_link_ids.append(target_id)
-        # PART 8: presentations rows drive the publications edges.
+                link_targets.append((target_id, EVENT_GROUP_TARGET_TYPE.get(group)))
         for row in sections["presentations"]:
             target_id = ObjectId.parse(str(row["publication_id"]).strip())
+            link_targets.append((target_id, ObjectType.PUBLICATION))
+        assert_edge_targets(
+            self._repository, link_targets, source_id=obj.id, label="linked"
+        )
+        for target_id, _ in link_targets:
             obj.add_relationship(
                 target_id, RelationshipKind.RELATED_TO, Provenance.ASSERTED,
                 actor=data.created_by.strip(),
