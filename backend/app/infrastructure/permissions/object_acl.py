@@ -8,14 +8,17 @@ Implements the R4 ``PermissionEvaluator`` port for a single Object. The
 Resolution matrix (per the frozen Object-Centric capability 11 and the
 SRS conflict rule "explicit ALLOW ... default DENY"):
 
-- scope empty/absent        -> allow everything (no ACL configured = the
-                               pre-ACL status quo; backward compatible);
-- principal is ADMIN role   -> MANAGE;
-- principal is the owner    -> MANAGE;
-- principal in managers     -> MANAGE;
-- principal in writers      -> WRITE (implies READ);
-- principal in readers      -> READ;
-- otherwise                 -> deny.
+- scope missing/malformed      -> allow everything (no ACL at all = the
+                                  pre-ACL status quo; backward compatible);
+- explicit grants present      -> admin role / owner / managers -> MANAGE
+                                  (implies WRITE+READ); writers ->
+                                  WRITE+READ; readers -> READ; else deny;
+- no explicit grants (owner
+  only)                        -> READ/WRITE stay open (status quo), but
+                                  MANAGE (delete, ACL management) requires
+                                  the owner or an admin — anyone could
+                                  otherwise self-grant through the ACL
+                                  endpoint.
 
 Entries are principal ids ("obj:user:...") or "role:<name>"; a principal
 matches an entry when its sub matches, or one of its roles matches
@@ -27,6 +30,8 @@ import json
 
 from app.application.ports.permission import PermissionEvaluator
 from app.domain.value_objects.enums import PermissionAction, UserRole
+
+_GRANT_KEYS = ("readers", "writers", "managers")
 
 
 def _matches(entry: str, sub: str, roles: list[str]) -> bool:
@@ -54,12 +59,23 @@ class ObjectPermissionEvaluator(PermissionEvaluator):
 
         acl = _decode(scope)
         if acl is None:
-            # No ACL configured: the pre-ACL behaviour (any authenticated user).
+            # No ACL metadata at all: the pre-ACL status quo.
+            return True
+
+        owner = str(acl.get("owner") or "")
+        grants_present = any(acl.get(k) for k in _GRANT_KEYS)
+
+        if not grants_present:
+            # Owner-only ACL: READ/WRITE stay open (legacy data); MANAGE is
+            # ownership-gated so the ACL endpoint itself cannot be abused
+            # to self-grant.
+            if action is PermissionAction.MANAGE:
+                return UserRole.ADMIN.value in roles or owner == sub
             return True
 
         if UserRole.ADMIN.value in roles:
             return True
-        if acl.get("owner") == sub:
+        if owner == sub:
             return True
         if _any_match(acl.get("managers"), sub, roles):
             # MANAGE implies WRITE and READ.
@@ -81,9 +97,6 @@ def _decode(scope: str | None) -> dict | None:
     except (ValueError, TypeError):
         return None
     if not isinstance(acl, dict):
-        return None
-    # An ACL that exists but is empty counts as "no ACL" (status quo).
-    if not any(acl.get(k) for k in ("owner", "readers", "writers", "managers")):
         return None
     return acl
 

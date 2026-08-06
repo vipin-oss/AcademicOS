@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectType, PermissionAction
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.auth.jwt import decode_token
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.permissions.role_based import RoleBasedPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -86,3 +87,72 @@ def require_permission(action: PermissionAction):
         return user
 
     return _check
+
+
+def require_object_access(action: PermissionAction):
+    """Dependency factory: object-level ACL enforcement (Sprint-2 M1).
+
+    Reads the object id from the request path (any ``*_id`` path param
+    whose value is an object id), loads the object, and evaluates the
+    requested action through the R4 ``PermissionEvaluator`` port against
+    the object's ACL. 403 on denial; no-op on routes without an object id
+    (create/list). One shared factory — no per-route ACL logic.
+    """
+
+    def _check(
+        request: Request,
+        user: UniversalObject = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> UniversalObject | None:
+        object_id = _path_object_id(request)
+        if object_id is None:
+            return None  # no object id in this route (create/list)
+        repo = SQLAlchemyObjectRepository(db)
+        obj = repo.get_by_id(ObjectId(object_id))
+        if obj is None:
+            return None  # the handler maps missing to 404
+        principal = {"sub": str(user.id), "roles": get_roles(user)}
+        evaluator = ObjectPermissionEvaluator()
+        scope = _object_acl_scope(obj)
+        if not evaluator.can(principal=principal, scope=scope, action=action):
+            raise ForbiddenError(f"Missing permission: {action.value}")
+        return obj
+
+    return _check
+
+
+def _path_object_id(request: Request) -> str | None:
+    """The value of the first ``*_id`` path param that looks like an ObjectId."""
+    for name, value in request.path_params.items():
+        if name.endswith("_id") and isinstance(value, str) and value.startswith("obj:"):
+            return value
+    return None
+
+
+def _object_acl_scope(obj: UniversalObject) -> str | None:
+    import json as _json
+
+    from app.application.dtos.object import (
+        ACL_MANAGERS,
+        ACL_READERS,
+        ACL_WRITERS,
+    )
+
+    def _list(key: str) -> list[str]:
+        raw = obj.metadata.get_value(key)
+        if not raw:
+            return []
+        try:
+            parsed = _json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        return [str(e) for e in parsed if isinstance(e, str)]
+
+    return _json.dumps(
+        {
+            "owner": obj.audit.created_by if obj.audit else "",
+            "readers": _list(ACL_READERS),
+            "writers": _list(ACL_WRITERS),
+            "managers": _list(ACL_MANAGERS),
+        }
+    )

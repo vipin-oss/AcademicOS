@@ -13,10 +13,10 @@ repository injected through the session. No domain logic, no new abstractions.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_access
 from app.api.mappers.object_mapper import to_create_input, to_response, to_update_input
 from app.application.commands.create_object import CreateObjectCommand
 from app.application.commands.delete_object import DeleteObjectCommand
@@ -28,14 +28,24 @@ from app.application.exceptions import (
 )
 from app.application.queries.get_object import GetObjectQuery
 from app.application.queries.list_objects import ListObjectsQuery
+from app.application.use_cases.auth.helpers import get_roles
 from app.application.use_cases.create_object import CreateObjectUseCase
 from app.application.use_cases.delete_object import DeleteObjectUseCase
 from app.application.use_cases.get_object import GetObjectUseCase
 from app.application.use_cases.list_object import ListObjectsUseCase
+from app.application.use_cases.object_acl import (
+    get_object_acl as get_object_acl_uc,
+)
+from app.application.use_cases.object_acl import (
+    update_object_acl as update_object_acl_uc,
+)
+from app.application.use_cases.object_graph import ObjectGraphUseCase
 from app.application.use_cases.update_object import UpdateObjectUseCase
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import PermissionAction, RelationshipKind
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -113,6 +123,7 @@ def list_objects(
 def get_object(
     object_id: str,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
 ) -> ObjectResponse:
     try:
         out = GetObjectUseCase(repo).execute(
@@ -156,6 +167,7 @@ def update_object(
     req: UpdateObjectRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.WRITE)),
 ) -> ObjectResponse:
     try:
         command = UpdateObjectCommand(
@@ -183,6 +195,7 @@ def update_object(
 def delete_object(
     object_id: str,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.MANAGE)),
 ) -> None:
     try:
         DeleteObjectUseCase(repo).execute(
@@ -191,3 +204,62 @@ def delete_object(
     except ObjectNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return None
+
+
+class ObjectAclRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    readers: list[str] = []
+    writers: list[str] = []
+    managers: list[str] = []
+
+
+@router.get("/{object_id}/acl")
+def get_object_acl_route(
+    object_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
+) -> dict:
+    try:
+        return get_object_acl_uc(repo, object_id)
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.put("/{object_id}/acl")
+def put_object_acl_route(
+    object_id: str,
+    body: ObjectAclRequest,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.MANAGE)),
+) -> dict:
+    try:
+        return update_object_acl_uc(repo, object_id, body.model_dump())
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.get("/{object_id}/graph")
+def object_graph(
+    object_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
+    direction: str = Query("outgoing", pattern="^(outgoing|incoming)$"),
+    kind: str | None = Query(None),
+) -> dict:
+    try:
+        kind_enum = RelationshipKind(kind) if kind else None
+        result = ObjectGraphUseCase(repo, ObjectPermissionEvaluator()).execute(
+            ObjectId(object_id),
+            direction=direction,
+            kind=kind_enum,
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return {"items": result, "total_count": len(result)}
