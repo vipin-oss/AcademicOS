@@ -369,3 +369,129 @@ def test_ask_stream_requires_auth_and_validates(harness):
     app.dependency_overrides[get_current_user] = lambda: fake
     # Empty question -> 422.
     assert client.post(f"{API}/ask/stream", json={"question": ""}).status_code == 422
+
+
+def test_review_workflow_sync_and_stream(harness):
+    """With the review gate enabled, both sync and stream answers are
+    stored PENDING, hidden from the conversation until approved, and stay
+    hidden after rejection; the queue lists, approves and rejects."""
+    import app.core.config as config_mod
+
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed(harness, doc)
+
+    # Enable the review gate for this test (the route reads settings).
+    original = config_mod.settings.assistant_review_enabled
+    config_mod.settings.assistant_review_enabled = True
+    try:
+        _install_llm_chain(
+            lambda request: httpx.Response(
+                200, json={"choices": [{"message": {"content": "Review me"}}]}
+            ),
+            repo,
+        )
+        # SYNC ask -> pending.
+        out = _ask(client, "find quantum")
+        conv_id = out["conversation"]["id"]
+        assert out["conversation"]["version"] >= 1
+
+        pending = client.get(f"{API}/review/pending").json()["items"]
+        assert [p["conversation"]["id"] for p in pending] == [conv_id]
+        assert pending[0]["question"] == "find quantum"
+        assert pending[0]["answer"] == "Review me"
+
+        # Hidden while pending.
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][1]["content"] == ""
+        assert got["messages"][1]["answer"] is None
+
+        # Approve -> visible with the full answer.
+        appr = client.post(f"{API}/review/approve", json={"conversation_id": conv_id})
+        assert appr.status_code == 200
+        assert client.get(f"{API}/review/pending").json()["items"] == []
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][1]["content"] == "Review me"
+        assert got["messages"][1]["answer"]["summary"] == "Review me"
+
+        # Reject -> hidden again.
+        rej = client.post(f"{API}/review/reject", json={"conversation_id": conv_id})
+        assert rej.status_code == 200
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][1]["content"] == ""
+        assert got["messages"][1]["answer"] is None
+
+        # STREAM ask on the SAME conversation -> pending again (shared path).
+        # Install a STREAMING handler so the LLM transport streams tokens.
+        _install_llm_chain(
+            lambda request: httpx.Response(
+                200,
+                content=(
+                    b'data: {"choices": [{"delta": {"content": "Streamed"}}]}\n\n'
+                    b'data: {"choices": [{"delta": {"content": " answer"}}]}\n\n'
+                    b"data: [DONE]\n\n"
+                ),
+            ),
+            repo,
+        )
+        res = client.post(f"{API}/ask/stream", json={
+            "question": "tell me more", "conversation_id": conv_id,
+        })
+        assert res.status_code == 200
+        assert "event: completion" in res.text
+        pending = client.get(f"{API}/review/pending").json()["items"]
+        assert [p["conversation"]["id"] for p in pending] == [conv_id]
+        # Hidden again (the streamed answer is pending review).
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][-1]["content"] == ""
+        assert got["messages"][-1]["answer"] is None
+
+        # Approve the streamed answer -> the FULL streamed answer shows.
+        client.post(f"{API}/review/approve", json={"conversation_id": conv_id})
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][-1]["content"] == "Streamed answer"
+        assert got["messages"][-1]["answer"]["summary"] == "Streamed answer"
+    finally:
+        config_mod.settings.assistant_review_enabled = original
+
+
+def test_review_duplicate_actions_and_unknown_404(harness):
+    import app.core.config as config_mod
+
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed(harness, doc)
+    original = config_mod.settings.assistant_review_enabled
+    config_mod.settings.assistant_review_enabled = True
+    try:
+        _install_llm_chain(
+            lambda request: httpx.Response(
+                200, json={"choices": [{"message": {"content": "A"}}]}
+            ),
+            repo,
+        )
+        out = _ask(client, "find quantum")
+        conv_id = out["conversation"]["id"]
+
+        # Duplicate approvals are idempotent (200, no error).
+        assert client.post(f"{API}/review/approve", json={"conversation_id": conv_id}).status_code == 200
+        assert client.post(f"{API}/review/approve", json={"conversation_id": conv_id}).status_code == 200
+        # Duplicate rejections likewise.
+        assert client.post(f"{API}/review/reject", json={"conversation_id": conv_id}).status_code == 200
+        assert client.post(f"{API}/review/reject", json={"conversation_id": conv_id}).status_code == 200
+
+        # Unknown conversation -> 404.
+        ghost = str(ObjectId.generate(ObjectType.AI_CONVERSATION))
+        assert client.post(f"{API}/review/approve", json={"conversation_id": ghost}).status_code == 404
+        assert client.post(f"{API}/review/reject", json={"conversation_id": ghost}).status_code == 404
+        assert client.get(f"{API}/review/pending").status_code == 200
+    finally:
+        config_mod.settings.assistant_review_enabled = original
