@@ -213,6 +213,7 @@ class TestFullLifecycle:
             "staged": 0,
             "hashed": 4,
             "awaiting_review": 4,
+            "committed": 0,
             "errors": 0,
             # M2.3 additive queue counters (all settled post-drain)
             "extracting": 0,
