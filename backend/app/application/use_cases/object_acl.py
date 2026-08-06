@@ -66,6 +66,15 @@ def _set_acl_entry(obj: UniversalObject, key: str, entries: list[str]) -> None:
     )
 
 
+def object_acl_scope(obj: UniversalObject) -> str | None:
+    """Serialize an object's ACL metadata into the R4 evaluator's scope.
+
+    Single source of truth for both the graph runtime and the route-level
+    enforcement dependency (S2 M2 — removed the duplicated helper).
+    """
+    return json.dumps(_acl_of(obj))
+
+
 def _acl_of(obj: UniversalObject) -> dict:
     def _list(key: str) -> list[str]:
         raw = obj.metadata.get_value(key)

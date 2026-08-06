@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies.db import get_db
 from app.application.use_cases.auth.helpers import get_roles
+from app.application.use_cases.object_acl import object_acl_scope
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectType, PermissionAction
@@ -113,7 +114,7 @@ def require_object_access(action: PermissionAction):
             return None  # the handler maps missing to 404
         principal = {"sub": str(user.id), "roles": get_roles(user)}
         evaluator = ObjectPermissionEvaluator()
-        scope = _object_acl_scope(obj)
+        scope = object_acl_scope(obj)
         if not evaluator.can(principal=principal, scope=scope, action=action):
             raise ForbiddenError(f"Missing permission: {action.value}")
         return obj
@@ -129,30 +130,3 @@ def _path_object_id(request: Request) -> str | None:
     return None
 
 
-def _object_acl_scope(obj: UniversalObject) -> str | None:
-    import json as _json
-
-    from app.application.dtos.object import (
-        ACL_MANAGERS,
-        ACL_READERS,
-        ACL_WRITERS,
-    )
-
-    def _list(key: str) -> list[str]:
-        raw = obj.metadata.get_value(key)
-        if not raw:
-            return []
-        try:
-            parsed = _json.loads(raw)
-        except (ValueError, TypeError):
-            return []
-        return [str(e) for e in parsed if isinstance(e, str)]
-
-    return _json.dumps(
-        {
-            "owner": obj.audit.created_by if obj.audit else "",
-            "readers": _list(ACL_READERS),
-            "writers": _list(ACL_WRITERS),
-            "managers": _list(ACL_MANAGERS),
-        }
-    )

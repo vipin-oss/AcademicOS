@@ -8,6 +8,7 @@ READ are returned — traversal never leaks.
 from __future__ import annotations
 
 from app.application.ports.permission import PermissionEvaluator
+from app.application.use_cases.object_acl import object_acl_scope
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import PermissionAction, RelationshipKind
 from app.domain.value_objects.object_id import ObjectId
@@ -46,7 +47,7 @@ class ObjectGraphUseCase:
                 continue  # dangling edge (deleted target)
             if self._evaluator.can(
                 principal=principal,
-                scope=_scope_of(target),
+                scope=object_acl_scope(target),
                 action=PermissionAction.READ,
             ):
                 allowed.append(
@@ -57,32 +58,3 @@ class ObjectGraphUseCase:
                     }
                 )
         return allowed
-
-
-def _scope_of(obj) -> str | None:
-    """Serialize an object's ACL metadata into the evaluator's scope string."""
-    import json as _json
-
-    from app.application.dtos.object import (
-        ACL_MANAGERS,
-        ACL_READERS,
-        ACL_WRITERS,
-    )
-
-    def _list(key: str) -> list[str]:
-        raw = obj.metadata.get_value(key)
-        if not raw:
-            return []
-        try:
-            parsed = _json.loads(raw)
-        except (ValueError, TypeError):
-            return []
-        return [str(e) for e in parsed if isinstance(e, str)]
-
-    acl = {
-        "owner": obj.audit.created_by if obj.audit else "",
-        "readers": _list(ACL_READERS),
-        "writers": _list(ACL_WRITERS),
-        "managers": _list(ACL_MANAGERS),
-    }
-    return _json.dumps(acl)
