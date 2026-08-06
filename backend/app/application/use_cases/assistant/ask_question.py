@@ -44,7 +44,6 @@ class AskQuestionUseCase:
             obj, "assistant", answer.summary, answer
         )
         self._repository.save(obj)
-        obj.pop_domain_events()
         return dto.AskOutput(
             conversation=conversation_output(obj),
             user_message=message_output(user_seq, user_payload),
