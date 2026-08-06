@@ -21,10 +21,10 @@ from app.application.assistant.providers import (
 )
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.services.assistant_eval import (
-    EvaluationHistory,
     EvalCase,
     EvalResult,
     EvalRun,
+    EvaluationHistory,
     run_eval_suite_across_models,
 )
 from app.application.services.assistant_retrieval import AssistantRetrievalService
