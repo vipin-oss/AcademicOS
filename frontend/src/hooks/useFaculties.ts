@@ -1,14 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toErrorMessage } from "@/lib/api/client";
+import { useMemo } from "react";
+
 import { listFaculty } from "@/lib/api/faculty";
 import { DEFAULT_FACULTY_PAGE_SIZE } from "@/lib/faculty/constants";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { usePagedList } from "@/hooks/usePagedList";
 import type {
   FacultyEmploymentType,
   FacultyResponse,
-  ListFacultyResponse,
   ResearchObjectStatus,
 } from "@/types";
 
@@ -40,7 +39,19 @@ export interface UseFacultiesResult {
   refresh: () => void;
 }
 
-/** Faculty directory list state — mirrors `useProjects` / `useStudents` one-to-one. */
+interface FacultyFilters {
+  department?: string | null;
+  designation?: string | null;
+  employmentType?: FacultyEmploymentType | null;
+  status?: ResearchObjectStatus | null;
+}
+
+/**
+ * Faculty directory list state — thin wrapper over the shared
+ * `usePagedList` framework (R6): server pagination + debounced server-side
+ * search + server-side filters + refresh. The exported interface is
+ * unchanged; only the internals now delegate to the framework.
+ */
 export function useFaculties(options: UseFacultiesOptions = {}): UseFacultiesResult {
   const {
     pageSize = DEFAULT_FACULTY_PAGE_SIZE,
@@ -52,85 +63,22 @@ export function useFaculties(options: UseFacultiesOptions = {}): UseFacultiesRes
     status = null,
   } = options;
 
-  const trimmedSearch = search.trim();
-  const debouncedSearch = useDebouncedValue(trimmedSearch, searchDelay);
-  const searchActive = debouncedSearch.length > 0;
-  const filterActive = Boolean(
-    department?.trim() || designation?.trim() || employmentType || status,
-  );
-
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<ListFacultyResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
-  const hasDataRef = useRef(false);
-
-  // A new query or filter always starts on page 1.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, department, designation, employmentType, status]);
-
-  const request = useMemo(
+  const params = useMemo<FacultyFilters>(
     () => ({
-      page,
-      pageSize,
-      q: debouncedSearch || undefined,
       department: department?.trim() || null,
       designation: designation?.trim() || null,
       employmentType: employmentType ?? null,
       status: status ?? null,
     }),
-    [page, pageSize, debouncedSearch, department, designation, employmentType, status],
+    [department, designation, employmentType, status],
   );
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let active = true;
-
-    if (hasDataRef.current) setRefreshing(true);
-    else setLoading(true);
-    setError(null);
-
-    listFaculty(request, { signal: controller.signal })
-      .then((response) => {
-        if (!active) return;
-        setData(response);
-        hasDataRef.current = true;
-      })
-      .catch((err) => {
-        if (!active || err?.name === "AbortError") return;
-        setError(toErrorMessage(err));
-      })
-      .finally(() => {
-        if (!active) return;
-        setLoading(false);
-        setRefreshing(false);
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [request, reloadToken]);
-
-  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
-
-  return {
-    items: data?.items ?? [],
-    total: data?.total_count ?? 0,
-    page,
+  return usePagedList<FacultyResponse, FacultyFilters>({
     pageSize,
-    totalPages: Math.max(1, Math.ceil((data?.total_count ?? 0) / pageSize)),
-    loading,
-    refreshing,
-    error,
-    isSearching:
-      trimmedSearch.length > 0 && (trimmedSearch !== debouncedSearch || refreshing),
-    searchActive,
-    filterActive,
-    setPage,
-    refresh,
-  };
+    search,
+    searchDelay,
+    filterValues: [department, designation, employmentType, status],
+    params,
+    fetcher: (request, signal) => listFaculty(request, { signal }),
+  });
 }
