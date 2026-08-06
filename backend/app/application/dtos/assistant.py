@@ -347,6 +347,57 @@ class AssistantContext:
 
 
 @dataclass(frozen=True)
+class MemoryItem:
+    """One recalled conversation (Sprint-8 M1 — assistant memory).
+
+    The memory projection of a conversation: its title, the latest
+    question/answer pair (the full thread stays available through the
+    existing conversation endpoints), the CITATIONS preserved from the
+    stored answer payload, the review status (a pending or rejected
+    answer is recalled with empty content and no citations — the review
+    gate), and the retrieval provenance/score.
+    """
+
+    conversation_id: str
+    title: str
+    question: str
+    answer: str
+    citations: tuple[AssistantCitation, ...] = ()
+    review_status: str = ""  # "" | pending | approved | rejected
+    score: float = 0.0
+    sources: tuple[str, ...] = ()
+    version: int = 1
+    last_message_at: str | None = None
+
+
+@dataclass(frozen=True)
+class KnowledgeItem:
+    """One non-conversation object recalled alongside conversations
+    (Sprint-8 M1 — the graph-aware knowledge leg of memory recall)."""
+
+    object_id: str
+    object_type: str
+    title: str
+    score: float = 0.0
+    sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MemoryRecall:
+    """The deterministic memory recall for one question.
+
+    ``conversations`` are the recalled conversation memories (search +
+    graph provenance, review-gated); ``knowledge`` are the related
+    objects the graph leg discovered from the conversation anchors.
+    """
+
+    conversations: tuple[MemoryItem, ...]
+    knowledge: tuple[KnowledgeItem, ...]
+    search_count: int
+    graph_count: int
+
+
+@dataclass(frozen=True)
 class AssistantPrompt:
     """The deterministic prompt envelope built by the Prompt Builder.
 
