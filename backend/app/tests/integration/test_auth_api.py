@@ -11,11 +11,10 @@ pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("pydantic_settings")
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from fastapi.testclient import TestClient
 
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.session import get_db
@@ -286,10 +285,10 @@ def test_authenticated_identity_propagates_to_updates(client):
 def _promote(client, username):
     """Give a user the admin role through the domain (test setup, not a
     bypass: enforcement still runs through require_permission)."""
+    from app.application.use_cases.auth.helpers import find_user, set_roles
     from app.infrastructure.repositories.sqlalchemy_object_repository import (
         SQLAlchemyObjectRepository,
     )
-    from app.application.use_cases.auth.helpers import find_user, set_roles
 
     session = next(app.dependency_overrides[get_db]())
     repo = SQLAlchemyObjectRepository(session)
@@ -372,3 +371,37 @@ def test_me_reports_roles(client):
     me = client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["roles"] == []
+
+
+def test_generic_object_api_cannot_grant_roles(client):
+    """Security regression (Sprint-1 M3): the generic objects API must not
+    write auth.* metadata or create USER objects — privilege escalation
+    via auth.roles would otherwise be trivial."""
+    token = _register_and_login(client, "escalation.user", "escalation-pass-1")
+    H = {"Authorization": f"Bearer {token}"}
+    uid = client.get(f"{API}/me", headers=H).json()["id"]
+
+    # 1. Self-assign admin via the generic update endpoint -> 422.
+    resp = client.put(
+        f"/api/v1/objects/{uid}",
+        headers=H,
+        json={"updated_by": "x", "metadata": [{"key": "auth.roles", "value": '["admin"]'}]},
+    )
+    assert resp.status_code == 422
+    me = client.get(f"{API}/me", headers=H)
+    assert me.json()["roles"] == []
+
+    # 2. Mint a USER object via the generic create endpoint -> 422.
+    resp = client.post(
+        "/api/v1/objects",
+        headers=H,
+        json={
+            "object_type": "user",
+            "title": "fake.admin",
+            "created_by": "x",
+            "metadata": [{"key": "auth.roles", "value": '["admin"]'}],
+        },
+    )
+    assert resp.status_code == 422
+    listing = client.get("/api/v1/objects?object_type=user", headers=H)
+    assert all(u["title"] != "fake.admin" for u in listing.json().get("items", []))

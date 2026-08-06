@@ -9,7 +9,15 @@ from __future__ import annotations
 from app.application.dtos.object import CreateObjectInput, UpdateObjectInput
 from app.application.exceptions import ValidationError
 from app.application.queries.list_objects import ListObjectsQuery
-from app.domain.value_objects.enums import ObjectStatus
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+
+# Security (Sprint-1 M3): the credential/role namespace is reserved for the
+# auth machinery. The generic object endpoints must never write these keys
+# (a user could otherwise self-assign auth.roles = ["admin"]), and the
+# USER object type must never be created through the generic API (it has
+# registration invariants: deterministic ids, password hashing, unique
+# usernames).
+_RESERVED_METADATA_PREFIX = "auth."
 
 
 def validate_create_object_input(dto: CreateObjectInput) -> list[str]:
@@ -24,6 +32,10 @@ def validate_create_object_input(dto: CreateObjectInput) -> list[str]:
         for entry in dto.metadata.entries:
             if not entry.key or not entry.key.strip():
                 errors.append("Metadata key must not be empty.")
+            if entry.key.startswith(_RESERVED_METADATA_PREFIX):
+                errors.append(f"Metadata key {entry.key!r} is reserved.")
+    if dto.object_type is ObjectType.USER:
+        errors.append("USER objects must be created through the auth endpoints.")
     return errors
 
 
@@ -37,6 +49,8 @@ def validate_update_object_input(dto: UpdateObjectInput) -> list[str]:
         for entry in dto.metadata.entries:
             if not entry.key or not entry.key.strip():
                 errors.append("Metadata key must not be empty.")
+            if entry.key.startswith(_RESERVED_METADATA_PREFIX):
+                errors.append(f"Metadata key {entry.key!r} is reserved.")
     return errors
 
 
