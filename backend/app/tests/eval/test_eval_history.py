@@ -13,6 +13,7 @@ from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.application.services.assistant_eval import (
+    EvaluationHistory,
     EvalResult,
     EvalRun,
 )
@@ -41,6 +42,11 @@ def db():
 @pytest.fixture()
 def store(db) -> SQLEvalRunStore:
     return SQLEvalRunStore(db)
+
+
+@pytest.fixture()
+def history(db, store) -> EvaluationHistory:
+    return EvaluationHistory(store)
 
 
 def _results(*names: str, failed: tuple[str, ...] = ()) -> tuple[EvalResult, ...]:
@@ -159,3 +165,135 @@ def test_run_record_validates_invariants(db, store):
             prompt_id="assistant.default", prompt_version=1,
             passed=2, total=2, results=results, created_at="",
         )
+
+
+# ---------------------------------------------------------------- history
+def test_record_run_persists_and_returns_the_durable_record(history):
+    run = history.record_run(
+        model_id="main",
+        model_version="main-model",
+        prompt_id="assistant.default",
+        prompt_version=3,
+        results=_results("a", "b", "c", failed=("c",)),
+    )
+    assert history.get(run.run_id) == run
+    assert run.passed == 2 and run.total == 3
+    assert run.created_at  # evaluation timestamp recorded
+    assert run.results[2].details == ("missing marker",)
+    # Each recorded run gets a fresh identity.
+    another = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=3, results=_results("a"),
+    )
+    assert another.run_id != run.run_id
+
+
+def test_history_queries_via_the_service(history):
+    first = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a"),
+    )
+    second = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a"),
+    )
+    assert history.latest("main").run_id == second.run_id
+    assert [r.run_id for r in history.recent("main", 10)] == [
+        second.run_id, first.run_id,
+    ]
+    assert history.latest("other") is None
+
+
+# ------------------------------------------------------------- comparison
+def test_compare_reports_regressions_fixes_and_stable(history):
+    base = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1,
+        results=_results("a", "b", "c", failed=("c",)),
+    )
+    candidate = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1,
+        results=_results("a", "b", "c", failed=("a",)),
+    )
+    comparison = history.compare(base, candidate)
+    assert comparison.regressions == ("a",)
+    assert comparison.fixes == ("c",)
+    assert comparison.stable_passes == ("b",)
+    assert comparison.stable_failures == ()
+    assert comparison.has_regressions
+    assert comparison.base_passed == 2
+    assert comparison.candidate_passed == 2
+    assert comparison.total == 3
+    assert comparison.base_run_id == base.run_id
+    assert comparison.candidate_run_id == candidate.run_id
+
+
+def test_compare_rejects_different_case_sets(history):
+    base = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a", "b"),
+    )
+    candidate = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a", "c"),
+    )
+    with pytest.raises(ValueError, match="different case sets"):
+        history.compare(base, candidate)
+
+
+def test_compare_latest_detects_regressions_over_history(history):
+    history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1,
+        results=_results("a", "b"),
+    )
+    history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1,
+        results=_results("a", "b", failed=("a",)),
+    )
+    comparison = history.compare_latest("main")
+    assert comparison is not None
+    assert comparison.regressions == ("a",)
+    assert comparison.has_regressions
+    # Fewer than two runs -> no comparison possible.
+    history.record_run(
+        model_id="alt", model_version="alt-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a"),
+    )
+    assert history.compare_latest("alt") is None
+    assert history.compare_latest("never-ran") is None
+
+
+def test_compare_latest_all_green_is_not_a_regression(history):
+    history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1,
+        results=_results("a", "b", failed=("b",)),
+    )
+    history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=_results("a", "b"),
+    )
+    comparison = history.compare_latest("main")
+    assert comparison is not None
+    assert not comparison.has_regressions
+    assert comparison.fixes == ("b",)
+
+
+# -------------------------------------------------------- deterministic
+def test_deterministic_replay_records_identical_results(history):
+    results = _results("a", "b", failed=("b",))
+    first = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=results,
+    )
+    second = history.record_run(
+        model_id="main", model_version="main-model",
+        prompt_id="assistant.default", prompt_version=1, results=results,
+    )
+    assert first.results == second.results
+    assert (first.passed, first.total) == (second.passed, second.total)
+    # Only identity and timestamp differ.
+    assert first.run_id != second.run_id

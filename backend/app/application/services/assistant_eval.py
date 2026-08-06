@@ -100,6 +100,137 @@ class EvalRun:
             raise ValueError("EvalRun created_at must not be empty.")
 
 
+@dataclass(frozen=True)
+class RunComparison:
+    """Deterministic diff between two runs of the SAME suite (Sprint-7 M3).
+
+    Regression detection over benchmark history: every case of the base
+    run is classified by how its pass/fail changed in the candidate run.
+    Case identity is the case NAME; comparing runs whose suites differ is
+    rejected (the diff would be meaningless).
+    """
+
+    base_run_id: str
+    candidate_run_id: str
+    regressions: tuple[str, ...]  # passed in base, failed in candidate
+    fixes: tuple[str, ...]  # failed in base, passed in candidate
+    stable_passes: tuple[str, ...]  # passed in both
+    stable_failures: tuple[str, ...]  # failed in both
+    base_passed: int
+    candidate_passed: int
+    total: int
+
+    @property
+    def has_regressions(self) -> bool:
+        return bool(self.regressions)
+
+
+class EvaluationHistory:
+    """Benchmark history + quality tracking (Sprint-7 M3).
+
+    The single application seam that records evaluation runs and answers
+    history questions: latest/recent runs per model and deterministic
+    run-to-run comparison (historical regression detection). Records are
+    append-only — history never goes stale; the injected ``EvalRunStore``
+    is the only persistence the service touches.
+    """
+
+    def __init__(self, store: EvalRunStore) -> None:
+        self._store = store
+
+    # ------------------------------------------------------------- record
+    def record_run(
+        self,
+        *,
+        model_id: str,
+        model_version: str,
+        prompt_id: str,
+        prompt_version: int,
+        results: list[EvalResult] | tuple[EvalResult, ...],
+    ) -> EvalRun:
+        """Persist one evaluation run and return its durable record.
+
+        ``run_id`` (UUID) and ``created_at`` are generated here — the run
+        record's identity is the service's concern, the store only
+        persists it. Passed/total are derived from ``results``, so the
+        record is internally consistent by construction.
+        """
+        run = EvalRun(
+            run_id=str(uuid.uuid4()),
+            model_id=model_id,
+            model_version=model_version,
+            prompt_id=prompt_id,
+            prompt_version=prompt_version,
+            passed=sum(1 for r in results if r.passed),
+            total=len(results),
+            results=tuple(results),
+            created_at=_utcnow_iso(),
+        )
+        self._store.add(run)
+        return run
+
+    # ------------------------------------------------------------ history
+    def get(self, run_id: str) -> EvalRun | None:
+        return self._store.get(run_id)
+
+    def latest(self, model_id: str) -> EvalRun | None:
+        return self._store.latest_by_model(model_id)
+
+    def recent(self, model_id: str, limit: int = 20) -> list[EvalRun]:
+        return self._store.recent_by_model(model_id, limit)
+
+    # --------------------------------------------------------- comparison
+    def compare(self, base: EvalRun, candidate: EvalRun) -> RunComparison:
+        """Classify every case of ``base`` by its change in ``candidate``.
+
+        Deterministic: cases are walked in base suite order. Runs that do
+        not cover the same case names are rejected — a regression report
+        across different suites would be meaningless.
+        """
+        base_by_name = {r.name: r.passed for r in base.results}
+        candidate_by_name = {r.name: r.passed for r in candidate.results}
+        if set(base_by_name) != set(candidate_by_name):
+            raise ValueError(
+                "Runs cover different case sets; comparison is meaningless."
+            )
+        regressions: list[str] = []
+        fixes: list[str] = []
+        stable_passes: list[str] = []
+        stable_failures: list[str] = []
+        for name, before in base_by_name.items():
+            after = candidate_by_name[name]
+            if before and not after:
+                regressions.append(name)
+            elif not before and after:
+                fixes.append(name)
+            elif before:
+                stable_passes.append(name)
+            else:
+                stable_failures.append(name)
+        return RunComparison(
+            base_run_id=base.run_id,
+            candidate_run_id=candidate.run_id,
+            regressions=tuple(regressions),
+            fixes=tuple(fixes),
+            stable_passes=tuple(stable_passes),
+            stable_failures=tuple(stable_failures),
+            base_passed=base.passed,
+            candidate_passed=candidate.passed,
+            total=base.total,
+        )
+
+    def compare_latest(self, model_id: str) -> RunComparison | None:
+        """Historical regression detection: the two most recent runs.
+
+        ``None`` when the model has fewer than two recorded runs. The
+        candidate is the newest run, the base the one before it.
+        """
+        recent = self._store.recent_by_model(model_id, 2)
+        if len(recent) < 2:
+            return None
+        return self.compare(recent[1], recent[0])
+
+
 def run_eval_case(
     use_case: AskQuestionUseCase,
     case: EvalCase,
@@ -145,6 +276,8 @@ __all__ = [
     "EvalCase",
     "EvalResult",
     "EvalRun",
+    "EvaluationHistory",
+    "RunComparison",
     "run_eval_case",
     "run_eval_suite",
 ]
