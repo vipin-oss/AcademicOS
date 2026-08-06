@@ -30,7 +30,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
@@ -79,6 +79,9 @@ from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.assistant.provider_factory import build_provider
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+from app.infrastructure.persistence.review_decision_store import (
+    SQLReviewDecisionStore,
+)
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -430,30 +433,124 @@ def review_pending(
 
 
 class ReviewActionBody(StrictBody):
+    """The human review action (Sprint-7 M5 — human feedback loop).
+
+    ``conversation_id`` alone remains valid (backward compatible); the
+    feedback fields are optional: reviewer notes, a 1-5 rating, a 0-1
+    confidence, and an optional linked evaluation run (validated against
+    the evaluation history — an unknown run id is a client error)."""
+
     conversation_id: str
+    notes: str | None = Field(None, max_length=2000)
+    rating: int | None = Field(None, ge=1, le=5)
+    confidence: float | None = Field(None, ge=0.0, le=1.0)
+    eval_run_id: str | None = Field(None, max_length=64)
+
+
+def _review_queue(
+    repo: SQLAlchemyObjectRepository, db: Session
+) -> AssistantReviewQueue:
+    """The workspace queue: state transitions on the conversation objects
+    plus the durable audit trail (Sprint-7 M5)."""
+    return AssistantReviewQueue(
+        repo, decision_store=SQLReviewDecisionStore(db)
+    )
+
+
+def _validated_eval_run(
+    eval_run_id: str | None,
+    db: Session,
+) -> str | None:
+    """The eval-run link must reference a recorded run (Sprint-7 M5): an
+    unknown id is a client error (422), never a broken link."""
+    if eval_run_id is None:
+        return None
+    from app.application.services.assistant_eval import EvaluationHistory
+    from app.infrastructure.persistence.eval_run_store import SQLEvalRunStore
+
+    if EvaluationHistory(SQLEvalRunStore(db)).get(eval_run_id) is None:
+        raise _unprocessable(ValueError(f"Unknown evaluation run: {eval_run_id}"))
+    return eval_run_id
+
+
+def _review_response(out) -> dict:
+    """The workspace action response: the conversation output (unchanged
+    shape) plus the recorded audit decision (None when not recorded)."""
+    return {
+        "conversation": asdict(out.conversation),
+        "decision": asdict(out.decision) if out.decision is not None else None,
+    }
 
 
 @router.post("/review/approve")
 def review_approve(
     body: ReviewActionBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
 ):
-    """Approve a conversation's latest answer: it becomes visible."""
+    """Approve a conversation's latest answer: it becomes visible. Records
+    the review decision (reviewer = the authenticated user) with the
+    optional notes / rating / confidence / evaluation-run link."""
+    eval_run_id = _validated_eval_run(body.eval_run_id, db)
     try:
-        out = AssistantReviewQueue(repo).approve(body.conversation_id)
+        out = _review_queue(repo, db).approve(
+            body.conversation_id,
+            reviewer=str(user.id),
+            notes=body.notes or "",
+            rating=body.rating,
+            confidence=body.confidence,
+            eval_run_id=eval_run_id,
+        )
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
-    return {"conversation": asdict(out)}
+    return _review_response(out)
 
 
 @router.post("/review/reject")
 def review_reject(
     body: ReviewActionBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
 ):
-    """Reject a conversation's latest answer: it stays hidden."""
+    """Reject a conversation's latest answer: it stays hidden. Records the
+    review decision with the optional feedback fields."""
+    eval_run_id = _validated_eval_run(body.eval_run_id, db)
     try:
-        out = AssistantReviewQueue(repo).reject(body.conversation_id)
+        out = _review_queue(repo, db).reject(
+            body.conversation_id,
+            reviewer=str(user.id),
+            notes=body.notes or "",
+            rating=body.rating,
+            confidence=body.confidence,
+            eval_run_id=eval_run_id,
+        )
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
-    return {"conversation": asdict(out)}
+    return _review_response(out)
+
+
+@router.get("/review/decisions")
+def review_decisions(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """The workspace activity feed: the most recent review decisions,
+    newest first (Sprint-7 M5)."""
+    items = _review_queue(repo, db).recent_decisions(limit)
+    return {"items": [asdict(item) for item in items]}
+
+
+@router.get("/review/decisions/{conversation_id}")
+def review_decisions_for_conversation(
+    conversation_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+):
+    """The complete audit trail of one conversation, oldest first —
+    every decision ever taken on it, including re-reviews (Sprint-7 M5).
+    Empty when the conversation has never been reviewed."""
+    items = _review_queue(repo, db).decisions(conversation_id)
+    return {"items": [asdict(item) for item in items]}
