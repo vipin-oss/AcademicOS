@@ -193,3 +193,15 @@ class PermissionAction(str, Enum):
     READ = "read"
     WRITE = "write"
     MANAGE = "manage"
+
+
+class UserRole(str, Enum):
+    """User roles (Sprint-1 M3 — RBAC v1).
+
+    Roles are stored on the USER object as ``auth.roles`` system metadata
+    and consumed by the RoleBasedPermissionEvaluator (R4 seam). The v1
+    catalogue is deliberately small and extensible: the SRS §3.2 lists 20
+    roles; each future role is one enum member plus one policy-map row.
+    """
+
+    ADMIN = "admin"

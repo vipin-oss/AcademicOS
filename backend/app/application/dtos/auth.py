@@ -5,10 +5,11 @@ permissions, no authorisation decisions (later Sprint-1 milestones).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-# Credential storage on the USER object (system-layer metadata).
+# Credential + role storage on the USER object (system-layer metadata).
 KEY_PASSWORD_HASH = "auth.password_hash"
+KEY_ROLES = "auth.roles"  # JSON-encoded list of UserRole values
 
 
 @dataclass
@@ -40,3 +41,10 @@ class UserOutput:
     id: str
     username: str
     created_at: str
+    roles: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AssignRolesInput:
+    user_id: str
+    roles: list[str]
