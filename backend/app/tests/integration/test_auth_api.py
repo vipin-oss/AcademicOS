@@ -278,3 +278,97 @@ def test_authenticated_identity_propagates_to_updates(client):
     )
     assert updated.status_code == 200
     assert updated.json()["created_by"] == uid
+
+
+# ------------------------------------------------- Sprint-1 M3 — RBAC
+
+
+def _promote(client, username):
+    """Give a user the admin role through the domain (test setup, not a
+    bypass: enforcement still runs through require_permission)."""
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+    from app.application.use_cases.auth.helpers import find_user, set_roles
+
+    session = next(app.dependency_overrides[get_db]())
+    repo = SQLAlchemyObjectRepository(session)
+    user = find_user(repo, username)
+    set_roles(user, ["admin"])
+    repo.save(user)
+
+
+def _register_and_login(client, username, password):
+    client.post(f"{API}/register", json={"username": username, "password": password})
+    return client.post(f"{API}/login", json={"username": username, "password": password}).json()[
+        "access_token"
+    ]
+
+
+def test_role_assignment_requires_admin(client):
+    """Non-admin users get 403 on user management; admins succeed."""
+    admin_token = _register_and_login(client, "rbac.admin", "rbac-admin-pass")
+    _promote(client, "rbac.admin")
+    user_token = _register_and_login(client, "rbac.user", "rbac-user-pass-1")
+    target = client.get(f"{API}/me", headers={"Authorization": f"Bearer {user_token}"}).json()
+
+    # Non-admin: 403 on both list and assign.
+    assert (
+        client.get(f"{API}/users", headers={"Authorization": f"Bearer {user_token}"}).status_code
+        == 403
+    )
+    assert (
+        client.put(
+            f"{API}/users/{target['id']}/roles",
+            headers={"Authorization": f"Bearer {user_token}"},
+            json={"roles": ["admin"]},
+        ).status_code
+        == 403
+    )
+
+    # Admin: list shows both users; assignment works.
+    listing = client.get(f"{API}/users", headers={"Authorization": f"Bearer {admin_token}"})
+    assert listing.status_code == 200
+    assert {u["username"] for u in listing.json()} == {"rbac.admin", "rbac.user"}
+
+    assigned = client.put(
+        f"{API}/users/{target['id']}/roles",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"roles": ["admin"]},
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["roles"] == ["admin"]
+
+    # The promoted user can now manage too.
+    assert (
+        client.get(f"{API}/users", headers={"Authorization": f"Bearer {user_token}"}).status_code
+        == 200
+    )
+
+
+def test_unauthenticated_user_management_is_401(client):
+    assert client.get(f"{API}/users").status_code == 401
+    assert (
+        client.put(f"{API}/users/obj:user:X/roles", json={"roles": ["admin"]}).status_code
+        == 401
+    )
+
+
+def test_unknown_role_assignment_is_422(client):
+    admin_token = _register_and_login(client, "rbac.admin2", "rbac-admin-pass")
+    _promote(client, "rbac.admin2")
+    target = _register_and_login(client, "rbac.user2", "rbac-user-pass-1")
+    target_id = client.get(f"{API}/me", headers={"Authorization": f"Bearer {target}"}).json()["id"]
+    resp = client.put(
+        f"{API}/users/{target_id}/roles",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"roles": ["superuser"]},
+    )
+    assert resp.status_code == 422
+
+
+def test_me_reports_roles(client):
+    token = _register_and_login(client, "rbac.me", "rbac-me-pass-1")
+    me = client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["roles"] == []

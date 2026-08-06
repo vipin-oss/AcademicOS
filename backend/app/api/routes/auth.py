@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_permission
 from app.api.dependencies.db import get_db
 from app.api.mappers.auth_mapper import (
     to_login_input,
@@ -27,21 +27,27 @@ from app.api.mappers.auth_mapper import (
     to_tokens_response,
     to_user_response,
 )
+from app.application.commands.assign_roles import AssignRolesCommand
 from app.application.commands.login_user import LoginUserCommand
 from app.application.commands.refresh_tokens import RefreshTokensCommand
 from app.application.commands.register_user import RegisterUserCommand
+from app.application.dtos.auth import AssignRolesInput
 from app.application.exceptions import (
     AuthenticationError,
     ObjectAlreadyExistsError,
+    ObjectNotFoundError,
     ValidationError,
 )
 from app.application.ports.password_hasher import PasswordHasher
 from app.application.ports.token_service import TokenService
+from app.application.use_cases.auth.assign_roles import AssignRolesUseCase
 from app.application.use_cases.auth.helpers import user_output
+from app.application.use_cases.auth.list_users import ListUsersUseCase
 from app.application.use_cases.auth.login_user import LoginUserUseCase
 from app.application.use_cases.auth.refresh_tokens import RefreshTokensUseCase
 from app.application.use_cases.auth.register_user import RegisterUserUseCase
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import PermissionAction
 from app.infrastructure.auth.jwt_service import JwtTokenService
 from app.infrastructure.auth.passwords import BcryptPasswordHasher
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -81,6 +87,7 @@ class UserResponse(BaseModel):
     id: str
     username: str
     created_at: str
+    roles: list[str] = []
 
 
 def _token_service() -> TokenService:
@@ -156,3 +163,36 @@ def refresh(
 @router.get("/me", response_model=UserResponse)
 def me(user: UniversalObject = Depends(get_current_user)) -> UserResponse:
     return UserResponse(**to_user_response(user_output(user)))
+
+
+class AssignRolesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roles: list[str] = []
+
+
+@router.get("/users", response_model=list[UserResponse])
+def list_users(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _admin: UniversalObject = Depends(require_permission(PermissionAction.MANAGE)),
+) -> list[UserResponse]:
+    users = ListUsersUseCase(repo).execute()
+    return [UserResponse(**to_user_response(u)) for u in users]
+
+
+@router.put("/users/{user_id}/roles", response_model=UserResponse)
+def assign_user_roles(
+    user_id: str,
+    body: AssignRolesRequest,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    _admin: UniversalObject = Depends(require_permission(PermissionAction.MANAGE)),
+) -> UserResponse:
+    try:
+        out = AssignRolesUseCase(repo).execute(
+            AssignRolesCommand(input=AssignRolesInput(user_id=user_id, roles=body.roles))
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return UserResponse(**to_user_response(out))

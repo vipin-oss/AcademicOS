@@ -342,3 +342,87 @@ def test_login_unknown_user_still_runs_a_verify(world):
     # Exactly one verify ran, against the precomputed dummy hash.
     assert len(calls) == 1
     assert calls[0] == _DUMMY_PASSWORD_HASH
+
+
+# ------------------------------------------------- Sprint-1 M3 — RBAC
+
+
+def test_assign_roles_replaces_and_validates(world):
+    _register(world, username="role.user")
+    user = world["repo"].list()[0]
+
+    from app.application.commands.assign_roles import AssignRolesCommand
+    from app.application.dtos.auth import AssignRolesInput
+    from app.application.use_cases.auth.assign_roles import AssignRolesUseCase
+
+    out = AssignRolesUseCase(world["repo"]).execute(
+        AssignRolesCommand(input=AssignRolesInput(user_id=str(user.id), roles=["admin"]))
+    )
+    assert out.roles == ["admin"]
+
+    # Replace, not append; duplicates collapsed.
+    out2 = AssignRolesUseCase(world["repo"]).execute(
+        AssignRolesCommand(
+            input=AssignRolesInput(user_id=str(user.id), roles=["admin", "admin"])
+        )
+    )
+    assert out2.roles == ["admin"]
+
+    out3 = AssignRolesUseCase(world["repo"]).execute(
+        AssignRolesCommand(input=AssignRolesInput(user_id=str(user.id), roles=[]))
+    )
+    assert out3.roles == []
+
+
+def test_assign_roles_rejects_unknown_role_and_missing_user(world):
+    from app.application.commands.assign_roles import AssignRolesCommand
+    from app.application.dtos.auth import AssignRolesInput
+    from app.application.use_cases.auth.assign_roles import AssignRolesUseCase
+
+    _register(world, username="role2.user")
+    user = world["repo"].list()[0]
+    with pytest.raises(ValidationError):
+        AssignRolesUseCase(world["repo"]).execute(
+            AssignRolesCommand(
+                input=AssignRolesInput(user_id=str(user.id), roles=["superuser"])
+            )
+        )
+    from app.application.exceptions import ObjectNotFoundError
+
+    with pytest.raises(ObjectNotFoundError):
+        AssignRolesUseCase(world["repo"]).execute(
+            AssignRolesCommand(
+                input=AssignRolesInput(user_id="obj:user:DEADBEEF", roles=["admin"])
+            )
+        )
+
+
+def test_list_users_returns_roles(world):
+    from app.application.use_cases.auth.list_users import ListUsersUseCase
+
+    _register(world, username="list.user")
+    users = ListUsersUseCase(world["repo"]).execute()
+    assert [u.username for u in users] == ["list.user"]
+    assert users[0].roles == []
+
+
+def test_bootstrap_admin_promotes_once(world):
+    from app.application.use_cases.auth.helpers import bootstrap_admin
+
+    _register(world, username="boot.admin")
+    assert bootstrap_admin(world["repo"], "boot.admin") is True
+
+    # Idempotent: a user with roles is never re-promoted (or demoted).
+    assert bootstrap_admin(world["repo"], "boot.admin") is False
+    user = world["repo"].list()[0]
+    from app.application.use_cases.auth.helpers import get_roles
+
+    assert get_roles(user) == ["admin"]
+
+
+def test_bootstrap_admin_ignores_missing_or_blank(world):
+    from app.application.use_cases.auth.helpers import bootstrap_admin
+
+    assert bootstrap_admin(world["repo"], "no.such.user") is False
+    assert bootstrap_admin(world["repo"], None) is False
+    assert bootstrap_admin(world["repo"], "  ") is False

@@ -18,7 +18,7 @@ import json
 from app.application.dtos.auth import KEY_PASSWORD_HASH, KEY_ROLES, UserOutput
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
-from app.domain.value_objects.enums import ObjectType
+from app.domain.value_objects.enums import ObjectType, UserRole
 from app.domain.value_objects.metadata import MetadataEntry, MetadataLayer, Provenance
 
 
@@ -66,6 +66,23 @@ def set_roles(obj: UniversalObject, roles: list[str]) -> None:
         ),
         actor="system",
     )
+
+
+def bootstrap_admin(repository: ObjectRepository, username: str | None) -> bool:
+    """Promote ``username`` to ADMIN at startup when it has no roles.
+
+    Idempotent: a user that already holds roles is never touched (so an
+    operator can demote the bootstrap admin later without it being
+    re-promoted). Returns True when a promotion happened.
+    """
+    if not username:
+        return False
+    user = find_user(repository, username.strip())
+    if user is None or get_roles(user):
+        return False
+    set_roles(user, [UserRole.ADMIN.value])
+    repository.save(user)
+    return True
 
 
 def user_output(obj: UniversalObject) -> UserOutput:

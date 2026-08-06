@@ -39,4 +39,5 @@ def to_user_response(out: UserOutput) -> dict:
         "id": out.id,
         "username": out.username,
         "created_at": out.created_at,
+        "roles": out.roles,
     }

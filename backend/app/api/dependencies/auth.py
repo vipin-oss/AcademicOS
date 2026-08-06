@@ -14,10 +14,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.db import get_db
-from app.core.exceptions import UnauthorizedError
-from app.domain.value_objects.enums import ObjectType
+from app.application.use_cases.auth.helpers import get_roles
+from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import ObjectType, PermissionAction
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.auth.jwt import decode_token
+from app.infrastructure.permissions.role_based import RoleBasedPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -63,3 +66,23 @@ def get_current_user(
         # The account no longer exists — the token is dead.
         raise UnauthorizedError("Invalid or expired token")
     return user
+
+
+def require_permission(action: PermissionAction):
+    """Dependency factory: 403 unless the authenticated user's roles allow
+    ``action`` (Sprint-1 M3 — the single RBAC enforcement seam).
+
+    Usage: ``dependencies=[Depends(require_permission(PermissionAction.MANAGE))]``
+    on a router or endpoint. The principal is built from the live USER
+    object (roles can never be forged via the token), and the decision
+    goes through the R4 ``PermissionEvaluator`` port.
+    """
+
+    def _check(user: UniversalObject = Depends(get_current_user)) -> UniversalObject:
+        evaluator = RoleBasedPermissionEvaluator()
+        principal = {"sub": str(user.id), "roles": get_roles(user)}
+        if not evaluator.can(principal=principal, scope=None, action=action):
+            raise ForbiddenError(f"Missing permission: {action.value}")
+        return user
+
+    return _check

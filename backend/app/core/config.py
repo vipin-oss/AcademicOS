@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 604800
 
+    # RBAC (Sprint-1 M3): username promoted to ADMIN at startup if it has
+    # no roles yet (first-admin bootstrap; idempotent).
+    bootstrap_admin_username: str | None = None
+
     @model_validator(mode="after")
     def _reject_insecure_default_secret(self) -> Settings:
         # Sprint-1 auth foundation: the default JWT secret must never run in

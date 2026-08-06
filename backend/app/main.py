@@ -26,13 +26,19 @@ from app.api.routes.research import router as research_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
+from app.application.use_cases.auth.helpers import bootstrap_admin
 from app.core.config import settings
 from app.core.exceptions import AcademicosError
 from app.core.logging import logger
 from app.domain.exceptions import OptimisticConcurrencyError
+from app.infrastructure.db.session import SessionLocal
+from app.infrastructure.repositories.sqlalchemy_object_repository import (
+    SQLAlchemyObjectRepository,
+)
 
 
 def create_app() -> FastAPI:
+    _bootstrap_admin()
     app = FastAPI(
         title=settings.app_name,
         version=settings.version,
@@ -91,6 +97,21 @@ def create_app() -> FastAPI:
     app.include_router(intake_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     return app
+
+
+def _bootstrap_admin() -> None:
+    """Sprint-1 M3: promote the configured username to ADMIN on first boot."""
+    if not settings.bootstrap_admin_username:
+        return
+    try:
+        db = SessionLocal()
+        try:
+            if bootstrap_admin(SQLAlchemyObjectRepository(db), settings.bootstrap_admin_username):
+                logger.info("Bootstrap admin promoted: %s", settings.bootstrap_admin_username)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — bootstrap must never block startup
+        logger.exception("Bootstrap admin promotion failed")
 
 
 app = create_app()
