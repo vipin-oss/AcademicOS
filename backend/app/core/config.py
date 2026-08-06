@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # a human approves them via /assistant/review/*.
     assistant_review_enabled: bool = False
 
+    # Model registry (Sprint-7 M1): the single source of truth for
+    # assistant models. JSON list of specs, e.g.
+    #   [{"id": "main", "base_url": "http://llm:8000/v1", "model": "m1"},
+    #    {"id": "rules", "provider_kind": "rules", "model": "rules-v1"}]
+    # Empty (default): the legacy single-model settings below synthesize
+    # one "default" spec — zero-config backward compatibility.
+    assistant_models_json: str = ""
+    assistant_default_model: str = "default"
+
     @model_validator(mode="after")
     def _reject_insecure_default_secret(self) -> Settings:
         # Sprint-1 auth foundation: the default JWT secret must never run in
