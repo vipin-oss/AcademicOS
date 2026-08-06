@@ -17,11 +17,23 @@ correctness/evaluation foundation only.
 """
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos.assistant import AskQuestionInput
+from app.application.services.prompt_registry import DEFAULT_PROMPT_ID
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
+
+if TYPE_CHECKING:  # annotations only — ports/services never import each other at runtime
+    from app.application.ports.eval_run_store import EvalRunStore
+    from app.application.services.prompt_registry import PromptRegistry
+
+
+def _utcnow_iso() -> str:
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,48 @@ class EvalResult:
     name: str
     passed: bool
     details: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class EvalRun:
+    """One durable evaluation-run record (Sprint-7 M3).
+
+    The benchmark-history unit: everything needed to compare runs and
+    detect regressions later — the model that ran (registry id + the
+    concrete deployed model name), the prompt asset that was active
+    (id + version, resolved from the ``PromptRegistry`` at run time),
+    the outcome, the per-case results in suite order, and the run
+    timestamp. Records are immutable and append-only: a run's results
+    never change after recording.
+    """
+
+    run_id: str
+    model_id: str
+    model_version: str  # the registry spec's deployed model name
+    prompt_id: str
+    prompt_version: int  # resolved from the PromptRegistry at run time
+    passed: int
+    total: int
+    results: tuple[EvalResult, ...] = field(default_factory=tuple)
+    created_at: str = ""  # ISO-8601
+
+    def __post_init__(self) -> None:
+        if not self.run_id or not self.model_id or not self.model_version:
+            raise ValueError("EvalRun identity fields must not be empty.")
+        if not self.prompt_id:
+            raise ValueError("EvalRun prompt_id must not be empty.")
+        if self.prompt_version < 1:
+            raise ValueError("EvalRun prompt_version must be >= 1.")
+        if not 0 <= self.passed <= self.total:
+            raise ValueError("EvalRun passed must be within [0, total].")
+        if len(self.results) != self.total:
+            raise ValueError(
+                "EvalRun results must contain exactly one entry per case."
+            )
+        if self.passed != sum(1 for r in self.results if r.passed):
+            raise ValueError("EvalRun passed must match the recorded results.")
+        if not self.created_at:
+            raise ValueError("EvalRun created_at must not be empty.")
 
 
 def run_eval_case(
@@ -87,7 +141,13 @@ def run_eval_suite(
     return results, sum(1 for r in results if r.passed)
 
 
-__all__ = ["EvalCase", "EvalResult", "run_eval_case", "run_eval_suite"]
+__all__ = [
+    "EvalCase",
+    "EvalResult",
+    "EvalRun",
+    "run_eval_case",
+    "run_eval_suite",
+]
 
 
 def run_eval_suite_across_models(
