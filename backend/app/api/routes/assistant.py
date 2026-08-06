@@ -37,6 +37,7 @@ from app.api.mappers.assistant_mapper import (
     to_delete_input,
     to_update_input,
 )
+from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.providers import RuleBasedAssistantProvider
 from app.application.commands.ask_question import AskQuestionCommand
@@ -46,6 +47,7 @@ from app.application.commands.update_conversation import UpdateConversationComma
 from app.application.dtos.assistant import INTENT_GROUPS, INTENT_LABELS, SUGGESTED_QUESTIONS
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.ports.assistant_provider import AssistantProvider
+from app.application.ports.embedder import Embedder
 from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
@@ -60,6 +62,7 @@ from app.application.use_cases.assistant.list_conversations import ListConversat
 from app.application.use_cases.assistant.update_conversation import UpdateConversationUseCase
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
+from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -80,25 +83,29 @@ def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
 ) -> AssistantProvider:
     """Composition seam: V1 = local rules; future sanctioned LLM adapters plug
-    in HERE (integration tests already override this dependency)."""
-    return RuleBasedAssistantProvider(repo)
+    in HERE (integration tests already override this dependency). The rules
+    provider is wired with the shared R4 evaluator so its degradation path
+    is scoped to the initiator's permissions (S6 M1)."""
+    return RuleBasedAssistantProvider(
+        repo, permission_evaluator=ObjectPermissionEvaluator()
+    )
 
 
 def get_assistant_retrieval(
     db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
 ) -> AssistantRetrievalService:
     """Composition seam for the S6 M1 retrieval pipeline: hybrid search +
     graph runtime, both gated by the shared R4 evaluator. The semantic leg
     reuses the search route's overrideable dependencies and degrades to
     lexical when unavailable."""
-    from app.api.routes.search import get_embedder, get_vector_repository
-
     search = SearchObjectsUseCase(
         search_repository=SQLAlchemySearchRepository(db),
         object_repository=SQLAlchemyObjectRepository(db),
         permission_evaluator=ObjectPermissionEvaluator(),
-        vector_repository=get_vector_repository(),
-        embedder=get_embedder(),
+        vector_repository=vector_repository,
+        embedder=embedder,
     )
     graph = GraphRuntimeService(SQLAlchemyObjectRepository(db), ObjectPermissionEvaluator())
     return AssistantRetrievalService(search, graph)

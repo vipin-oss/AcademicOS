@@ -53,8 +53,11 @@ from app.application.dtos.research import (
     parse_amount,
 )
 from app.application.dtos.teaching import parse_json_object
+from app.application.ports.permission import PermissionEvaluator
 from app.application.queries.get_productivity_dashboard import GetProductivityDashboardQuery
+from app.application.use_cases.auth.helpers import get_roles
 from app.application.use_cases.events.helpers import events_dashboard
+from app.application.use_cases.object_acl import object_acl_scope
 from app.application.use_cases.productivity.get_dashboard import GetProductivityDashboardUseCase
 from app.application.use_cases.productivity.helpers import (
     ProductivitySnapshot,
@@ -74,7 +77,12 @@ from app.application.use_cases.teaching.helpers import (
 )
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
-from app.domain.value_objects.enums import ObjectType, RelationshipKind
+from app.domain.value_objects.enums import (
+    ObjectType,
+    PermissionAction,
+    RelationshipKind,
+)
+from app.domain.value_objects.object_id import ObjectId
 
 PROVIDER_NAME = "rules-v1"
 DEFAULT_ASKER = "system"
@@ -176,10 +184,45 @@ def _cap(items: list, limit: int = dto.ANSWER_CARD_LIMIT) -> list:
 
 
 class RuleBasedAssistantProvider:
-    """V1 provider: deterministic intent → read-only cross-module builders."""
+    """V1 provider: deterministic intent → read-only cross-module builders.
 
-    def __init__(self, repository: ObjectRepository) -> None:
+    Sprint-6 M1 — permission-aware: when a ``PermissionEvaluator`` is wired,
+    the knowledge-search fallback (the no-retrieval degradation path) is
+    scoped to the asker's READ permissions through the SAME R4 evaluator
+    and ``object_acl_scope`` the retrieval pipeline uses — no duplicated
+    permission logic, and restricted objects can never appear in an answer
+    through ANY path. Without an evaluator (legacy construction) the
+    fallback behaves exactly as before.
+    """
+
+    def __init__(
+        self,
+        repository: ObjectRepository,
+        *,
+        permission_evaluator: PermissionEvaluator | None = None,
+    ) -> None:
         self._repository = repository
+        self._permission_evaluator = permission_evaluator
+
+    def _can_read(self, obj: UniversalObject, asked_by: str) -> bool:
+        """R4 READ gate for the fallback scan (S6 M1).
+
+        Reuses the existing evaluator + ACL scope builder; unknown/system
+        askers (no retrievable principal) keep the legacy open behavior.
+        """
+        if self._permission_evaluator is None:
+            return True
+        asker = self._repository.get_by_id(ObjectId(asked_by))
+        if asker is None or asker.object_type is not ObjectType.USER:
+            return True
+        principal = {"sub": str(asker.id), "roles": get_roles(asker)}
+        return self._permission_evaluator.can(
+            principal=principal,
+            scope=object_acl_scope(obj),
+            action=PermissionAction.READ,
+        )
+
+
 
     @property
     def name(self) -> str:
@@ -968,6 +1011,8 @@ class RuleBasedAssistantProvider:
         hits: list[UniversalObject] = []
         for obj in self._repository.list():
             if obj.object_type in skip_types:
+                continue
+            if not self._can_read(obj, asked_by):
                 continue
             meta = _meta(obj)
             haystack = obj.title + " " + " ".join(meta.values())
