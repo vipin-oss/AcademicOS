@@ -386,6 +386,21 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     ) -> list[UniversalObject]:
         return self.find(metadata_key=key, metadata_value=value)
 
+    def find_inbound(
+        self, object_id: ObjectId, kind: RelationshipKind | None = None
+    ) -> list[ObjectId]:
+        """Inbound traversal: every source whose edge points at ``object_id``."""
+        stmt = select(ObjectRelationshipModel.source_id).where(
+            ObjectRelationshipModel.target_id == str(object_id)
+        )
+        if kind is not None:
+            stmt = stmt.where(ObjectRelationshipModel.kind == kind.value)
+        stmt = stmt.order_by(ObjectRelationshipModel.id)
+        return [
+            ObjectId.parse(source)
+            for source in self._session.execute(stmt).scalars().all()
+        ]
+
     def find_related(
         self, object_id: ObjectId, kind: RelationshipKind | None = None
     ) -> list[ObjectId]:

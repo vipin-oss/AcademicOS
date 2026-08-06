@@ -67,6 +67,14 @@ class InMemoryObjectRepository(ObjectRepository):
 
     def find_related(self, id, *, relation_type=None, direction="outgoing") -> list:
         return []
+    def find_inbound(
+        self, object_id: ObjectId, kind=None
+    ) -> list[ObjectId]:
+        return [
+            o.id
+            for o in self._store.values()
+            if any(r.target == object_id and (kind is None or r.kind == kind) for r in o.relationships)
+        ]
     def find(
         self,
         *,

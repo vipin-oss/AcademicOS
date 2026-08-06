@@ -614,3 +614,22 @@ def test_conflict_leaves_session_usable(session):
     c.pop_domain_events()
     repo.save(c)
     assert repo.get(c.id) is not None
+
+
+def test_find_inbound_returns_sources_pointing_at_target(session):
+    repo = SQLAlchemyObjectRepository(session)
+    target = ObjectId.generate(ObjectType.COURSE)
+    a = UniversalObject.create(ObjectType.FACULTY, "A", created_by="f:1")
+    b = UniversalObject.create(ObjectType.COURSE, "B", created_by="f:1")
+    a.add_relationship(target, RelationshipKind.TEACHES)
+    b.add_relationship(target, RelationshipKind.PREREQUISITE_OF)
+    a.pop_domain_events()
+    b.pop_domain_events()
+    repo.save(a)
+    repo.save(b)
+
+    assert repo.find_inbound(target) == [a.id, b.id]
+    assert repo.find_inbound(target, RelationshipKind.TEACHES) == [a.id]
+    assert repo.find_inbound(target, RelationshipKind.PREREQUISITE_OF) == [b.id]
+    # No edges pointing at a fresh id.
+    assert repo.find_inbound(ObjectId.generate(ObjectType.COURSE)) == []

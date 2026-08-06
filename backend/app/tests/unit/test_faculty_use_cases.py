@@ -75,6 +75,14 @@ class InMemoryObjectRepository(ObjectRepository):
     def find_related(self, object_id: ObjectId, kind=None) -> list[ObjectId]:
         obj = self._store.get(object_id)
         return [] if obj is None else obj.related_ids(kind)
+    def find_inbound(
+        self, object_id: ObjectId, kind=None
+    ) -> list[ObjectId]:
+        return [
+            o.id
+            for o in self._store.values()
+            if any(r.target == object_id and (kind is None or r.kind == kind) for r in o.relationships)
+        ]
 
     def find_by_metadata(self, key: str, value: str | None = None) -> list[UniversalObject]:
         out: list[UniversalObject] = []

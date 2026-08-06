@@ -34,6 +34,16 @@ class ObjectRepository(Repository[UniversalObject]):
         """Objects carrying a metadata key, optionally constrained to a value."""
 
     @abc.abstractmethod
+    def find_inbound(
+        self, object_id: ObjectId, kind: RelationshipKind | None = None
+    ) -> list[ObjectId]:
+        """Ids of Objects linked TO ``object_id`` (inbound traversal).
+
+        S2 — Object Graph: the graph layer's first consumer. The R1 edge
+        table's ``target_id`` index serves this directly.
+        """
+
+    @abc.abstractmethod
     def find(
         self,
         *,
