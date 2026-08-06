@@ -10,6 +10,7 @@ through the FROZEN modules' own APIs.
 from __future__ import annotations
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
 from app.api.dependencies.auth import get_current_user
 
 import pytest
@@ -48,6 +49,7 @@ def client():
         title="test.user",
         created_by="system",
         status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
     )
     app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:
@@ -431,6 +433,6 @@ def test_get_missing_is_404(client):
 
 def test_events_and_audit_round_trip(client):
     committee = _committee(client).json()
-    assert committee["uploaded_by"] == "registrar:1"
+    assert committee["uploaded_by"] == "obj:user:test-user-0001"
     assert committee["version"] == 1
     assert any("Created" in event for event in committee["events"])

@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.settings_mapper import (
     output_dict,
     to_import_input,
@@ -187,11 +188,12 @@ def _update_section(
     section: str,
     body: StrictBody,
     repo: SQLAlchemyObjectRepository,
+    user: UniversalObject,
 ):
     try:
         out = UpdateSettingsSectionUseCase(repo).execute(
             UpdateSettingsSectionCommand(
-                input=to_section_update_input(section, body.model_dump())
+                input=to_section_update_input(section, {**body.model_dump(), "updated_by": str(user.id)})
             )
         )
     except ValidationError as exc:
@@ -201,50 +203,66 @@ def _update_section(
 
 @router.put("/profile")
 @router.patch("/profile")
-def update_profile(body: ProfileBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("profile", body, repo)
+def update_profile(body: ProfileBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("profile", body, repo, user)
 
 
 @router.put("/appearance")
 @router.patch("/appearance")
-def update_appearance(body: AppearanceBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("appearance", body, repo)
+def update_appearance(body: AppearanceBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("appearance", body, repo, user)
 
 
 @router.put("/academic")
 @router.patch("/academic")
-def update_academic(body: AcademicBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("academic", body, repo)
+def update_academic(body: AcademicBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("academic", body, repo, user)
 
 
 @router.put("/notifications")
 @router.patch("/notifications")
-def update_notification_prefs(body: NotificationPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("notifications", body, repo)
+def update_notification_prefs(body: NotificationPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("notifications", body, repo, user)
 
 
 @router.put("/dashboard")
 @router.patch("/dashboard")
-def update_dashboard_prefs(body: DashboardPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("dashboard", body, repo)
+def update_dashboard_prefs(body: DashboardPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("dashboard", body, repo, user)
 
 
 @router.put("/search")
 @router.patch("/search")
-def update_search_prefs(body: SearchPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("search", body, repo)
+def update_search_prefs(body: SearchPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("search", body, repo, user)
 
 
 @router.put("/privacy")
 @router.patch("/privacy")
-def update_privacy(body: PrivacyBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("privacy", body, repo)
+def update_privacy(body: PrivacyBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("privacy", body, repo, user)
 
 
 @router.put("/ai")
 @router.patch("/ai")
-def update_ai_prefs(body: AiPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return _update_section("ai", body, repo)
+def update_ai_prefs(body: AiPrefsBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return _update_section("ai", body, repo, user)
 
 
 # ---------------------------------------------------------------------------
@@ -316,10 +334,12 @@ def export_settings(repo: SQLAlchemyObjectRepository = Depends(_repository)):
 
 
 @router.post("/import")
-def import_settings(body: ImportBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
+def import_settings(body: ImportBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
     try:
         out = ImportSettingsUseCase(repo).execute(
-            ImportSettingsCommand(input=to_import_input(body.model_dump()))
+            ImportSettingsCommand(input=to_import_input({**body.model_dump(), "updated_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -327,10 +347,12 @@ def import_settings(body: ImportBody, repo: SQLAlchemyObjectRepository = Depends
 
 
 @router.post("/reset")
-def reset_settings(body: ResetBody, repo: SQLAlchemyObjectRepository = Depends(_repository)):
+def reset_settings(body: ResetBody, repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
     try:
         out = ResetSettingsUseCase(repo).execute(
-            ResetSettingsCommand(input=to_reset_input(body.model_dump()))
+            ResetSettingsCommand(input=to_reset_input({**body.model_dump(), "updated_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc

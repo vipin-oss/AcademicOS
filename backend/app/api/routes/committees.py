@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.committee_mapper import (
     action_item_response,
     committee_response,
@@ -336,11 +337,12 @@ def list_committees(
 def create_committee(
     request: CreateCommitteeRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateCommitteeUseCase(repo).execute(
             CreateCommitteeCommand(
-                input=to_create_committee_input(body=request.model_dump())
+                input=to_create_committee_input(body={**request.model_dump(), "uploaded_by": str(user.id)})
             )
         )
     except ObjectAlreadyExistsError as exc:

@@ -8,6 +8,7 @@ state — mirrors ``test_objects_api.py``.
 from __future__ import annotations
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
 from app.api.dependencies.auth import get_current_user
 
 import pytest
@@ -53,6 +54,7 @@ def client(tmp_path):
         title="test.user",
         created_by="system",
         status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
     )
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
@@ -99,7 +101,7 @@ def test_upload_then_get_document(client):
     assert body["file_size"] == len(b"%PDF-sample-bytes")
     assert body["mime_type"] == "application/pdf"
     assert body["status"] == "draft"
-    assert body["uploaded_by"] == "faculty:1"
+    assert body["uploaded_by"] == "obj:user:test-user-0001"
     assert body["object_id"] is None
     assert body["url"] is not None  # stored blob -> working download link
 

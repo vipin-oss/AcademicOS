@@ -33,6 +33,7 @@ from app.application.use_cases.delete_object import DeleteObjectUseCase
 from app.application.use_cases.get_object import GetObjectUseCase
 from app.application.use_cases.list_object import ListObjectsUseCase
 from app.application.use_cases.update_object import UpdateObjectUseCase
+from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -126,13 +127,14 @@ def get_object(
 def create_object(
     req: CreateObjectRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ObjectResponse:
     try:
         command = CreateObjectCommand(
             input=to_create_input(
                 object_type=req.object_type,
                 title=req.title,
-                created_by=req.created_by,
+                created_by=str(user.id),
                 object_id=req.object_id,
                 status=req.status,
                 metadata=[m.model_dump() for m in (req.metadata or [])],
@@ -153,13 +155,14 @@ def update_object(
     object_id: str,
     req: UpdateObjectRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ObjectResponse:
     try:
         command = UpdateObjectCommand(
             object_id=ObjectId.parse(object_id),
             input=to_update_input(
                 object_id=object_id,
-                updated_by=req.updated_by,
+                updated_by=str(user.id),
                 status=req.status,
                 metadata=[m.model_dump() for m in (req.metadata or [])],
             ),

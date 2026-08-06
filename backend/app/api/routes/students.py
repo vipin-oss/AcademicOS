@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.student_mapper import (
     to_create_input,
     to_response,
@@ -242,10 +243,11 @@ def export_students(
 def import_students(
     req: ImportStudentsRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ImportStudentsResultModel:
     try:
         result = ImportStudentsUseCase(repo).execute(
-            ImportStudentsCommand(text=req.text, created_by=req.uploaded_by)
+            ImportStudentsCommand(text=req.text, created_by=str(user.id))
         )
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -276,10 +278,11 @@ def get_student(
 def create_student(
     req: CreateStudentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> StudentResponseModel:
     try:
         out = CreateStudentUseCase(repo).execute(
-            CreateStudentCommand(input=to_create_input(body=req.model_dump()))
+            CreateStudentCommand(input=to_create_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -294,12 +297,13 @@ def update_student(
     student_id: str,
     req: UpdateStudentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> StudentResponseModel:
     try:
         out = UpdateStudentUseCase(repo).execute(
             UpdateStudentCommand(
                 object_id=ObjectId.parse(student_id),
-                input=to_update_input(body=req.model_dump(exclude_unset=True)),
+                input=to_update_input(body={**req.model_dump(exclude_unset=True), "updated_by": str(user.id)}),
             )
         )
     except ObjectNotFoundError as exc:

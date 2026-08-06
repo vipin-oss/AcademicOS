@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.research_mapper import (
     agency_response,
     dashboard_response,
@@ -445,10 +446,11 @@ def list_agencies(
 def create_agency(
     req: CreateAgencyRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> AgencyResponseModel:
     try:
         out = CreateAgencyUseCase(repo).execute(
-            CreateAgencyCommand(input=to_create_agency_input(body=req.model_dump()))
+            CreateAgencyCommand(input=to_create_agency_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc)
@@ -554,10 +556,11 @@ def list_projects(
 def create_project(
     req: CreateProjectRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ProjectResponseModel:
     try:
         out = CreateProjectUseCase(repo).execute(
-            CreateProjectCommand(input=to_create_project_input(body=req.model_dump()))
+            CreateProjectCommand(input=to_create_project_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc)
@@ -633,12 +636,13 @@ def add_milestone(
     project_id: str,
     req: MilestoneRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> MilestoneResponseModel:
     try:
         out = AddMilestoneUseCase(repo).execute(
             AddMilestoneCommand(
                 project_id=ObjectId.parse(project_id),
-                input=to_milestone_input(body=req.model_dump()),
+                input=to_milestone_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
                 actor=req.uploaded_by,
             )
         )
@@ -654,12 +658,13 @@ def record_progress_update(
     project_id: str,
     req: ProgressUpdateRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ProjectResponseModel:
     try:
         out = RecordProgressUpdateUseCase(repo).execute(
             RecordProgressUpdateCommand(
                 project_id=ObjectId.parse(project_id),
-                input=to_progress_update_input(body=req.model_dump()),
+                input=to_progress_update_input(body={**req.model_dump(), "updated_by": str(user.id)}),
                 actor=req.uploaded_by,
             )
         )
@@ -749,10 +754,11 @@ def list_grants(
 def create_grant(
     req: CreateGrantRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> GrantResponseModel:
     try:
         out = CreateGrantUseCase(repo).execute(
-            CreateGrantCommand(input=to_create_grant_input(body=req.model_dump()))
+            CreateGrantCommand(input=to_create_grant_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc)
@@ -821,12 +827,13 @@ def add_installment(
     grant_id: str,
     req: InstallmentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> InstallmentResponseModel:
     try:
         out = AddInstallmentUseCase(repo).execute(
             AddInstallmentCommand(
                 grant_id=ObjectId.parse(grant_id),
-                input=to_installment_input(body=req.model_dump()),
+                input=to_installment_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
                 actor=req.uploaded_by,
             )
         )
@@ -846,12 +853,13 @@ def record_expenditure(
     grant_id: str,
     req: ExpenditureRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ExpenditureResponseModel:
     try:
         out = RecordExpenditureUseCase(repo).execute(
             RecordExpenditureCommand(
                 grant_id=ObjectId.parse(grant_id),
-                input=to_expenditure_input(body=req.model_dump()),
+                input=to_expenditure_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
                 actor=req.uploaded_by,
             )
         )

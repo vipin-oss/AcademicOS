@@ -10,6 +10,7 @@ own APIs.
 from __future__ import annotations
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
 from app.api.dependencies.auth import get_current_user
 
 import io
@@ -50,6 +51,7 @@ def client():
         title="test.user",
         created_by="system",
         status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
     )
     app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:

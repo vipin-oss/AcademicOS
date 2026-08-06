@@ -14,6 +14,7 @@ the cold boundary: extraction never creates anything outside Intake.
 from __future__ import annotations
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
 from app.api.dependencies.auth import get_current_user
 
 import time
@@ -122,6 +123,7 @@ def harness(tmp_path: Path):
         title="test.user",
         created_by="system",
         status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
     )
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = lambda: storage

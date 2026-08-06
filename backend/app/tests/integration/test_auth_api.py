@@ -223,3 +223,58 @@ def test_expired_token_is_401(client):
     )
     resp = client.get(f"{API}/me", headers={"Authorization": f"Bearer {expired}"})
     assert resp.status_code == 401
+
+
+def test_authenticated_identity_propagates_to_object_ownership(client):
+    """Sprint-1 M2 — the authenticated user is the execution context: an
+    object created through the API records the user's id in its audit
+    trail, regardless of any client-supplied identity field."""
+    reg = _register(client, username="owner.user", password="owner-pass-123")
+    uid = reg.json()["id"]
+    access = _login(client, username="owner.user", password="owner-pass-123").json()[
+        "access_token"
+    ]
+    headers = {"Authorization": f"Bearer {access}"}
+
+    # Client sends a spoofed identity; the authenticated principal must win.
+    created = client.post(
+        "/api/v1/objects",
+        headers=headers,
+        json={
+            "object_type": "course",
+            "title": "Ownership Course",
+            "created_by": "spoofed:identity",
+            "status": "draft",
+        },
+    )
+    assert created.status_code == 201
+    oid = created.json()["id"]
+
+    detail = client.get(f"/api/v1/objects/{oid}", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    # The audit trail records the authenticated user, not the spoof.
+    assert body["created_by"] == uid
+    assert body["id"].startswith("obj:course:")
+
+
+def test_authenticated_identity_propagates_to_updates(client):
+    reg = _register(client, username="updater.user", password="updater-pass-123")
+    uid = reg.json()["id"]
+    access = _login(client, username="updater.user", password="updater-pass-123").json()[
+        "access_token"
+    ]
+    headers = {"Authorization": f"Bearer {access}"}
+
+    created = client.post(
+        "/api/v1/objects",
+        headers=headers,
+        json={"object_type": "course", "title": "Upd Course", "created_by": "x", "status": "draft"},
+    ).json()
+    updated = client.put(
+        f"/api/v1/objects/{created['id']}",
+        headers=headers,
+        json={"updated_by": "spoofed:updater", "status": "active"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["created_by"] == uid

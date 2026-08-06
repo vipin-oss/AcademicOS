@@ -65,6 +65,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers import teaching_mapper as m
 from app.application.commands.attach_assignment_file import AttachAssignmentFileCommand
 from app.application.commands.create_assignment import CreateAssignmentCommand
@@ -452,10 +453,11 @@ def list_classes(
 def create_class(
     req: CreateClassRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ClassResponseModel:
     try:
         out = CreateClassUseCase(repo).execute(
-            CreateClassCommand(input=m.to_create_class_input(body=req.model_dump()))
+            CreateClassCommand(input=m.to_create_class_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -809,10 +811,11 @@ def create_assignment(
     req: CreateAssignmentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> AssignmentResponseModel:
     try:
         out = CreateAssignmentUseCase(repo).execute(
-            CreateAssignmentCommand(input=m.to_create_assignment_input(body=req.model_dump()))
+            CreateAssignmentCommand(input=m.to_create_assignment_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
         raise _handle_common(exc)

@@ -65,6 +65,7 @@ from app.application.use_cases.intake.list_items import ListIntakeItemsUseCase
 from app.application.use_cases.intake.list_sessions import ListIntakeSessionsUseCase
 from app.application.use_cases.intake.retry_session import RetryIntakeSessionUseCase
 from app.core.config import settings
+from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import SessionLocal, get_db
 from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -133,10 +134,11 @@ def create_intake_session(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     jobs: IntakeJobManager = Depends(get_job_manager),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> IntakeSessionResponseModel:
     use_case = CreateIntakeSessionUseCase(repo, _storage_root_of(storage))
     try:
-        out = use_case.execute(CreateIntakeSessionCommand(input=to_create_input(payload)))
+        out = use_case.execute(CreateIntakeSessionCommand(input=to_create_input(payload.model_copy(update={"actor": str(user.id)}))))
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
     jobs.enqueue(out.id)

@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 from app.infrastructure.db.models.object_model import Base, ObjectModel
 from app.infrastructure.db.session import get_db
 from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
 from app.main import app
 
 
@@ -46,6 +47,7 @@ def client():
         title="test.user",
         created_by="system",
         status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
     )
     app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:

@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.document_mapper import to_create_input, to_response, to_update_input
 from app.application.commands.create_document import CreateDocumentCommand
 from app.application.commands.delete_document import DeleteDocumentCommand
@@ -185,6 +186,7 @@ def create_document(
     description: str | None = Form(None),
     tags: str = Form("[]"),
     doc_status: str = Form("draft", alias="status"),
+    user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
     content = file.file.read()
     file_name = file.filename or "unnamed"
@@ -199,7 +201,7 @@ def create_document(
                 input=to_create_input(
                     title=title,
                     document_type=document_type,
-                    uploaded_by=uploaded_by,
+                    uploaded_by=str(user.id),
                     file_name=file_name,
                     content=content,
                     mime_type=mime_type,

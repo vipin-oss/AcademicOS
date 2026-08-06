@@ -55,6 +55,7 @@ from app.application.use_cases.assistant.get_conversation import GetConversation
 from app.application.use_cases.assistant.get_home import GetAssistantHomeUseCase
 from app.application.use_cases.assistant.list_conversations import ListConversationsUseCase
 from app.application.use_cases.assistant.update_conversation import UpdateConversationUseCase
+from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -129,10 +130,11 @@ def ask_question(
     body: AskBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     provider: AssistantProvider = Depends(get_assistant_provider),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = AskQuestionUseCase(repo, provider).execute(
-            AskQuestionCommand(input=to_ask_input(body.model_dump()))
+            AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -175,10 +177,11 @@ def list_conversations(
 def create_conversation(
     body: CreateConversationBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateConversationUseCase(repo).execute(
-            CreateConversationCommand(input=to_create_input(body.model_dump()))
+            CreateConversationCommand(input=to_create_input({**body.model_dump(), "created_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -203,10 +206,11 @@ def _update_conversation(
     conversation_id: str,
     body: UpdateConversationBody,
     repo: SQLAlchemyObjectRepository,
+    user: UniversalObject,
 ):
     try:
         out = UpdateConversationUseCase(repo).execute(
-            UpdateConversationCommand(input=to_update_input(conversation_id, body.model_dump()))
+            UpdateConversationCommand(input=to_update_input(conversation_id, {**body.model_dump(), "updated_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -221,8 +225,9 @@ def update_conversation(
     conversation_id: str,
     body: UpdateConversationBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
-    return _update_conversation(conversation_id, body, repo)
+    return _update_conversation(conversation_id, body, repo, user)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
