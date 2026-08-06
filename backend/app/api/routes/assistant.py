@@ -41,6 +41,7 @@ from app.api.mappers.assistant_mapper import (
     to_delete_input,
     to_update_input,
 )
+from app.api.routes.eval_history import get_eval_history
 from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
@@ -60,8 +61,14 @@ from app.application.ports.embedder import Embedder
 from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
+from app.application.services.assistant_eval import EvaluationHistory
 from app.application.services.assistant_retrieval import AssistantRetrievalService
-from app.application.services.assistant_review import AssistantReviewQueue
+from app.application.services.assistant_review import (
+    REVIEW_NOTES_MAX,
+    REVIEW_RATING_MAX,
+    REVIEW_RATING_MIN,
+    AssistantReviewQueue,
+)
 from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.services.model_registry import registry_from_settings
 from app.application.services.prompt_registry import DEFAULT_PROMPT_ID, PromptAsset, PromptRegistry
@@ -441,8 +448,8 @@ class ReviewActionBody(StrictBody):
     the evaluation history — an unknown run id is a client error)."""
 
     conversation_id: str
-    notes: str | None = Field(None, max_length=2000)
-    rating: int | None = Field(None, ge=1, le=5)
+    notes: str | None = Field(None, max_length=REVIEW_NOTES_MAX)
+    rating: int | None = Field(None, ge=REVIEW_RATING_MIN, le=REVIEW_RATING_MAX)
     confidence: float | None = Field(None, ge=0.0, le=1.0)
     eval_run_id: str | None = Field(None, max_length=64)
 
@@ -459,16 +466,14 @@ def _review_queue(
 
 def _validated_eval_run(
     eval_run_id: str | None,
-    db: Session,
+    history: EvaluationHistory,
 ) -> str | None:
     """The eval-run link must reference a recorded run (Sprint-7 M5): an
-    unknown id is a client error (422), never a broken link."""
+    unknown id is a client error (422), never a broken link. Reuses the
+    evaluation-history dependency — no duplicated evaluation logic."""
     if eval_run_id is None:
         return None
-    from app.application.services.assistant_eval import EvaluationHistory
-    from app.infrastructure.persistence.eval_run_store import SQLEvalRunStore
-
-    if EvaluationHistory(SQLEvalRunStore(db)).get(eval_run_id) is None:
+    if history.get(eval_run_id) is None:
         raise _unprocessable(ValueError(f"Unknown evaluation run: {eval_run_id}"))
     return eval_run_id
 
@@ -488,11 +493,12 @@ def review_approve(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     db: Session = Depends(get_db),
     user: UniversalObject = Depends(get_current_user),
+    history: EvaluationHistory = Depends(get_eval_history),
 ):
     """Approve a conversation's latest answer: it becomes visible. Records
     the review decision (reviewer = the authenticated user) with the
     optional notes / rating / confidence / evaluation-run link."""
-    eval_run_id = _validated_eval_run(body.eval_run_id, db)
+    eval_run_id = _validated_eval_run(body.eval_run_id, history)
     try:
         out = _review_queue(repo, db).approve(
             body.conversation_id,
@@ -513,10 +519,11 @@ def review_reject(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     db: Session = Depends(get_db),
     user: UniversalObject = Depends(get_current_user),
+    history: EvaluationHistory = Depends(get_eval_history),
 ):
     """Reject a conversation's latest answer: it stays hidden. Records the
     review decision with the optional feedback fields."""
-    eval_run_id = _validated_eval_run(body.eval_run_id, db)
+    eval_run_id = _validated_eval_run(body.eval_run_id, history)
     try:
         out = _review_queue(repo, db).reject(
             body.conversation_id,
