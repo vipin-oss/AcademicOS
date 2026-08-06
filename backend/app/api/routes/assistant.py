@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
@@ -45,10 +44,9 @@ from app.api.mappers.assistant_mapper import (
 from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
-from app.application.assistant.prompt_builder import AssistantPromptBuilder
-from app.application.assistant.providers import (
-    FallbackAssistantProvider,
-    RuleBasedAssistantProvider,
+from app.application.assistant.prompt_builder import (
+    SYSTEM_INSTRUCTIONS,
+    AssistantPromptBuilder,
 )
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.commands.ask_question import AskQuestionCommand
@@ -65,6 +63,8 @@ from app.application.queries.list_conversations import ListConversationsQuery
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.model_registry import registry_from_settings
+from app.application.services.prompt_registry import DEFAULT_PROMPT_ID, PromptAsset, PromptRegistry
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.create_conversation import CreateConversationUseCase
 from app.application.use_cases.assistant.delete_conversation import DeleteConversationUseCase
@@ -76,8 +76,8 @@ from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
+from app.infrastructure.assistant.provider_factory import build_provider
 from app.infrastructure.db.session import get_db
-from app.infrastructure.llm.llm_provider import LlmAssistantProvider
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -96,31 +96,13 @@ def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
 def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
 ) -> AssistantProvider:
-    """Composition seam: the production chain is
-    ``FallbackAssistantProvider(LlmAssistantProvider, RuleBasedAssistantProvider)``
-    when an LLM endpoint is configured (Sprint-6 M2); without one the
-    assistant runs on the deterministic rules provider. Integration tests
-    override this dependency to inject stubs/transports."""
-    rules = RuleBasedAssistantProvider(
-        repo, permission_evaluator=ObjectPermissionEvaluator()
-    )
-    if not settings.assistant_llm_base_url:
-        return rules
-    headers = (
-        {"Authorization": f"Bearer {settings.assistant_llm_api_key}"}
-        if settings.assistant_llm_api_key
-        else {}
-    )
-    client = httpx.Client(
-        timeout=settings.assistant_llm_timeout_seconds,
-        headers=headers,
-    )
-    primary = LlmAssistantProvider(
-        client,
-        model=settings.assistant_llm_model,
-        base_url=settings.assistant_llm_base_url,
-    )
-    return FallbackAssistantProvider(primary, rules)
+    """Composition seam (Sprint-7 M1): the MODEL REGISTRY is the single
+    source of truth — the default registered model is looked up and the
+    provider is built by the shared factory (``build_provider``). No
+    provider construction lives in the route. Integration tests override
+    this dependency to inject stubs/transports."""
+    registry = registry_from_settings(settings)
+    return build_provider(registry.default(), repo)
 
 
 def get_assistant_retrieval(
@@ -217,12 +199,13 @@ def _ask_use_case(
     retrieval: AssistantRetrievalService,
 ) -> AskQuestionUseCase:
     """One construction site for the ask pipeline (sync and stream modes)."""
+    prompt_registry = _default_prompt_registry()
     return AskQuestionUseCase(
         repo,
         provider,
         retrieval=retrieval,
         context_builder=AssistantContextBuilder(),
-        prompt_builder=AssistantPromptBuilder(),
+        prompt_builder=AssistantPromptBuilder(prompt_registry=prompt_registry),
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         # Human review gate (S6 M5): when enabled, every fresh answer is
@@ -232,6 +215,22 @@ def _ask_use_case(
             AssistantReviewQueue(repo) if settings.assistant_review_enabled else None
         ),
     )
+
+
+def _default_prompt_registry() -> PromptRegistry:
+    """The default prompt registry: the assistant.default asset v1 carries
+    the canonical system instructions (Sprint-7 M1, AI doc A7.1)."""
+    registry = PromptRegistry()
+    registry.register(
+        PromptAsset(
+            id=DEFAULT_PROMPT_ID,
+            version=1,
+            version_label="1.0",
+            owner="assistant",
+            system_text=SYSTEM_INSTRUCTIONS,
+        )
+    )
+    return registry
 
 
 def _sse(event: str, data: dict) -> str:
