@@ -92,19 +92,23 @@ class LlmAssistantProvider:
         )
 
     # ------------------------------------------------------------- transport
-    def _complete(self, prompt: AssistantPrompt) -> str:
-        body = {
+    def _request_body(self, prompt: AssistantPrompt, *, stream: bool) -> dict:
+        """The deterministic request body — ONE construction site for the
+        sync and streaming paths (S6 M4). The numbered evidence travels
+        with the request so the provider can never invent citations."""
+        return {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": prompt.system},
                 {"role": "user", "content": prompt.user},
             ],
             "temperature": 0,
-            # S6 M3: the numbered evidence travels with the request so the
-            # provider (and any logging/eval layer) can bind citations to
-            # the answer — the model may never invent its own.
+            "stream": stream,
             "citations": [asdict(citation) for citation in prompt.citations],
         }
+
+    def _complete(self, prompt: AssistantPrompt) -> str:
+        body = self._request_body(prompt, stream=False)
         url = f"{self._base_url}/chat/completions"
         last_error: Exception | None = None
         for attempt in range(self._retry_attempts):
@@ -158,16 +162,7 @@ class LlmAssistantProvider:
         del context, asked_by  # transport only: the prompt is the input
         if prompt is None:
             raise LlmProviderError("No prompt supplied to the LLM provider.")
-        body = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": prompt.system},
-                {"role": "user", "content": prompt.user},
-            ],
-            "temperature": 0,
-            "stream": True,
-            "citations": [asdict(citation) for citation in prompt.citations],
-        }
+        body = self._request_body(prompt, stream=True)
         url = f"{self._base_url}/chat/completions"
         chunks: list[str] = []
         started = False
