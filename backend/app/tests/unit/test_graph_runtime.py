@@ -30,7 +30,7 @@ class InMemoryGraphRepository(ObjectRepository):
         self.out: dict[str, list[str]] = {}
         self.inn: dict[str, list[str]] = {}
 
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events=()) -> None:
         self._store[str(entity.id)] = entity
         for rel in entity.relationships:
             src, tgt = str(entity.id), str(rel.target)

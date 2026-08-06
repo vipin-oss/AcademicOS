@@ -37,6 +37,7 @@ from app.infrastructure.db.models.object_model import ObjectModel
 from app.infrastructure.db.models.object_relationship_model import (
     ObjectRelationshipModel,
 )
+from app.infrastructure.db.models.outbox_model import OutboxEventModel
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.snapshots import (
     AuditSnapshot,
@@ -183,7 +184,7 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         return obj
 
     # --- requested public surface ---
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events: Sequence[dict] = ()) -> None:
         """Persist the aggregate with optimistic concurrency (R3).
 
         A freshly created aggregate (never loaded from storage) is inserted;
@@ -242,6 +243,11 @@ class SQLAlchemyObjectRepository(ObjectRepository):
                 )
             )
             self._session.add_all(edge_models)
+            # Durable outbox rows ride the SAME transaction (and the same
+            # lock-contention retry) as the aggregate write, so a committed
+            # object never loses its events.
+            for row in outbox_events:
+                self._session.add(OutboxEventModel(**row))
 
         self._commit_with_retry(write)
         entity._expected_version = snap.version

@@ -41,7 +41,7 @@ class InMemoryObjectRepository(ObjectRepository):
     def __init__(self) -> None:
         self._store: dict[str, UniversalObject] = {}
 
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events=()) -> None:
         self._store[str(entity.id)] = entity
 
     def get_by_id(self, id) -> UniversalObject | None:

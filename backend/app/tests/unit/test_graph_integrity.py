@@ -16,7 +16,7 @@ class InMemoryRepo(ObjectRepository):
         self._store: dict[str, UniversalObject] = {}
         self._inbound: dict[str, list[str]] = {}
 
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events=()) -> None:
         self._store[str(entity.id)] = entity
         for rel in entity.relationships:
             self._inbound.setdefault(str(rel.target), []).append(str(entity.id))
