@@ -24,7 +24,13 @@ class ValidationError(ApplicationError):
 
 
 class ObjectAlreadyExistsError(ApplicationError):
-    code = "object_already_exists"
+    """Raised when a duplicate unique identity is registered (409)."""
+
+
+class AuthenticationError(ApplicationError):
+    """Raised when credentials or a token cannot be verified (401)."""
+
+    code = "authentication_error"
 
 
 class ObjectNotFoundError(ApplicationError):

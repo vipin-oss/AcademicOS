@@ -36,3 +36,13 @@ def verify_password(password: str, password_hash: str) -> bool:
         )
     except (ValueError, TypeError):
         return False
+
+
+class BcryptPasswordHasher:
+    """Infrastructure adapter for the PasswordHasher port (bcrypt)."""
+
+    def hash_password(self, password: str) -> str:
+        return hash_password(password)
+
+    def verify_password(self, password: str, password_hash: str) -> bool:
+        return verify_password(password, password_hash)
