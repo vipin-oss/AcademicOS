@@ -1,18 +1,23 @@
-"""Search API routes (Sprint-5 M1 — Global Search Foundation).
+"""Search API routes (Sprint-5 M1 foundation + M2 hybrid).
 
-- ``GET  /search`` — query the persistent search projection. Only the
-  roadmap-approved criteria (exact object type, exact case-insensitive
-  title, literal-substring full text) with deterministic ordering.
-  Results are permission pre-filtered through the R4 evaluator.
-- ``POST /search/index/sync`` — drain the durable outbox into the search
-  index (idempotent; the index is eventually consistent by design — the
-  relay is the only writer, never the object write path).
+- ``GET  /search`` — hybrid lexical + semantic search over the persistent
+  projections. Lexical criteria (exact object type, exact case-insensitive
+  title, literal-substring full text) are fused with semantic
+  nearest-neighbour results via deterministic reciprocal rank fusion.
+  Every result is permission pre-filtered through the R4 evaluator and
+  carries provenance (``index_source``: lexical / semantic / both) plus a
+  deterministic ``score``. When the semantic layer is unavailable the API
+  behaves exactly like Sprint-5 M1 (pure lexical).
+- ``POST /search/index/sync`` — drain the durable outbox into the lexical
+  AND semantic projections (idempotent; the relay is the only writer).
 
-The index never becomes the source of truth: it is a derived projection,
-rebuilt from version snapshots, and every search result is authorized
-against the authoritative object before it is returned.
+The indexes never become the source of truth: they are derived
+projections, rebuilt from version snapshots, and every search result is
+authorized against the authoritative object before it is returned.
 """
 from __future__ import annotations
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -21,8 +26,11 @@ from sqlalchemy.orm import Session
 from app.api.dependencies.auth import get_current_user
 from app.api.dependencies.db import get_db
 from app.application.exceptions import ValidationError
+from app.application.ports.embedder import Embedder
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
+from app.domain.repositories.vector_repository import VectorRepository
+from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -31,6 +39,13 @@ from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
 from app.infrastructure.search.index_applier import SearchIndexApplier
+from app.infrastructure.vector_db.client import get_qdrant_client
+from app.infrastructure.vector_db.collections import VectorCollectionManager
+from app.infrastructure.vector_db.qdrant_vector_repository import (
+    QdrantVectorRepository,
+)
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/search",
@@ -44,6 +59,9 @@ class SearchHitModel(BaseModel):
     object_type: str
     title: str
     version: int
+    # Sprint-5 M2 provenance: which index leg produced the hit.
+    index_source: str
+    score: float  # deterministic reciprocal-rank-fusion score
 
 
 class SearchResponseModel(BaseModel):
@@ -54,11 +72,41 @@ class IndexSyncResponseModel(BaseModel):
     applied: int
 
 
-def _search_use_case(db: Session) -> SearchObjectsUseCase:
+def get_embedder() -> Embedder:
+    """The T0 deterministic embedder (CI-safe; a T2 encoder swaps in here)."""
+    return HashingEmbedder()
+
+
+def get_vector_repository() -> VectorRepository | None:
+    """The semantic index adapter, or ``None`` when unavailable.
+
+    Graceful degradation seam: any failure (Qdrant unreachable or
+    misconfigured) yields ``None`` and the search stack falls back to the
+    M1 lexical contract. Overridable in tests via dependency_overrides.
+    """
+    try:
+        client = get_qdrant_client()
+        embedder = HashingEmbedder()
+        collection = VectorCollectionManager(
+            client, dimensions=embedder.dimensions
+        ).ensure()
+        return QdrantVectorRepository(client, collection)
+    except Exception:  # noqa: BLE001 — semantic must never break search
+        _log.warning("Semantic search unavailable; lexical-only fallback.", exc_info=True)
+        return None
+
+
+def _search_use_case(
+    db: Session,
+    vector_repository: VectorRepository | None,
+    embedder: Embedder,
+) -> SearchObjectsUseCase:
     return SearchObjectsUseCase(
         search_repository=SQLAlchemySearchRepository(db),
         object_repository=SQLAlchemyObjectRepository(db),
         permission_evaluator=ObjectPermissionEvaluator(),
+        vector_repository=vector_repository,
+        embedder=embedder,
     )
 
 
@@ -70,9 +118,11 @@ def search_objects(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     user: UniversalObject = Depends(get_current_user),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
 ) -> SearchResponseModel:
     try:
-        hits = _search_use_case(db).execute(
+        hits = _search_use_case(db, vector_repository, embedder).execute(
             user=user,
             text=text,
             object_type=object_type,
@@ -90,6 +140,8 @@ def search_objects(
                 object_type=hit.object_type,
                 title=hit.title,
                 version=hit.version,
+                index_source=hit.index_source,
+                score=hit.score,
             )
             for hit in hits
         ]
@@ -99,5 +151,11 @@ def search_objects(
 @router.post("/index/sync", response_model=IndexSyncResponseModel)
 def sync_search_index(
     db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
 ) -> IndexSyncResponseModel:
-    return IndexSyncResponseModel(**SearchIndexApplier(db).apply_pending())
+    return IndexSyncResponseModel(
+        **SearchIndexApplier(
+            db, vector_repository=vector_repository, embedder=embedder
+        ).apply_pending()
+    )

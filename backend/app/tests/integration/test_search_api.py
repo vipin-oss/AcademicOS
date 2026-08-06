@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies.auth import get_current_user
 from app.api.routes.documents import get_storage
+from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.dtos.intake import (
     KEY_INTAKE_STATUS,
     IntakeItemStatus,
@@ -365,3 +366,98 @@ def test_search_metadata_text(harness):
     _sync(client)
     hits = _search(client, text="entanglement")
     assert [h["object_id"] for h in hits] == [res.json()["id"]]
+
+
+# -------------------------------------------------------------- hybrid (M2)
+
+
+def _enable_hybrid(harness):
+    """Wire the semantic leg with the reference (fake) vector repository."""
+    from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+    from app.infrastructure.vector_db.fake import FakeVectorRepository
+
+    vectors = FakeVectorRepository()
+    embedder = HashingEmbedder()
+    app.dependency_overrides[get_vector_repository] = lambda: vectors
+    app.dependency_overrides[get_embedder] = lambda: embedder
+    return vectors, embedder
+
+
+def test_hybrid_search_returns_provenance(harness):
+    client, _, _ = harness
+    vectors, embedder = _enable_hybrid(harness)
+
+    _create_object(client, title="Quantum Physics Notes")
+    _create_object(client, title="History of Haryana")
+    _sync(client)
+    assert len(vectors) == 2  # the relay indexed the semantic leg too
+
+    hits = _search(client, text="quantum")
+    # Top-k semantics: with n <= limit docs every doc is a semantic
+    # candidate, so the lexical match ranks first ('both') and the other
+    # doc follows as a semantic-only candidate.
+    assert len(hits) == 2
+    quantum = next(h for h in hits if h["title"] == "Quantum Physics Notes")
+    assert quantum["index_source"] == "both"
+    assert quantum["score"] > 0
+    other = next(h for h in hits if h["title"] == "History of Haryana")
+    assert other["index_source"] == "semantic"
+
+    # A query only the semantic leg can answer (token overlap, no literal
+    # substring) must still surface, with semantic provenance.
+    _create_object(client, title="Quantum Entanglement Notes")
+    _sync(client)
+    hits = _search(client, text="quantum entangled")
+    titles = {h["title"]: h["index_source"] for h in hits}
+    assert "Quantum Entanglement Notes" in titles
+
+
+def test_hybrid_never_leaks_restricted_objects(harness):
+    client, session, _ = harness
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    vectors, embedder = _enable_hybrid(harness)
+    _create_object(client, title="Quantum Public Notes")
+
+    repo = SQLAlchemyObjectRepository(session)
+    secret = UniversalObject.create(
+        ObjectType.DOCUMENT, "Quantum Entangled Secrets", created_by="f:other"
+    )
+    secret.set_metadata(
+        _entry("acl.readers", json.dumps(["obj:user:allowed-0009"])),
+        actor="system",
+    )
+    repo.save(secret)  # auto-emission puts ObjectCreated in the relay
+    _sync(client)
+    assert len(vectors) == 2  # both are indexed...
+
+    hits = _search(client, text="quantum entangled")
+    assert all(h["title"] != "Quantum Entangled Secrets" for h in hits)  # ...but
+    # the API never leaks what the caller cannot read (both legs gated)
+
+
+def test_hybrid_delete_removes_from_both_projections(harness):
+    client, _, _ = harness
+    vectors, embedder = _enable_hybrid(harness)
+
+    doc_id = _create_object(client, title="Vanishing Doc")
+    _sync(client)
+    assert len(vectors) == 1
+
+    assert client.delete(f"{API}/objects/{doc_id}").status_code == 204
+    _sync(client)
+    assert len(vectors) == 0
+    assert _search(client, text="vanishing") == []
+
+
+def test_hybrid_replay_sync_is_idempotent(harness):
+    client, _, _ = harness
+    vectors, embedder = _enable_hybrid(harness)
+
+    _create_object(client, title="Stable Hybrid Doc")
+    _sync(client)
+    assert len(vectors) == 1
+    assert _sync(client) == {"applied": 0}
+    assert len(vectors) == 1  # replay never duplicates semantic projections

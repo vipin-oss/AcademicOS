@@ -11,5 +11,9 @@ from app.core.config import settings
 
 
 def get_qdrant_client() -> QdrantClient:
+    if settings.qdrant_url == ":memory:":
+        # In-process Qdrant emulator: the same client code path as a real
+        # server, with no deployment — dev/demo/CI parity.
+        return QdrantClient(":memory:")
     api_key = settings.qdrant_api_key or None
     return QdrantClient(url=settings.qdrant_url, api_key=api_key)
