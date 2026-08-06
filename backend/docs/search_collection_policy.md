@@ -64,3 +64,17 @@ index stays reproducible, swappable and never authoritative.
   for methodology and recorded p95 numbers. SRS §10.7 targets are R3
   steady-state (50B artefacts / 10k tenants) and cannot be reproduced in
   CI; the smoke indexes 5,000 documents and extrapolates.
+
+## 7. Recorded numbers (2026-08-06, CI sandbox)
+
+| Scenario (5,000 documents, 25 queries, warm) | p95 |
+|---|---|
+| Lexical (`text` LIKE over title + metadata) | **0.9 ms** |
+| Hybrid (lexical + embedding + vector search + RRF fusion, full use case incl. R4 gate) | **212.6 ms** |
+
+The hybrid p95 is dominated by the *reference implementation's* pure-Python
+cosine scan over 5,000 vectors — a CI-only cost. The production Qdrant leg
+answers the same query with an HNSW index server-side (sub-ms at this
+scale; A3.3 targets recall ≥ 0.95 @ p99 < 40 ms at 10M vectors). The smoke
+asserts generous order-of-magnitude bounds to catch regressions, never
+micro-benchmarks.
