@@ -62,6 +62,7 @@ from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
 from app.application.services.assistant_eval import EvaluationHistory
+from app.application.services.assistant_memory import AssistantMemoryService
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import (
     REVIEW_NOTES_MAX,
@@ -310,6 +311,37 @@ def ask_question_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def get_assistant_memory(
+    db: Session = Depends(get_db),
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+) -> AssistantMemoryService:
+    """Composition seam (Sprint-8 M1): assistant memory over the SAME
+    retrieval pipeline as the ask flow. Overridable in tests."""
+    return AssistantMemoryService(repo, retrieval)
+
+
+@router.get("/memory/recall")
+def memory_recall(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Assistant memory recall (Sprint-8 M1): prior conversations relevant
+    to ``q`` — the latest question/answer pair with the preserved
+    citations (review-gated: pending/rejected answers are recalled with
+    empty content) — plus the graph-discovered related knowledge objects.
+    Deterministic ordering; bounded by ``limit``."""
+    out = memory.recall(q, user, limit=limit)
+    return {
+        "conversations": [asdict(item) for item in out.conversations],
+        "knowledge": [asdict(item) for item in out.knowledge],
+        "search_count": out.search_count,
+        "graph_count": out.graph_count,
+    }
 
 
 @router.get("/suggested")
