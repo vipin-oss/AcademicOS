@@ -234,3 +234,68 @@ def test_restricted_object_never_reaches_the_llm_over_http(harness):
     assert "Quantum Public" in prompt
     assert "Secret" not in prompt  # permission filter precedes the prompt
     assert out["answer"]["summary"] == "ok"
+
+
+def test_citations_over_http_reload_and_follow_up(harness):
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed(harness, doc)
+
+    captured = _install_llm_chain(
+        lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        ),
+        repo,
+    )
+    out = _ask(client, "find quantum")
+    citations = out["answer"]["citations"]
+    assert len(citations) == 1
+    assert citations[0]["object_id"] == str(doc.id)
+    assert citations[0]["number"] == 1
+    assert captured["requests"][0]["citations"][0]["object_id"] == str(doc.id)
+    assert out["answer"]["cards"]  # evidence cards rendered
+
+    # Reload: citations reconstructed from the persisted answer.
+    got = client.get(f"{API}/conversations/{out['conversation']['id']}").json()
+    assert len(got["messages"][1]["answer"]["citations"]) == 1
+    assert got["messages"][1]["answer"]["citations"][0]["object_id"] == str(doc.id)
+
+    # Follow-up: citations remain stable (same retrieval, same numbering).
+    second = _ask(client, "find quantum", conversation_id=out["conversation"]["id"])
+    assert second["answer"]["citations"][0]["object_id"] == str(doc.id)
+    assert second["answer"]["citations"][0]["number"] == 1
+    assert second["conversation"]["message_count"] == 4
+
+
+def test_restricted_object_never_cited_over_http(harness):
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    public = U.create(OT.DOCUMENT, "Quantum Public", created_by="f:1")
+    secret = U.create(OT.DOCUMENT, "Quantum Secret", created_by="f:2")
+    secret.set_metadata(
+        MetadataEntry(
+            "acl.readers", json.dumps(["obj:user:someone-else"]),
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+        ),
+        actor="system",
+    )
+    _seed(harness, public, secret)
+
+    captured = _install_llm_chain(
+        lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        ),
+        repo,
+    )
+    out = _ask(client, "find quantum")
+    assert all(c["object_id"] != str(secret.id) for c in out["answer"]["citations"])
+    assert all("Secret" not in c["title"] for c in out["answer"]["citations"])
+    assert all("Secret" not in c["title"] for c in out["answer"]["cards"])
+    assert "Secret" not in captured["requests"][0]["messages"][1]["content"]

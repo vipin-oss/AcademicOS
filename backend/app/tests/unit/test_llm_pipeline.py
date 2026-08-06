@@ -271,3 +271,127 @@ def test_graph_results_enter_the_prompt(db, repo):
     _ask(use_case, "find quantum")
     user_message = captured["body"]["messages"][1]["content"]
     assert "Neighbor Notes" in user_message  # the graph leg contributed
+
+
+def _seed_asker(repo) -> None:
+    """Persist the asker WITHOUT events so it is not indexed (the citation
+    tests assert on the document citations alone)."""
+    user = _user()
+    user.pop_domain_events()
+    repo.save(user)
+
+
+# ------------------------------------------------------------- citations (M3)
+
+
+def _wired_with_citations(db, repo, vectors, provider):
+    from app.application.assistant.citations import CitationBuilder
+    from app.application.assistant.verifier import AnswerVerifier
+
+    search = SearchObjectsUseCase(
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        vector_repository=vectors, embedder=HashingEmbedder(),
+    )
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    retrieval = AssistantRetrievalService(search, graph)
+    return AskQuestionUseCase(
+        repo,
+        provider,
+        retrieval=retrieval,
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+    )
+
+
+def test_citations_reach_the_llm_request_and_answer(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(repo, handler))
+    out = _ask(use_case, "find quantum")
+
+    # The numbered evidence travels with the request.
+    wire_citations = captured["body"]["citations"]
+    assert len(wire_citations) == 1
+    assert wire_citations[0]["object_id"] == str(doc.id)
+    assert wire_citations[0]["number"] == 1
+    assert "sources" in wire_citations[0]
+    # The prompt carries the [n] marker.
+    assert "[1]" in captured["body"]["messages"][1]["content"]
+    # The answer carries the verified citation + evidence card.
+    assert len(out.answer.citations) == 1
+    assert out.answer.citations[0].object_id == str(doc.id)
+    assert out.answer.citations[0].number == 1
+    assert out.answer.cards  # evidence cards filled the empty cards slot
+    assert out.answer.cards[0].href.endswith(str(doc.id))
+
+
+def test_citations_persist_and_reload(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+    ))
+    out = _ask(use_case, "find quantum")
+
+    # Reload the conversation: the persisted answer reconstructs citations.
+    messages = read_messages(repo.get_by_id(ObjectId(str(out.conversation.id))))
+    assistant_payload = [p for _s, p in messages if p["role"] == "assistant"][0]
+    raw_citations = assistant_payload["answer"]["citations"]
+    assert len(raw_citations) == 1
+    assert raw_citations[0]["object_id"] == str(doc.id)
+
+
+def test_restricted_object_never_cited(db, repo):
+    public = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Public", created_by="f:1")
+    secret = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Secret", created_by="f:2")
+    secret.set_metadata(
+        MetadataEntry(
+            "acl.readers", json.dumps(["obj:user:bob-0002"]),
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+        ),
+        actor="system",
+    )
+    vectors = _index(db, repo, public, secret, _user())
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(repo, handler))
+    out = _ask(use_case, "find quantum")
+    # The restricted object never reached the prompt or the citations.
+    assert "Quantum Secret" not in captured["body"]["messages"][1]["content"]
+    assert all(c.object_id != str(secret.id) for c in out.answer.citations)
+
+
+def test_deleted_object_citation_dropped_before_attach(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Doomed Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+    ))
+    # Delete the object AFTER retrieval but BEFORE the provider returns:
+    # the verifier must drop the citation (the object no longer exists).
+    repo.delete(doc.id)
+    out = _ask(use_case, "find doomed")
+    assert out.answer.citations == []

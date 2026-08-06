@@ -39,12 +39,14 @@ from app.api.mappers.assistant_mapper import (
     to_update_input,
 )
 from app.api.routes.search import get_embedder, get_vector_repository
+from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.providers import (
     FallbackAssistantProvider,
     RuleBasedAssistantProvider,
 )
+from app.application.assistant.verifier import AnswerVerifier
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.commands.create_conversation import CreateConversationCommand
 from app.application.commands.delete_conversation import DeleteConversationCommand
@@ -200,6 +202,8 @@ def ask_question(
             retrieval=retrieval,
             context_builder=AssistantContextBuilder(),
             prompt_builder=AssistantPromptBuilder(),
+            citation_builder=CitationBuilder(),
+            verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         ).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
