@@ -22,6 +22,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.api.dependencies.auth import get_current_user  # noqa: E402
+from app.api.routes.assistant import get_assistant_provider  # noqa: E402
 from app.application.dtos.assistant import (  # noqa: E402
     AssistantAnswerOutput,
     AssistantCitation,
@@ -236,3 +237,138 @@ def test_memory_recall_validation_and_bounds(harness):
     assert client.get(
         f"{API}/memory/recall", params={"q": "quantum", "limit": 51}
     ).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M2 — memory-augmented asks over HTTP (real route wiring)
+# ---------------------------------------------------------------------------
+def _persist_asker(repo) -> None:
+    """Save the harness's fake user so retrieval + memory actually run."""
+    asker = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    asker.pop_domain_events()
+    repo.save(asker)
+
+
+def _marker_chain(repo, *, marker: str):
+    """A real provider chain whose LLM transport answers with ``marker``
+    when the prompt carries the memory section, and 'plain' otherwise."""
+    import json as _json
+
+    import httpx as _httpx
+
+    from app.application.assistant.providers import (
+        FallbackAssistantProvider,
+        RuleBasedAssistantProvider,
+    )
+    from app.infrastructure.llm.llm_provider import LlmAssistantProvider
+    from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+
+    def handler(request):
+        body = _json.loads(request.content)
+        prompt_user = body["messages"][1]["content"]
+        answer = marker if "RETRIEVED MEMORIES" in prompt_user else "plain"
+        return _httpx.Response(
+            200, json={"choices": [{"message": {"content": answer}}]}
+        )
+
+    client = _httpx.Client(transport=_httpx.MockTransport(handler))
+    primary = LlmAssistantProvider(
+        client, model="marker-model", base_url="http://marker.example",
+        retry_attempts=1, retry_backoff_seconds=0,
+    )
+    fallback = RuleBasedAssistantProvider(
+        repo, permission_evaluator=ObjectPermissionEvaluator()
+    )
+    return FallbackAssistantProvider(primary, fallback)
+
+
+def _install_marker_chain(repo, *, marker: str) -> None:
+    app.dependency_overrides[get_assistant_provider] = (
+        lambda: _marker_chain(repo, marker=marker)
+    )
+
+
+def _ask_http(client, question: str = "find quantum") -> dict:
+    r = client.post(
+        f"{API}/ask",
+        json={"question": question, "asked_by": "obj:user:test-user-0001"},
+    )
+    assert r.status_code == 201
+    return r.json()
+
+
+def test_ask_recalls_memories_automatically_over_http(harness):
+    client, repo, session, vectors, embedder = harness
+    _persist_asker(repo)
+    prior = _conversation(repo, question="find quantum", answer="Prior memory answer")
+    _index(session, vectors, embedder, prior)
+    _install_marker_chain(repo, marker="memory-grounded")
+
+    out = _ask_http(client)
+    assert out["answer"]["summary"] == "memory-grounded"
+    # The answer was persisted with its conversation (assistant persistence).
+    assert out["assistant_message"]["content"] == "memory-grounded"
+
+
+def test_ask_without_prior_memory_is_plain(harness):
+    client, repo, _, _, _ = harness
+    _persist_asker(repo)
+    _install_marker_chain(repo, marker="memory-grounded")
+
+    out = _ask_http(client)
+    assert out["answer"]["summary"] == "plain"
+
+
+def test_ask_memory_respects_permissions_over_http(harness):
+    client, repo, session, vectors, embedder = harness
+    _persist_asker(repo)
+    restricted = _conversation(repo, question="find quantum", answer="Secret answer")
+    restricted.set_metadata(
+        MetadataEntry(
+            "acl.readers", '["obj:user:someone-else"]',
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+        ),
+        actor="system",
+    )
+    _index(session, vectors, embedder, restricted)
+    _install_marker_chain(repo, marker="memory-grounded")
+
+    out = _ask_http(client)
+    assert out["answer"]["summary"] == "plain"  # no memory section
+
+
+def test_ask_memory_works_with_the_review_gate(harness):
+    from app.core.config import settings
+
+    client, repo, session, vectors, embedder = harness
+    _persist_asker(repo)
+    prior = _conversation(repo, question="find quantum", answer="Prior memory answer")
+    _index(session, vectors, embedder, prior)
+    _install_marker_chain(repo, marker="memory-grounded")
+
+    previous = settings.assistant_review_enabled
+    settings.assistant_review_enabled = True
+    try:
+        out = _ask_http(client)
+        conv_id = out["conversation"]["id"]
+        assert out["answer"]["summary"] == "memory-grounded"
+        # Pending: the answer is hidden from the published thread...
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][1]["content"] == ""
+        # ...and the queue sees it.
+        pending = client.get(f"{API}/review/pending").json()["items"]
+        assert [p["conversation"]["id"] for p in pending] == [conv_id]
+        # Approve -> visible with the memory-grounded answer intact.
+        r = client.post(f"{API}/review/approve", json={"conversation_id": conv_id})
+        assert r.status_code == 200
+        got = client.get(f"{API}/conversations/{conv_id}").json()
+        assert got["messages"][1]["content"] == "memory-grounded"
+    finally:
+        settings.assistant_review_enabled = previous
+        app.dependency_overrides.pop(get_assistant_provider, None)
