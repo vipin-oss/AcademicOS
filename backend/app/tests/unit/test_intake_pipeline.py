@@ -314,3 +314,20 @@ class TestViewBuilders:
             TestViewBuilders._session(TestViewBuilders), []
         )
         assert progress["committed_items"] == 0
+        assert progress["remaining_items"] == 0
+
+    def test_committed_items_do_not_count_as_remaining(self) -> None:
+        facts = [
+            IntakeItemFacts(IntakeItemStatus.COMMITTED, IntakeStage.REVIEW, 100, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 200, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.PENDING, IntakeStage.ENUMERATE, 50, "txt", None, False, False, None),
+        ]
+        summary = summarize_items(facts, enumerated=True)
+        # committed is processed and at rest: it must not appear as remaining.
+        remaining = (
+            summary["total_items"]
+            - summary["awaiting_review"]
+            - summary["committed_items"]
+            - (summary["errors"] - summary["retryable_items"])
+        )
+        assert remaining == 1  # only the pending item is owed

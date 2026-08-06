@@ -598,6 +598,7 @@ def intake_session_progress_of(
     remaining = (
         summary["total_items"]
         - summary["awaiting_review"]
+        - summary["committed_items"]
         - (summary["errors"] - summary["retryable_items"])
     )
     avg = timing["avg_seconds_per_item"]
