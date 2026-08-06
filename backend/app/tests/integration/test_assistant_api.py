@@ -260,8 +260,8 @@ def test_health_regression_and_openapi_tags(client: TestClient):
     assistant_paths = [p for p in openapi["paths"] if p.startswith("/api/v1/assistant")]
     # home / ask / ask/stream / suggested / conversations / {id} /
     # review x3 / eval x4 (S7 M4) / review decisions x2 (S7 M5) /
-    # memory recall (S8 M1).
-    assert len(assistant_paths) == 16
+    # memory recall (S8 M1) / memory consolidate (S8 M4).
+    assert len(assistant_paths) == 17
     assert "/api/v1/assistant/ask/stream" in assistant_paths  # S6 M4 SSE
     assert "/api/v1/assistant/review/pending" in assistant_paths  # S6 M5
     assert "/api/v1/assistant/eval/runs" in assistant_paths  # S7 M4
@@ -270,3 +270,4 @@ def test_health_regression_and_openapi_tags(client: TestClient):
     assert "/api/v1/assistant/review/decisions" in assistant_paths  # S7 M5
     assert "/api/v1/assistant/review/decisions/{conversation_id}" in assistant_paths  # S7 M5
     assert "/api/v1/assistant/memory/recall" in assistant_paths  # S8 M1
+    assert "/api/v1/assistant/memory/consolidate" in assistant_paths  # S8 M4

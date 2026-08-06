@@ -71,6 +71,7 @@ from app.application.services.assistant_review import (
     AssistantReviewQueue,
 )
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.memory_consolidation import MemoryConsolidationService
 from app.application.services.model_registry import registry_from_settings
 from app.application.services.prompt_registry import DEFAULT_PROMPT_ID, PromptAsset, PromptRegistry
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
@@ -351,6 +352,29 @@ def memory_recall(
         "knowledge": [asdict(item) for item in out.knowledge],
         "search_count": out.search_count,
         "graph_count": out.graph_count,
+    }
+
+
+@router.post("/memory/consolidate")
+def consolidate_memory(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """One memory-consolidation pass (Sprint-8 M4): redundant
+    conversations are marked SUPERSEDED by their canonical memory —
+    nothing is ever deleted, and consolidated memories disappear from
+    recall by default. Mirrors the search index-sync action pattern."""
+    report = MemoryConsolidationService(repo).consolidate(actor=str(user.id))
+    return {
+        "scanned": report.scanned,
+        "consolidated": report.consolidated,
+        "superseded": [
+            {
+                "conversation_id": pair.conversation_id,
+                "canonical_id": pair.canonical_id,
+            }
+            for pair in report.superseded
+        ],
     }
 
 

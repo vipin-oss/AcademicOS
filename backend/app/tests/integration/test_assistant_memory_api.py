@@ -425,3 +425,46 @@ def test_recall_unreviewed_memories_keep_retrieval_order_over_http(harness):
     assert [c["conversation_id"] for c in again] == [
         c["conversation_id"] for c in conversations
     ]
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M4 — consolidation over HTTP
+# ---------------------------------------------------------------------------
+def test_consolidate_marks_duplicates_superseded_over_http(harness):
+    client, repo, session, vectors, embedder = harness
+    first = _conversation(repo, question="find quantum", answer="The quantum answer.")
+    second = _conversation(repo, question="find quantum", answer="The quantum answer.")
+    _index(session, vectors, embedder, first, second)
+
+    r = client.post(f"{API}/memory/consolidate")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scanned"] == 2
+    assert body["consolidated"] == 1
+    assert body["superseded"][0]["conversation_id"] == str(first.id)
+    assert body["superseded"][0]["canonical_id"] == str(second.id)
+
+    # Recall now returns ONLY the canonical memory.
+    recall = client.get(f"{API}/memory/recall", params={"q": "find quantum"}).json()
+    assert [c["conversation_id"] for c in recall["conversations"]] == [str(second.id)]
+
+    # Nothing was deleted: the superseded conversation is still fetchable
+    # with its full thread, and its status is superseded.
+    got = client.get(f"{API}/conversations/{first.id}").json()
+    assert got["conversation"]["id"] == str(first.id)
+    assert len(got["messages"]) == 2
+    assert got["messages"][1]["content"] == "The quantum answer."
+
+
+def test_consolidate_requires_authentication(harness):
+    client, _, _, _, _ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    assert client.post(f"{API}/memory/consolidate").status_code == 401
+
+
+def test_consolidate_is_a_no_op_on_a_clean_base(harness):
+    client, repo, session, vectors, embedder = harness
+    _conversation(repo, question="find quantum", answer="The only answer.")
+    r = client.post(f"{API}/memory/consolidate")
+    assert r.status_code == 200
+    assert r.json()["consolidated"] == 0
