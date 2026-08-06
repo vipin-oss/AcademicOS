@@ -43,10 +43,16 @@ def _metadata_text(entries: tuple[MetadataSnapshot, ...]) -> str:
     )
 
 
-def search_text(snapshot: ObjectSnapshot) -> str:
+def to_search_text(document: SearchDocument) -> str:
     """The deterministic text form fed to the embedder (Sprint-5 M2).
 
-    The semantic leg embeds exactly this string, so indexing (applier) and
-    rebuilding always produce the same vector for the same snapshot.
+    The semantic leg embeds exactly this string, so indexing (applier),
+    querying and rebuilding always produce the same vector for the same
+    search document.
     """
-    return f"{snapshot.title}\n{_metadata_text(snapshot.metadata)}"
+    return f"{document.title}\n{document.metadata_text}"
+
+
+def search_text(snapshot: ObjectSnapshot) -> str:
+    """``to_search_text`` over the document projection of a snapshot."""
+    return to_search_text(to_search_document(snapshot))

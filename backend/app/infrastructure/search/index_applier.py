@@ -24,17 +24,24 @@ version-aware, marks are WHERE-guarded), so duplicates are impossible.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.application.ports.embedder import Embedder
+from app.domain.repositories.vector_repository import VectorRepository
 from app.domain.value_objects.object_id import ObjectId
 from app.domain.value_objects.search import SearchDocument
+from app.domain.value_objects.vector import VectorDocument
 from app.infrastructure.db.models.object_version_model import ObjectVersionModel
 from app.infrastructure.db.models.search_document_model import SearchDocumentModel
 from app.infrastructure.outbox.relay import OutboxRelay
 from app.infrastructure.persistence.mapper import SnapshotMapper
-from app.infrastructure.persistence.search_mapping import to_search_document
+from app.infrastructure.persistence.search_mapping import (
+    to_search_document,
+    to_search_text,
+)
 from app.infrastructure.persistence.snapshots import object_snapshot_from_dict
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -43,6 +50,8 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
+
+_log = logging.getLogger(__name__)
 
 _BATCH_SIZE = 200
 
@@ -57,11 +66,22 @@ class SearchIndexApplier:
     One consumer per session; never runs in the object write path.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        vector_repository: VectorRepository | None = None,
+        embedder: Embedder | None = None,
+    ) -> None:
         self._session = session
         self._relay = OutboxRelay(session)
         self._index = SQLAlchemySearchRepository(session)
         self._objects = SQLAlchemyObjectRepository(session)
+        # Sprint-5 M2 — the semantic projection rides the same drain when a
+        # vector store and embedder are wired; without them the applier is
+        # exactly the M1 lexical consumer.
+        self._vector_repository = vector_repository
+        self._embedder = embedder
 
     # ------------------------------------------------------------------ drain
     def apply_pending(self) -> dict:
@@ -96,8 +116,29 @@ class SearchIndexApplier:
             # ObjectDeleted event, or a deletion whose event is drained
             # after the rows vanished): remove the projection.
             self._index.delete(aggregate_id)
+            if self._vector_repository is not None:
+                self._safe_vector(lambda: self._vector_repository.delete(aggregate_id))
         else:
             self._index.upsert(document)
+            if self._vector_repository is not None and self._embedder is not None:
+                vector = self._embedder.embed(to_search_text(document))
+                self._safe_vector(
+                    lambda: self._vector_repository.upsert(
+                        _to_vector_document(document, vector)
+                    )
+                )
+
+    def _safe_vector(self, operation) -> None:
+        """Run a semantic-store operation without breaking the drain.
+
+        The lexical index is authoritative; a vector failure is logged and
+        the event still completes — the semantic projection lags and the
+        rebuild path repairs it. Never a 500 for the lexical consumer.
+        """
+        try:
+            operation()
+        except Exception:  # noqa: BLE001 — semantic must never break indexing
+            _log.warning("Semantic index update failed; lexical unaffected.", exc_info=True)
 
     # --------------------------------------------------------------- rebuild
     def rebuild(self) -> dict:
@@ -119,7 +160,22 @@ class SearchIndexApplier:
                 self._index.upsert(document)
 
         commit_with_retry(self._session, write)
+        # Semantic rebuild from the SAME document set: identical derivation,
+        # so rebuild == replay holds for both projections. Best-effort — the
+        # lexical index is authoritative and remains untouched by a failure.
+        if self._vector_repository is not None and self._embedder is not None:
+            self._rebuild_vectors(documents)
         return {"indexed": len(documents)}
+
+    def _rebuild_vectors(self, documents: list[SearchDocument]) -> None:
+        """Reconstruct the semantic projection from the document set."""
+        try:
+            self._vector_repository.clear()
+            for document in documents:
+                vector = self._embedder.embed(to_search_text(document))
+                self._vector_repository.upsert(_to_vector_document(document, vector))
+        except Exception:  # noqa: BLE001 — lexical authoritative; retry via rebuild
+            _log.warning("Semantic rebuild failed; lexical index untouched.", exc_info=True)
 
     def _documents_from_version_history(self) -> list[SearchDocument]:
         """Latest version snapshot per object -> search document."""
@@ -180,3 +236,15 @@ class SearchIndexApplier:
         if obj is None:
             return None
         return to_search_document(SnapshotMapper.to_snapshot(obj))
+
+
+def _to_vector_document(document: SearchDocument, vector: list[float]) -> VectorDocument:
+    """The semantic projection of a search document with its embedding."""
+    return VectorDocument(
+        object_id=document.object_id,
+        object_type=document.object_type,
+        title=document.title,
+        metadata_text=document.metadata_text,
+        version=document.version,
+        vector=tuple(vector),
+    )
