@@ -207,6 +207,26 @@ def _awaiting_item(
         ),
     )
     repo.save(item)
+    # A reviewed proposal (the Sprint-3 M2 commit gate).
+    from app.application.dtos.intake import KEY_PROPOSAL
+
+    item.set_metadata(
+        MetadataEntry(
+            KEY_PROPOSAL,
+            json_encode(
+                {
+                    "title": item.title,
+                    "document_type": extension,
+                    "description": "seeded proposal",
+                    "confidence": 1.0,
+                }
+            ),
+            MetadataLayer.L1_SYSTEM,
+            Provenance.SYSTEM,
+        ),
+        actor="intake",
+    )
+    repo.save(item)
     return item
 
 
@@ -340,3 +360,51 @@ def test_engine_wires_and_delegates_to_the_use_case(world):
     with pytest.raises(ObjectAlreadyExistsError):
         direct.execute(CommitIntakeItemCommand(item_id=str(item.id), actor="f:1"))
     assert out.document_id
+
+def test_commit_requires_reviewed_proposal(world):
+    """The proposal gate: without a reviewed proposal the commit is 422."""
+    session = _completed_session(world["repo"])
+    item = _awaiting_item(world["repo"], session)
+    # Drop the proposal the seed helper added.
+    from app.application.dtos.intake import KEY_PROPOSAL
+
+    item.set_metadata(
+        MetadataEntry(KEY_PROPOSAL, "", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+        actor="intake",
+    )
+    world["repo"].save(item)
+
+    with pytest.raises(ValidationError, match="proposal"):
+        _engine(world).commit_item(str(item.id), actor="faculty:1")
+
+
+def test_commit_uses_reviewed_title_and_type(world):
+    """The reviewed proposal drives the created document's title/type."""
+    session = _completed_session(world["repo"])
+    item = _awaiting_item(world["repo"], session)
+    from app.application.dtos.intake import KEY_PROPOSAL
+
+    item.set_metadata(
+        MetadataEntry(
+            KEY_PROPOSAL,
+            json_encode(
+                {
+                    "title": "Reviewed Title",
+                    "document_type": "txt",
+                    "description": "human reviewed",
+                    "confidence": 1.0,
+                }
+            ),
+            MetadataLayer.L1_SYSTEM,
+            Provenance.SYSTEM,
+        ),
+        actor="faculty:1",
+    )
+    world["repo"].save(item)
+
+    out = _engine(world).commit_item(str(item.id), actor="faculty:1")
+    assert out.document_title == "Reviewed Title"
+    doc = world["repo"].get_by_id(ObjectId(out.document_id))
+    assert doc is not None
+    assert doc.title == "Reviewed Title"
+    assert doc.metadata.get_value("document_type") == "txt"

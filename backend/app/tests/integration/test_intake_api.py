@@ -495,7 +495,68 @@ def _seed_commit_item(session, storage, *, status="awaiting_review"):
     )
     repo.save(item)
     storage.save("seed/staged.pdf", b"%PDF-1.7 seeded")
+    item.set_metadata(
+        MetadataEntry(
+            "intake.proposal",
+            json.dumps(
+                {"title": item.title, "document_type": "pdf",
+                 "description": "seeded", "confidence": 1.0}
+            ),
+            MetadataLayer.L1_SYSTEM,
+            Provenance.SYSTEM,
+        ),
+        actor="intake",
+    )
+    repo.save(item)
     return item
+
+
+def test_proposal_generate_and_review_flow(harness):
+    """Proposal API: generate -> read -> update -> regenerate, no commits."""
+    client, storage, _manager, request_session = harness
+    from app.application.intake.proposal_engine import ProposalEngineService
+    from app.application.intake.proposal_engine import ProposalReviewService
+
+    repo = SQLAlchemyObjectRepository(request_session)
+    session_obj = UniversalObject.create(
+        ObjectType.INTAKE_SESSION, "pseed", created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(entries=(MetadataEntry(
+            "intake.status", IntakeSessionStatus.COMPLETED.value,
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),)),
+    )
+    repo.save(session_obj)
+    item = UniversalObject.create(
+        ObjectType.INTAKE_ITEM, "prop.pdf", created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(entries=(
+            MetadataEntry("intake.status", IntakeItemStatus.AWAITING_REVIEW.value,
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.session_id", str(session_obj.id),
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.extension", "pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.extraction",
+                          json.dumps({"status": "extracted", "format": "pdf", "char_count": 7}),
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+        )),
+    )
+    repo.save(item)
+
+    generated = ProposalEngineService(repo).generate(str(item.id))
+    assert generated.document_type == "pdf"
+    assert generated.confidence == 1.0
+
+    updated = ProposalReviewService(repo).update(
+        str(item.id), title="Human Title", document_type="txt",
+        description="reviewed", actor="faculty:1",
+    )
+    assert updated.title == "Human Title"
+    assert updated.document_type == "txt"
+
+    regenerated = ProposalReviewService(repo).regenerate(str(item.id), actor="faculty:1")
+    assert regenerated.title == "prop.pdf"
+    assert regenerated.document_type == "pdf"
+
 
 
 def test_commit_success_then_double_submit_409(harness):

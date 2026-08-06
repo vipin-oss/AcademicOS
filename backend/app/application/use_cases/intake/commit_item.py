@@ -24,9 +24,9 @@ from app.application.commands.create_document import CreateDocumentCommand
 from app.application.dtos.document import CreateDocumentInput
 from app.application.dtos.intake import (
     KEY_COMMITTED_DOCUMENT,
-    KEY_EXTENSION,
     KEY_INTAKE_STATUS,
     KEY_MIME_TYPE,
+    KEY_PROPOSAL,
     KEY_SESSION_ID,
     KEY_SHA256,
     KEY_SIZE_BYTES,
@@ -36,6 +36,7 @@ from app.application.dtos.intake import (
     IntakeSessionStatus,
     _extraction_dict_of,
     intake_session_status_of,
+    json_decode,
 )
 from app.application.exceptions import (
     ObjectAlreadyExistsError,
@@ -98,6 +99,17 @@ class CommitItemUseCase:
                 "Item has no extracted text; only extracted items can be committed."
             )
 
+        # Proposal gate (Sprint-3 M2): a reviewed proposal is required and
+        # its reviewed title/type drive the document creation.
+        proposal_raw = item.metadata.get_value(KEY_PROPOSAL)
+        proposal_data = json_decode(proposal_raw, None)
+        if not isinstance(proposal_data, dict) or not proposal_data.get("title"):
+            raise ValidationError(
+                "Item has no reviewed proposal; generate and review one before committing."
+            )
+        proposal_title = str(proposal_data["title"])
+        proposal_type = str(proposal_data["document_type"])
+
         session_id = item.metadata.get_value(KEY_SESSION_ID)
         if not session_id:
             raise ValidationError("Item has no intake session.")
@@ -128,13 +140,12 @@ class CommitItemUseCase:
             )
 
         # --- reuse CreateDocumentUseCase (the sanctioned document path) -----
-        extension = item.metadata.get_value(KEY_EXTENSION) or ""
-        document_type = extension if extension in DOCUMENT_TYPES else "unknown"
+        document_type = proposal_type if proposal_type in DOCUMENT_TYPES else "unknown"
         file_size = int(item.metadata.get_value(KEY_SIZE_BYTES) or 0)
         document = self._document_creator.execute(
             CreateDocumentCommand(
                 input=CreateDocumentInput(
-                    title=item.title,
+                    title=proposal_title,
                     document_type=document_type,
                     uploaded_by=command.actor,
                     file_name=item.title,
