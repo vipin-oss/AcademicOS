@@ -359,6 +359,10 @@ class AssistantPrompt:
     system: str
     user: str
     citations: tuple[AssistantCitation, ...] = ()  # S6 M3: evidence exposed separately
+    # S7 M1: which registered prompt (id + version) produced this prompt —
+    # makes prompt versions identifiable end to end.
+    prompt_id: str = "assistant.default"
+    prompt_version: int = 1
 
 
 @dataclass(frozen=True)

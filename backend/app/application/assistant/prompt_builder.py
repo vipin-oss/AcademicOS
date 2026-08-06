@@ -24,6 +24,11 @@ from app.application.dtos.assistant import (
     AssistantContext,
     AssistantPrompt,
 )
+from app.application.services.prompt_registry import (
+    DEFAULT_PROMPT_ID,
+    PromptAsset,
+    PromptRegistry,
+)
 
 # Hard cap on the rendered user message (token-budget guard; the context
 # budgets already bound the inputs — this only covers formatting overhead).
@@ -42,10 +47,31 @@ Rules:
 
 
 class AssistantPromptBuilder:
-    """Deterministic prompt envelope renderer (pure service)."""
+    """Deterministic prompt envelope renderer (pure service).
 
-    def __init__(self, system_instructions: str = SYSTEM_INSTRUCTIONS) -> None:
+    Sprint-7 M1 — prompt versions: when a ``PromptRegistry`` is wired, the
+    system text comes from the registered asset (latest, or the pinned
+    version) and the rendered ``AssistantPrompt`` records the prompt id +
+    version, making prompt versions identifiable end to end. Without a
+    registry the module constant is used (backward compatible).
+    """
+
+    def __init__(
+        self,
+        system_instructions: str = SYSTEM_INSTRUCTIONS,
+        *,
+        prompt_registry: PromptRegistry | None = None,
+        prompt_id: str = DEFAULT_PROMPT_ID,
+        prompt_version: int | None = None,
+    ) -> None:
         self._system_instructions = system_instructions
+        self._prompt_registry = prompt_registry
+        self._prompt_id = prompt_id
+        self._prompt_version = prompt_version
+        self._asset: PromptAsset | None = None
+        if prompt_registry is not None:
+            self._asset = prompt_registry.get(prompt_id, prompt_version)
+            self._system_instructions = self._asset.system_text
 
     def build(
         self,
@@ -88,10 +114,13 @@ class AssistantPromptBuilder:
             # content is dropped first (history, then the retrieval tail —
             # lowest-ranked items first).
             user = self._truncate_to_cap(sections, question.strip())
+        asset = self._asset
         return AssistantPrompt(
             system=self._system_instructions,
             user=user,
             citations=citations or (),
+            prompt_id=asset.id if asset else self._prompt_id,
+            prompt_version=asset.version if asset else 1,
         )
 
     @staticmethod
