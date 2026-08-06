@@ -138,3 +138,79 @@ def test_refresh_failures(client):
 def test_register_validation(client):
     assert _register(client, username="   ", password="correct-horse-battery").status_code == 422
     assert _register(client, username="dr.ananya", password="short").status_code == 422
+
+
+# ------------------------------------------------------- adversarial regressions
+# Findings from the independent security audit (Sprint-1):
+
+
+def test_password_hash_never_exposed_via_generic_objects_api(client):
+    """A registered user's credential must not leak through the generic
+    object endpoints (the projection excludes L1_SYSTEM metadata)."""
+    reg = _register(client, username="hash.victim", password="super-secret-pw")
+    uid = reg.json()["id"]
+
+    detail = client.get(f"/api/v1/objects/{uid}")
+    assert detail.status_code == 200
+    assert "auth.password_hash" not in detail.json().get("metadata", {})
+
+    listing = client.get("/api/v1/objects?object_type=user")
+    assert listing.status_code == 200
+    for item in listing.json().get("items", []):
+        assert "auth.password_hash" not in item.get("metadata", {})
+
+
+def test_token_without_sub_claim_is_401_not_500(client):
+    """A token signed without a subject is malformed input — 401, never 500."""
+    import datetime
+
+    import jwt as pyjwt
+
+    from app.core.config import settings
+
+    no_sub = pyjwt.encode(
+        {
+            "type": "access",
+            "iat": datetime.datetime.now(datetime.UTC),
+            "exp": datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=5),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    resp = client.get(f"{API}/me", headers={"Authorization": f"Bearer {no_sub}"})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "unauthorized"
+
+    no_sub_refresh = pyjwt.encode(
+        {
+            "type": "refresh",
+            "iat": datetime.datetime.now(datetime.UTC),
+            "exp": datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=5),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    resp = client.post(f"{API}/refresh", json={"refresh_token": no_sub_refresh})
+    assert resp.status_code == 401
+
+
+def test_expired_token_is_401(client):
+    """An expired access token is rejected as 401."""
+    import datetime
+
+    import jwt as pyjwt
+
+    from app.core.config import settings
+
+    expired = pyjwt.encode(
+        {
+            "sub": "obj:user:DEADBEEF",
+            "type": "access",
+            "iat": datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2),
+            "exp": datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+    resp = client.get(f"{API}/me", headers={"Authorization": f"Bearer {expired}"})
+    assert resp.status_code == 401
