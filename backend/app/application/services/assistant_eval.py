@@ -288,6 +288,10 @@ def run_eval_suite_across_models(
     repository,
     build_use_case,
     cases: list[EvalCase],
+    *,
+    history: EvaluationHistory | None = None,
+    prompt_registry: PromptRegistry | None = None,
+    prompt_id: str = DEFAULT_PROMPT_ID,
 ) -> dict[str, tuple[list[EvalResult], int]]:
     """Run the SAME evaluation suite against EVERY registered model (S7 M2).
 
@@ -295,9 +299,36 @@ def run_eval_suite_across_models(
     (built by ``build_use_case(model_id)``), the same static cases, the
     same pure predicates — so results are comparable across models and
     reproducible across runs. Returns ``{model_id: (results, passed)}``.
+
+    Sprint-7 M3 — evaluation persistence: when ``history`` is wired, every
+    model's run is recorded IMMEDIATELY after its suite completes (model
+    id, the deployed model name from the registry spec, the prompt id +
+    version resolved from ``prompt_registry`` at run time, the per-case
+    results, and the run timestamp). ``prompt_registry`` is REQUIRED when
+    ``history`` is enabled — the recorded prompt version must come from
+    the registry (the single source of truth), never from a loose number;
+    callers must wire the same registry into the prompt builders of the
+    use cases produced by ``build_use_case`` so the recorded version is
+    the version that actually ran. Without a history the runner behaves
+    exactly as before (backward compatible).
+
+    Partial-failure semantics: recording is per model and immediate, so a
+    later model raising propagates the exception but every completed
+    model's record is already persisted.
     """
+    if history is not None and prompt_registry is None:
+        raise ValueError("prompt_registry is required when history is enabled.")
     outcomes: dict[str, tuple[list[EvalResult], int]] = {}
     for spec in registry.all():
         use_case = build_use_case(spec.id)
-        outcomes[spec.id] = run_eval_suite(use_case, cases)
+        results, passed = run_eval_suite(use_case, cases)
+        if history is not None:
+            history.record_run(
+                model_id=spec.id,
+                model_version=spec.model,
+                prompt_id=prompt_id,
+                prompt_version=prompt_registry.latest_version(prompt_id),
+                results=results,
+            )
+        outcomes[spec.id] = (results, passed)
     return outcomes
