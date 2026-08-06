@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 604800
+
+    @model_validator(mode="after")
+    def _reject_insecure_default_secret(self) -> Settings:
+        # Sprint-1 auth foundation: the default JWT secret must never run in
+        # a non-development environment. Failing fast at startup beats
+        # shipping forged tokens.
+        if (
+            self.environment not in ("development", "test")
+            and self.jwt_secret == "change-me-in-production"
+        ):
+            raise ValueError(
+                "JWT_SECRET must be set to a non-default value outside development."
+            )
+        return self
 
     # Web
     # From .env, list values must use JSON form, e.g. CORS_ORIGINS=["http://localhost:3000"]
