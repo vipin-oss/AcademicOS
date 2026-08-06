@@ -10,6 +10,13 @@ from app.application.use_cases.auth.helpers import find_user
 from app.application.validators.auth import assert_valid_login_input
 from app.domain.repositories.object_repository import ObjectRepository
 
+# A precomputed bcrypt hash used only as a timing sink: when the username is
+# unknown (or the account has no credential), the login still runs one
+# verify_password against this hash so the response time matches a real
+# credential check — closing the username-enumeration timing side channel.
+# It is not a credential; any bcrypt hash of any string would do.
+_DUMMY_PASSWORD_HASH = "$2b$12$7GVvn62jJA29gqVJNUbsDuAyAaMd2PBpeLd21I9hXIizbBbPKK.Ee"
+
 
 class LoginUserUseCase:
     def __init__(
@@ -30,11 +37,17 @@ class LoginUserUseCase:
         stored_hash = (
             user.metadata.get_value(KEY_PASSWORD_HASH) if user is not None else None
         )
+        if user is None or stored_hash is None:
+            # Equalise the response time against the real bcrypt path so an
+            # unknown username is not distinguishable from a wrong password
+            # by timing (username enumeration).
+            self._password_hasher.verify_password(
+                command.input.password, _DUMMY_PASSWORD_HASH
+            )
+            raise AuthenticationError("Invalid username or password.")
         # One message for both failure modes: never reveal whether the
         # username exists (account enumeration protection).
-        if user is None or stored_hash is None or not self._password_hasher.verify_password(
-            command.input.password, stored_hash
-        ):
+        if not self._password_hasher.verify_password(command.input.password, stored_hash):
             raise AuthenticationError("Invalid username or password.")
 
         return AuthTokensOutput(
