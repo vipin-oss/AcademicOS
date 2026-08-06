@@ -78,6 +78,21 @@ class ObjectArchived(DomainEvent):
 
 
 @dataclass(frozen=True)
+class ObjectDeleted(DomainEvent):
+    """An Object was removed from storage (Sprint-5 M1).
+
+    Emitted by the persistence adapter inside the delete transaction — the
+    repository is the single delete path, so every deletion becomes a
+    durable, replayable outbox event. Index consumers (search) remove the
+    projection when this event is drained; the authoritative row is already
+    gone, so nothing else needs the payload beyond identity.
+    """
+
+    object_type: str | None = None
+    title: str | None = None
+
+
+@dataclass(frozen=True)
 class ObjectSuperseded(DomainEvent):
     by_object_id: ObjectId | None = None
     actor: str | None = None
