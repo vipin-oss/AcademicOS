@@ -146,10 +146,13 @@ def _seed(harness, *objects) -> None:
         )
 
 
-def _ask(client, question: str, conversation_id: str | None = None) -> dict:
+def _ask(client, question: str, conversation_id: str | None = None,
+         model_id: str | None = None) -> dict:
     body = {"question": question}
     if conversation_id:
         body["conversation_id"] = conversation_id
+    if model_id:
+        body["model_id"] = model_id
     res = client.post(f"{API}/ask", json=body)
     assert res.status_code == 201, res.text
     return res.json()
@@ -495,3 +498,67 @@ def test_review_duplicate_actions_and_unknown_404(harness):
         assert client.get(f"{API}/review/pending").status_code == 200
     finally:
         config_mod.settings.assistant_review_enabled = original
+
+
+def test_model_selection_over_http_pin_override_invalid(harness):
+    """The registry-driven selection over HTTP: default model used and
+    pinned; an override switches the model and re-pins; an unknown model
+    id returns 422 (sync and stream)."""
+    import app.core.config as config_mod
+
+    client, session, _, _ = harness
+    repo = SQLAlchemyObjectRepository(session)
+    from app.domain.entities.object import UniversalObject as U
+    from app.domain.value_objects.enums import ObjectType as OT
+
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed(harness, doc)
+
+    # Configure a two-model registry.
+    original_json = config_mod.settings.assistant_models_json
+    original_default = config_mod.settings.assistant_default_model
+    config_mod.settings.assistant_models_json = (
+        '[{"id": "main", "base_url": "http://llm.example/v1", "model": "model-main"},'
+        ' {"id": "alt", "base_url": "http://llm.example/v1", "model": "model-alt"}]'
+    )
+    config_mod.settings.assistant_default_model = "main"
+    try:
+        captured = {"models": []}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["models"].append(json.loads(request.content)["model"])
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        _install_llm_chain(handler, repo)
+
+        # 1. An explicit override selects the model and pins the conversation.
+        out = _ask(client, "find quantum", model_id="main")
+        conv_id = out["conversation"]["id"]
+        assert captured["models"] == ["model-main"]
+        stored = repo.get_by_id(ObjectId(conv_id))
+        assert stored.metadata.get_value("assistant.model_id") == "main"
+
+        # 2. Follow-up reuses the pin (same model, no override needed).
+        captured["models"].clear()
+        _ask(client, "find quantum", conversation_id=conv_id)
+        assert captured["models"] == ["model-main"]
+
+        # 3. Override switches the model and re-pins.
+        captured["models"].clear()
+        _ask(client, "find quantum", conversation_id=conv_id, model_id="alt")
+        assert captured["models"] == ["model-alt"]
+        stored = repo.get_by_id(ObjectId(conv_id))
+        assert stored.metadata.get_value("assistant.model_id") == "alt"
+
+        # 4. Unknown model -> 422 (sync and stream).
+        res = client.post(f"{API}/ask", json={
+            "question": "find quantum", "conversation_id": conv_id, "model_id": "ghost",
+        })
+        assert res.status_code == 422
+        res = client.post(f"{API}/ask/stream", json={
+            "question": "find quantum", "conversation_id": conv_id, "model_id": "ghost",
+        })
+        assert res.status_code == 422
+    finally:
+        config_mod.settings.assistant_models_json = original_json
+        config_mod.settings.assistant_default_model = original_default
