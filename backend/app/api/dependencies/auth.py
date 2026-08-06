@@ -52,8 +52,13 @@ def get_current_user(
         # A refresh token must never satisfy a protected endpoint.
         raise UnauthorizedError("Invalid or expired token")
 
+    subject = claims.get("sub")
+    if subject is None:
+        # A token signed without a subject is malformed — never a 500.
+        raise UnauthorizedError("Invalid or expired token")
+
     repo = SQLAlchemyObjectRepository(db)
-    user = repo.get_by_id(ObjectId(claims["sub"]))
+    user = repo.get_by_id(ObjectId(subject))
     if user is None or user.object_type is not ObjectType.USER:
         # The account no longer exists — the token is dead.
         raise UnauthorizedError("Invalid or expired token")

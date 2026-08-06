@@ -28,7 +28,12 @@ class RefreshTokensUseCase:
         if claims.get("type") != "refresh":
             raise AuthenticationError("Invalid or expired refresh token.")
 
-        user = self._repository.get_by_id(ObjectId(claims["sub"]))
+        subject = claims.get("sub")
+        if subject is None:
+            # A token signed without a subject is malformed — never a 500.
+            raise AuthenticationError("Invalid or expired refresh token.")
+
+        user = self._repository.get_by_id(ObjectId(subject))
         if user is None or user.object_type is not ObjectType.USER:
             # The account no longer exists — the refresh token is dead.
             raise AuthenticationError("Invalid or expired refresh token.")
