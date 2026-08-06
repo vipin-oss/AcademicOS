@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     assistant_llm_api_key: str = ""
     assistant_llm_timeout_seconds: float = 30.0
 
+    # Assistant human-review gate (Sprint-6 M5): when enabled, fresh
+    # assistant answers are stored as PENDING and only become visible after
+    # a human approves them via /assistant/review/*.
+    assistant_review_enabled: bool = False
+
     @model_validator(mode="after")
     def _reject_insecure_default_secret(self) -> Settings:
         # Sprint-1 auth foundation: the default JWT secret must never run in

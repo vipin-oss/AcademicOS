@@ -440,8 +440,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         )
         return int(self._session.execute(stmt).scalar() or 0)
 
-    @staticmethod
     def _apply_object_filters(
+        self,
         stmt,
         *,
         object_type: ObjectType | None,
@@ -457,11 +457,36 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             value = status.value if isinstance(status, ObjectStatus) else status
             stmt = stmt.where(ObjectModel.status == value)
         if metadata_key is not None:
+            stmt = self._apply_metadata_filter(
+                stmt, metadata_key=metadata_key, metadata_value=metadata_value
+            )
+        return stmt
+
+    def _apply_metadata_filter(self, stmt, *, metadata_key: str, metadata_value: str | None):
+        """Metadata containment that works on BOTH engines.
+
+        PostgreSQL uses native JSONB containment; SQLite (which lacks it)
+        uses json_each over the metadata array. This is what makes
+        ``find_by_metadata`` correct on the test/CI database — the review
+        queue (S6 M5) is its first consumer.
+        """
+        if self._session.get_bind().dialect.name == "postgresql":
             clause: dict = {"key": metadata_key}
             if metadata_value is not None:
                 clause["value"] = metadata_value
-            stmt = stmt.where(ObjectModel.metadata_json.contains([clause]))
-        return stmt
+            return stmt.where(ObjectModel.metadata_json.contains([clause]))
+        from sqlalchemy import text
+
+        where = (
+            "EXISTS (SELECT 1 FROM json_each(metadata_json) "
+            "WHERE json_each.value ->> 'key' = :mk"
+        )
+        params: dict = {"mk": metadata_key}
+        if metadata_value is not None:
+            where += " AND json_each.value ->> 'value' = :mv"
+            params["mv"] = metadata_value
+        where += ")"
+        return stmt.where(text(where).bindparams(**params))
 
     def _to_domain_many(self, models: Sequence[ObjectModel]) -> list[UniversalObject]:
         """Bulk load: one edge query for all objects instead of N+1."""

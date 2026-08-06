@@ -118,10 +118,16 @@ class AssistantReviewQueue:
             if message is None:
                 continue
             seq, payload = message
+            # The question is the preceding user message (the one this
+            # answer responds to).
+            user_messages = [
+                pair for pair in read_messages(obj) if pair[1].get("role") == "user"
+            ]
+            question = str(user_messages[-1][1].get("content") or "") if user_messages else ""
             items.append(
                 ReviewQueueItem(
                     conversation=conversation_output(obj),
-                    question=str(payload.get("content") or ""),
+                    question=question,
                     answer=str(payload.get("content") or ""),
                     message_seq=seq,
                 )

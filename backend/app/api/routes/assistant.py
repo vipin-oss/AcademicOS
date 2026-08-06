@@ -26,6 +26,7 @@ Surface:
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -62,6 +63,7 @@ from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
 from app.application.services.assistant_retrieval import AssistantRetrievalService
+from app.application.services.assistant_review import AssistantReviewQueue
 from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.create_conversation import CreateConversationUseCase
@@ -223,6 +225,12 @@ def _ask_use_case(
         prompt_builder=AssistantPromptBuilder(),
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        # Human review gate (S6 M5): when enabled, every fresh answer is
+        # stored PENDING and only becomes visible after approval. Sync and
+        # stream share this wiring through the one construction site.
+        review_queue=(
+            AssistantReviewQueue(repo) if settings.assistant_review_enabled else None
+        ),
     )
 
 
@@ -371,3 +379,56 @@ def delete_conversation(
         raise _unprocessable(exc) from exc
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
+
+
+# ---------------------------------------------------------------------------
+# Review queue (Sprint-6 M5) — human approval before publication
+# ---------------------------------------------------------------------------
+@router.get("/review/pending")
+def review_pending(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+):
+    """Every conversation awaiting human review, oldest first. The queue is
+    a projection over the conversation objects (no separate storage)."""
+    items = AssistantReviewQueue(repo).pending()
+    return {
+        "items": [
+            {
+                "conversation": asdict(item.conversation),
+                "question": item.question,
+                "answer": item.answer,
+                "message_seq": item.message_seq,
+            }
+            for item in items
+        ]
+    }
+
+
+class ReviewActionBody(StrictBody):
+    conversation_id: str
+
+
+@router.post("/review/approve")
+def review_approve(
+    body: ReviewActionBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+):
+    """Approve a conversation's latest answer: it becomes visible."""
+    try:
+        out = AssistantReviewQueue(repo).approve(body.conversation_id)
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return {"conversation": asdict(out)}
+
+
+@router.post("/review/reject")
+def review_reject(
+    body: ReviewActionBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+):
+    """Reject a conversation's latest answer: it stays hidden."""
+    try:
+        out = AssistantReviewQueue(repo).reject(body.conversation_id)
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return {"conversation": asdict(out)}
