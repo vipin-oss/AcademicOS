@@ -15,6 +15,7 @@ from app.application.dtos.assistant import (
     DeleteConversationInput,
     UpdateConversationInput,
 )
+from app.application.services.assistant_eval import EvalRun, RunComparison
 
 DEFAULT_ACTOR = "faculty:ui"  # the shared web-client actor convention
 
@@ -53,3 +54,19 @@ def to_delete_input(conversation_id: str) -> DeleteConversationInput:
 
 def output_dict(out: Any) -> dict[str, Any]:
     return asdict(out) if is_dataclass(out) else out
+
+
+def eval_run_dict(run: EvalRun) -> dict[str, Any]:
+    """The wire shape of one evaluation run (Sprint-7 M4): identity, model
+    id + deployed model version, prompt id + version, outcome, per-case
+    results, and the run timestamp."""
+    return asdict(run)
+
+
+def run_comparison_dict(comparison: RunComparison) -> dict[str, Any]:
+    """The wire shape of a run comparison (Sprint-7 M4): the regression/
+    fix/stable summaries plus the derived ``has_regressions`` flag (a
+    property, so ``asdict`` alone does not carry it)."""
+    out = asdict(comparison)
+    out["has_regressions"] = comparison.has_regressions
+    return out

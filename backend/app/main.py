@@ -13,6 +13,7 @@ from app.api.routes.assistant import router as assistant_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.committees import router as committees_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.eval_history import router as eval_history_router
 from app.api.routes.events import router as events_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(productivity_router, prefix=settings.api_v1_prefix)
     app.include_router(settings_router, prefix=settings.api_v1_prefix)
     app.include_router(assistant_router, prefix=settings.api_v1_prefix)
+    app.include_router(eval_history_router, prefix=settings.api_v1_prefix)
     app.include_router(intake_router, prefix=settings.api_v1_prefix)
     app.include_router(search_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
