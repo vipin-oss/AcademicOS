@@ -184,6 +184,7 @@ class AskQuestionInput:
     question: str
     conversation_id: str | None = None
     asked_by: str = "system"
+    model_id: str | None = None  # S7 M2: per-request model override
 
 
 @dataclass
@@ -391,6 +392,9 @@ class AssistantCitation:
 # as L1/SYSTEM metadata; the LAST assistant answer is visible only after
 # approval. Three states, nothing more.
 KEY_REVIEW_STATUS = "assistant.review_status"
+# Sprint-7 M2: the model this conversation uses (registry model id). Stored
+# as L1/SYSTEM metadata like assistant.pinned.
+KEY_MODEL_ID = "assistant.model_id"
 
 REVIEW_PENDING = "pending"
 REVIEW_APPROVED = "approved"

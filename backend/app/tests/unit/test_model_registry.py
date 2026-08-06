@@ -14,6 +14,7 @@ from app.application.services.model_registry import (
     ModelRegistry,
     ModelSpec,
     registry_from_settings,
+    resolve_model,
 )
 from app.infrastructure.assistant.provider_factory import build_provider
 
@@ -148,3 +149,34 @@ def test_registry_from_settings_with_explicit_rules_entry():
     assert registry.get("rules").provider_kind == PROVIDER_KIND_RULES
     assert registry.default().id == "main"
     assert len(registry.all()) == 2  # main + rules (not duplicated)
+
+
+def _registry_with(models: dict[str, str], default: str = "main") -> ModelRegistry:
+    registry = ModelRegistry(default_id=default)
+    for mid, base in models.items():
+        registry.register(
+            ModelSpec(id=mid, model=f"model-{mid}", base_url=base or None)
+            if base
+            else ModelSpec(id=mid, model=f"model-{mid}", provider_kind=PROVIDER_KIND_RULES)
+        )
+    return registry
+
+
+def test_resolve_model_precedence():
+    registry = _registry_with({"main": "http://a/v1", "alt": "http://b/v1"})
+    # Default when nothing pinned/requested.
+    assert resolve_model(registry).id == "main"
+    # Conversation pin wins over the default.
+    assert resolve_model(registry, conversation_model_id="alt").id == "alt"
+    # Request override wins over both.
+    assert resolve_model(
+        registry, conversation_model_id="alt", requested_model_id="main"
+    ).id == "main"
+
+
+def test_resolve_model_unknown_ids_raise():
+    registry = _registry_with({"main": "http://a/v1"})
+    with pytest.raises(KeyError, match="Unknown model"):
+        resolve_model(registry, requested_model_id="ghost")
+    with pytest.raises(KeyError, match="Unknown model"):
+        resolve_model(registry, conversation_model_id="ghost")

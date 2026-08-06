@@ -171,3 +171,22 @@ def registry_from_settings(settings) -> ModelRegistry:
                 )
             )
     return registry
+
+
+def resolve_model(
+    registry: ModelRegistry,
+    *,
+    conversation_model_id: str | None = None,
+    requested_model_id: str | None = None,
+) -> ModelSpec:
+    """Deterministic model selection (Sprint-7 M2).
+
+    Precedence: explicit request override > conversation pin > registry
+    default. Unknown ids raise ``KeyError`` (the caller maps it to a 422).
+    This is the single selection rule — sync and streaming both call it.
+    """
+    if requested_model_id:
+        return registry.get(requested_model_id)
+    if conversation_model_id:
+        return registry.get(conversation_model_id)
+    return registry.default()
