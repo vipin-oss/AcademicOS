@@ -133,3 +133,18 @@ def test_build_provider_llm_kind_is_fallback_chain():
     provider = build_provider(spec, repository=None)  # type: ignore[arg-type]
     assert isinstance(provider, FallbackAssistantProvider)
     assert provider.name == "llm-v1+rules-v1"
+
+
+def test_registry_from_settings_with_explicit_rules_entry():
+    """A configuration declaring its own 'rules' entry must not collide
+    with the implicit rules provider (regression: duplicate-id 500)."""
+    settings = _Settings()
+    settings.assistant_models_json = (
+        '[{"id": "main", "base_url": "http://a/v1", "model": "m1"},'
+        ' {"id": "rules", "provider_kind": "rules", "model": "rules-v1"}]'
+    )
+    settings.assistant_default_model = "main"
+    registry = registry_from_settings(settings)
+    assert registry.get("rules").provider_kind == PROVIDER_KIND_RULES
+    assert registry.default().id == "main"
+    assert len(registry.all()) == 2  # main + rules (not duplicated)

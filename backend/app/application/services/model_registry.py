@@ -118,15 +118,8 @@ def registry_from_settings(settings) -> ModelRegistry:
     import json
 
     registry = ModelRegistry(default_id=settings.assistant_default_model)
-    # The rules provider is always available.
-    registry.register(
-        ModelSpec(
-            id="rules",
-            model="rules-v1",
-            provider_kind=PROVIDER_KIND_RULES,
-        )
-    )
     raw = (settings.assistant_models_json or "").strip()
+    configured_ids: set[str] = set()
     if raw:
         try:
             specs = json.loads(raw)
@@ -137,17 +130,27 @@ def registry_from_settings(settings) -> ModelRegistry:
         for entry in specs:
             if not isinstance(entry, dict):
                 raise ValueError("Each model spec must be an object.")
-            registry.register(
-                ModelSpec(
-                    id=str(entry["id"]),
-                    base_url=entry.get("base_url"),
-                    model=str(entry["model"]),
-                    api_key=str(entry.get("api_key") or ""),
-                    timeout_seconds=float(entry.get("timeout_seconds") or 30.0),
-                    provider_kind=str(entry.get("provider_kind") or PROVIDER_KIND_LLM),
-                )
+            spec = ModelSpec(
+                id=str(entry["id"]),
+                base_url=entry.get("base_url"),
+                model=str(entry["model"]),
+                api_key=str(entry.get("api_key") or ""),
+                timeout_seconds=float(entry.get("timeout_seconds") or 30.0),
+                provider_kind=str(entry.get("provider_kind") or PROVIDER_KIND_LLM),
             )
-    else:
+            registry.register(spec)
+            configured_ids.add(spec.id)
+    # The rules provider is always available — unless the configuration
+    # declares its own rules entry (which then wins).
+    if "rules" not in configured_ids:
+        registry.register(
+            ModelSpec(
+                id="rules",
+                model="rules-v1",
+                provider_kind=PROVIDER_KIND_RULES,
+            )
+        )
+    if not raw:
         # Legacy single-model fallback (S6 M2 settings).
         if settings.assistant_llm_base_url:
             registry.register(
