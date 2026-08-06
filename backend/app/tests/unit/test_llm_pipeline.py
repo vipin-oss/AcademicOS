@@ -395,3 +395,211 @@ def test_deleted_object_citation_dropped_before_attach(db, repo):
     repo.delete(doc.id)
     out = _ask(use_case, "find doomed")
     assert out.answer.citations == []
+
+
+# ------------------------------------------------------------- streaming (M4)
+
+
+def _sse_content(*chunks: str) -> bytes:
+    import json as _json
+
+    lines = [
+        f"data: {_json.dumps({'choices': [{'delta': {'content': c}}]})}" for c in chunks
+    ]
+    lines.append("data: [DONE]")
+    return ("\n\n".join(lines) + "\n\n").encode()
+
+
+def test_stream_yields_tokens_then_verified_completion(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(200, content=_sse_content("The", " answer", "."))
+    ))
+
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+
+    tokens = [e for e in events if e["event"] == "token"]
+    assert [t["data"]["delta"] for t in tokens] == ["The", " answer", "."]
+    completions = [e for e in events if e["event"] == "completion"]
+    assert len(completions) == 1
+    data = completions[0]["data"]
+    assert data["answer"]["summary"] == "The answer."
+    assert data["answer"]["intent"] == "llm"
+    # Citations verified + evidence cards present.
+    assert len(data["answer"]["citations"]) == 1
+    assert data["answer"]["citations"][0]["object_id"] == str(doc.id)
+    assert data["answer"]["cards"]
+    assert data["conversation"]["message_count"] == 2
+
+
+def test_stream_persists_only_final_verified_answer(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(200, content=_sse_content("Final", " answer"))
+    ))
+
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+    completion = [e for e in events if e["event"] == "completion"][0]
+    conv_id = completion["data"]["conversation"]["id"]
+
+    # The stored assistant message matches the streamed answer exactly —
+    # no partial tokens were persisted, only the final verified text.
+    messages = read_messages(repo.get_by_id(ObjectId(conv_id)))
+    assistant = [p for _s, p in messages if p["role"] == "assistant"][0]
+    assert assistant["content"] == "Final answer"
+    assert assistant["answer"]["summary"] == "Final answer"
+    assert len(messages) == 2
+
+
+def test_stream_cancellation_persists_nothing(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(200, content=_sse_content("a", "b", "c"))
+    ))
+
+    gen = use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    )
+    first = next(gen)
+    assert first["event"] == "token"
+    gen.close()  # client disconnect mid-stream
+
+    # Nothing was persisted: no messages were appended anywhere.
+    conversations = repo.find_by_type(ObjectType.AI_CONVERSATION)
+    for conv in conversations:
+        assert read_messages(conv) == []
+
+
+def test_stream_error_event_persists_nothing(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    # A bare LLM provider with NO fallback chain: the error surfaces.
+    client = httpx.Client(transport=httpx.MockTransport(failing_handler))
+    from app.infrastructure.llm.llm_provider import LlmAssistantProvider
+
+    bare = LlmAssistantProvider(
+        client, model="m", base_url="http://llm.example",
+        retry_attempts=1, retry_backoff_seconds=0,
+    )
+    use_case = _wired_with_citations(db, repo, vectors, bare)
+
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+    assert events[-1]["event"] == "error"
+    assert "unreachable" in events[-1]["data"]["message"]
+    conversations = repo.find_by_type(ObjectType.AI_CONVERSATION)
+    for conv in conversations:
+        assert read_messages(conv) == []  # no partial persistence
+
+
+def test_stream_chain_falls_back_to_rules_completion(db, repo):
+    """Provider failure mid-stream -> the chain yields a deterministic
+    rules completion (no error event, conversation persisted)."""
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+
+    class BoomStream:
+        name = "boom"
+
+        def stream(self, question, asked_by, *, context=None, prompt=None):
+            yield {"type": "token", "delta": "partial"}
+            raise RuntimeError("connection lost")
+
+    class Fallback:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            from app.application.dtos.assistant import AssistantAnswerOutput
+
+            return AssistantAnswerOutput(
+                intent="knowledge_search", intent_label="Knowledge search",
+                question=question, summary="deterministic fallback", sources=["rules"],
+            )
+
+    from app.application.assistant.providers import FallbackAssistantProvider
+
+    use_case = _wired_with_citations(
+        db, repo, vectors, FallbackAssistantProvider(BoomStream(), Fallback())
+    )
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+    assert [e["event"] for e in events] == ["token", "completion"]
+    assert events[0]["data"]["delta"] == "partial"
+    assert events[1]["data"]["answer"]["summary"] == "deterministic fallback"
+    assert events[1]["data"]["conversation"]["message_count"] == 2  # persisted
+
+
+def test_stream_rules_provider_single_token_completion(db, repo):
+    """Without a stream capability the pipeline yields one token carrying
+    the whole deterministic answer, then the completion."""
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    from app.application.assistant.providers import RuleBasedAssistantProvider
+
+    rules = RuleBasedAssistantProvider(repo, permission_evaluator=ObjectPermissionEvaluator())
+    use_case = _wired_with_citations(db, repo, vectors, rules)
+
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+    assert [e["event"] for e in events] == ["token", "completion"]
+    assert events[0]["data"]["delta"] == events[1]["data"]["answer"]["summary"]
+    assert events[1]["data"]["answer"]["intent"] == "knowledge_search"
+    assert events[1]["data"]["conversation"]["message_count"] == 2
+
+
+def test_stream_follow_up_on_existing_conversation(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    use_case = _wired_with_citations(db, repo, vectors, _llm_chain(
+        repo, lambda request: httpx.Response(200, content=_sse_content("First", " answer"))
+    ))
+
+    first = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001"
+        ))
+    ))
+    conv_id = [e for e in first if e["event"] == "completion"][0]["data"]["conversation"]["id"]
+
+    second = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="tell me more", asked_by="obj:user:alice-0001", conversation_id=conv_id
+        ))
+    ))
+    completion = [e for e in second if e["event"] == "completion"][0]["data"]
+    assert completion["conversation"]["id"] == conv_id
+    assert completion["conversation"]["message_count"] == 4  # follow-up persisted
+    assert completion["answer"]["summary"] == "First answer"

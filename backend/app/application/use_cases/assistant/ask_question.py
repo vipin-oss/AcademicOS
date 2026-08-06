@@ -26,6 +26,8 @@ context) — backward compatible and graceful.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.prompt_builder import AssistantPromptBuilder
@@ -70,22 +72,84 @@ class AskQuestionUseCase:
         self._verifier = verifier
 
     def execute(self, command: AskQuestionCommand) -> dto.AskOutput:
+        """Normal mode — the synchronous pipeline (Sprint-6 M1-M3), unchanged."""
         assert_valid_ask_input(command.input)
-        question = command.input.question.strip()
+        obj, question, asked_by = self._prepare(command)
+        _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
+        answer = self._provider.answer(question, asked_by, **kwargs)
+        return self._finalize(obj, question, answer, citations, asked_by)
+
+    def stream(self, command: AskQuestionCommand):
+        """Stream mode — the SAME orchestration path, yielding SSE events.
+
+        Yields ``{"event": "token", "data": {"delta": ...}}`` for every
+        partial chunk, then exactly one ``{"event": "completion", ...}``
+        whose data mirrors the synchronous ``AskOutput`` shape (conversation,
+        user_message, assistant_message, answer). Citation verification and
+        conversation persistence happen BEFORE the completion is yielded, so
+        partial tokens are never stored. On failure an
+        ``{"event": "error", "data": {"message": ...}}`` is yielded and
+        nothing is persisted. When the provider cannot stream, a single
+        token event carries the whole deterministic answer (additive).
+        """
+        assert_valid_ask_input(command.input)
+        obj, question, asked_by = self._prepare(command)
+        _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
+        stream_fn = getattr(self._provider, "stream", None)
+        if stream_fn is None:
+            # Provider cannot stream: a deterministic single completion.
+            answer = self._provider.answer(question, asked_by, **kwargs)
+            yield {"event": "token", "data": {"delta": answer.summary}}
+        else:
+            try:
+                for event in stream_fn(question, asked_by, **kwargs):
+                    if event["type"] == "token":
+                        yield {"event": "token", "data": {"delta": event["delta"]}}
+                    elif event["type"] == "complete":
+                        answer = event["answer"]
+            except Exception as exc:  # noqa: BLE001 — stream failures surface as an error event
+                yield {"event": "error", "data": {"message": str(exc)}}
+                return
+        yield self._completion_event(obj, question, answer, citations, asked_by)
+
+    # ------------------------------------------------------------- shared
+    def _prepare(self, command: AskQuestionCommand):
+        """Step 2 — load or create the conversation aggregate."""
         if command.input.conversation_id is not None:
             obj = get_conversation_object(self._repository, command.input.conversation_id)
         else:
             obj = create_conversation_object(
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
-        context = self._build_context(obj, question, command.input.asked_by)
+        return obj, command.input.question.strip(), command.input.asked_by
+
+    def _call_kwargs(
+        self, obj: UniversalObject, question: str, asked_by: str
+    ) -> tuple[None | dto.AssistantContext, tuple[dto.AssistantCitation, ...], dict]:
+        """Steps 3-7 — retrieve, merge, build context + citations + prompt."""
+        context = self._build_context(obj, question, asked_by)
         citations = self._build_citations(context)
         prompt = self._build_prompt(question, context, citations)
         kwargs = {"context": context} if context is not None else {}
         if prompt is not None:
             kwargs["prompt"] = prompt
-        answer = self._provider.answer(question, command.input.asked_by, **kwargs)
-        self._attach_verified_citations(answer, citations, command.input.asked_by)
+        return context, citations, kwargs
+
+    def _finalize(
+        self,
+        obj: UniversalObject,
+        question: str,
+        answer: dto.AssistantAnswerOutput,
+        citations: tuple[dto.AssistantCitation, ...],
+        asked_by: str,
+    ) -> dto.AskOutput:
+        """Steps 9-10 — verify citations, persist, return the DTO.
+
+        Citation verification ALWAYS happens before persistence (S6 M3);
+        persistence happens only for the final, verified answer — partial
+        tokens are never stored.
+        """
+        self._attach_verified_citations(answer, citations, asked_by)
         auto_title_if_needed(obj, question)
         user_seq, user_payload = append_message(obj, "user", question, None)
         assistant_seq, assistant_payload = append_message(
@@ -98,6 +162,27 @@ class AskQuestionUseCase:
             assistant_message=message_output(assistant_seq, assistant_payload),
             answer=answer,
         )
+
+    def _completion_event(
+        self,
+        obj: UniversalObject,
+        question: str,
+        answer: dto.AssistantAnswerOutput,
+        citations: tuple[dto.AssistantCitation, ...],
+        asked_by: str,
+    ) -> dict:
+        """The terminal SSE event: verified answer + persisted conversation
+        in the same shape the synchronous endpoint returns."""
+        out = self._finalize(obj, question, answer, citations, asked_by)
+        return {
+            "event": "completion",
+            "data": {
+                "conversation": asdict(out.conversation),
+                "user_message": asdict(out.user_message),
+                "assistant_message": asdict(out.assistant_message),
+                "answer": asdict(out.answer),
+            },
+        }
 
     # ------------------------------------------------------------- pipeline
     def _build_prompt(
