@@ -643,7 +643,7 @@ def add_milestone(
             AddMilestoneCommand(
                 project_id=ObjectId.parse(project_id),
                 input=to_milestone_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
-                actor=req.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
@@ -665,7 +665,7 @@ def record_progress_update(
             RecordProgressUpdateCommand(
                 project_id=ObjectId.parse(project_id),
                 input=to_progress_update_input(body={**req.model_dump(), "updated_by": str(user.id)}),
-                actor=req.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
@@ -681,13 +681,14 @@ def update_milestone(
     milestone_id: str,
     req: UpdateMilestoneRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> MilestoneResponseModel:
     try:
         out = UpdateMilestoneUseCase(repo).execute(
             UpdateMilestoneCommand(
                 milestone_id=ObjectId.parse(milestone_id),
                 input=to_update_milestone_input(
-                    body=req.model_dump(exclude_unset=True), actor=req.uploaded_by
+                    body=req.model_dump(exclude_unset=True), actor=str(user.id)
                 ),
             )
         )
@@ -834,7 +835,7 @@ def add_installment(
             AddInstallmentCommand(
                 grant_id=ObjectId.parse(grant_id),
                 input=to_installment_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
-                actor=req.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
@@ -860,7 +861,7 @@ def record_expenditure(
             RecordExpenditureCommand(
                 grant_id=ObjectId.parse(grant_id),
                 input=to_expenditure_input(body={**req.model_dump(), "uploaded_by": str(user.id)}),
-                actor=req.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:

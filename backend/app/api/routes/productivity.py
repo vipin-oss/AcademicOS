@@ -308,9 +308,10 @@ def productivity_search(
 def refresh_notifications(
     request: RefreshRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = RefreshNotificationsUseCase(repo).execute(actor=request.uploaded_by)
+        out = RefreshNotificationsUseCase(repo).execute(actor=str(user.id))
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
     return output_dict(out)

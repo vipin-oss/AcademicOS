@@ -230,13 +230,14 @@ def update_document(
     req: UpdateDocumentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
     try:
         out = UpdateDocumentUseCase(repo).execute(
             UpdateDocumentCommand(
                 object_id=ObjectId.parse(document_id),
                 input=to_update_input(
-                    actor=req.uploaded_by,
+                    actor=str(user.id),
                     title=req.title,
                     document_type=req.document_type,
                     description=req.description,

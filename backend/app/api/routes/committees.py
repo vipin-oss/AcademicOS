@@ -375,6 +375,7 @@ def add_meeting(
     committee_id: str,
     request: CreateMeetingRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = AddMeetingUseCase(repo).execute(
@@ -383,7 +384,7 @@ def add_meeting(
                 input=to_create_meeting_input(
                     committee_id=committee_id, body=request.model_dump()
                 ),
-                actor=request.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
@@ -450,6 +451,7 @@ def add_action_item(
     meeting_id: str,
     request: CreateActionItemRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = AddActionItemUseCase(repo).execute(
@@ -458,7 +460,7 @@ def add_action_item(
                 input=to_create_action_item_input(
                     meeting_id=meeting_id, body=request.model_dump()
                 ),
-                actor=request.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
