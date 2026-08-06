@@ -176,6 +176,54 @@ def test_fallback_chain_answers_on_primary_failure():
     assert out.summary == "deterministic fallback"  # assistant stays operational
 
 
+def test_chain_falls_back_on_5xx_after_retries():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, json={})
+
+    class Fallback:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            return AssistantAnswerOutput(
+                intent="knowledge_search", intent_label="Knowledge search",
+                question=question, summary="fallback", sources=["rules"],
+            )
+
+    chain = FallbackAssistantProvider(
+        _provider(handler, retry_attempts=2, retry_backoff_seconds=0), Fallback()
+    )
+    out = chain.answer("q", "u:1", prompt=_prompt())
+    assert calls["n"] == 2  # bounded retries were spent
+    assert out.summary == "fallback"  # then the deterministic fallback answered
+
+
+def test_chain_falls_back_on_timeout():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    class Fallback:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            return AssistantAnswerOutput(
+                intent="knowledge_search", intent_label="Knowledge search",
+                question=question, summary="fallback", sources=["rules"],
+            )
+
+    chain = FallbackAssistantProvider(
+        _provider(handler, retry_attempts=2, retry_backoff_seconds=0), Fallback()
+    )
+    out = chain.answer("q", "u:1", prompt=_prompt())
+    assert calls["n"] == 2
+    assert out.summary == "fallback"  # timeout never crashes the assistant
+
+
 def test_fallback_chain_passes_through_success():
     calls = {"n": 0}
 
