@@ -123,10 +123,14 @@ class SearchIndexApplier:
 
     def _documents_from_version_history(self) -> list[SearchDocument]:
         """Latest version snapshot per object -> search document."""
-        latest = select(
-            ObjectVersionModel.object_id,
-            func.max(ObjectVersionModel.version).label("max_version"),
-        ).group_by(ObjectVersionModel.object_id)
+        latest = (
+            select(
+                ObjectVersionModel.object_id,
+                func.max(ObjectVersionModel.version).label("max_version"),
+            )
+            .group_by(ObjectVersionModel.object_id)
+            .subquery()
+        )
         rows = self._session.execute(
             select(ObjectVersionModel)
             .join(

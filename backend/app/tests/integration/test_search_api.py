@@ -39,6 +39,7 @@ from app.domain.value_objects.enums import (
 from app.domain.value_objects.metadata import Metadata, MetadataEntry
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.outbox_model import OutboxEventModel
 from app.infrastructure.db.models.search_document_model import SearchDocumentModel
 from app.infrastructure.db.session import get_db
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -128,6 +129,12 @@ def _index_rows(session) -> list[SearchDocumentModel]:
     ).scalars().all()
 
 
+def _outbox_rows(session) -> list[OutboxEventModel]:
+    return session.execute(
+        select(OutboxEventModel).order_by(OutboxEventModel.id)
+    ).scalars().all()
+
+
 # -------------------------------------------------------------------- auth
 
 
@@ -202,6 +209,14 @@ def test_commit_to_searchable_and_delete_to_unsearchable(harness):
     # item's two MetadataChanged marks (its commit transition is durable
     # too — every write path feeds the relay).
     assert _sync(client) == {"applied": 4}
+    # No duplicate persisted rows anywhere: event_id is the unique
+    # idempotency key, and the document was created exactly once.
+    rows = _outbox_rows(session)
+    assert len({r.event_id for r in rows}) == len(rows)
+    doc_created = [
+        r for r in rows if r.aggregate_id == doc_id and r.event_type == "ObjectCreated"
+    ]
+    assert len(doc_created) == 1
     # The item (title "seed.pdf") is now searchable alongside the document.
     hits = _search(client, title="seed.pdf")
     assert sorted(h["object_id"] for h in hits) == sorted([str(item.id), doc_id])
@@ -249,6 +264,61 @@ def test_replay_sync_is_idempotent(harness):
     assert _sync(client) == {"applied": 0}
     assert _search(client, text="stable") == first
     assert len(_index_rows(session)) == 1
+
+
+# --------------------------------------------- event deduplication regressions
+
+
+def test_assistant_flow_never_duplicates_events(harness):
+    """The assistant ask flow saves its conversation more than once; the
+    repository-level event_id dedup must persist each event exactly once
+    and the conversation must become searchable through the relay."""
+    client, session, _ = harness
+    res = client.post(
+        f"{API}/assistant/ask", json={"question": "What should I do today?"}
+    )
+    assert res.status_code == 201, res.text
+
+    rows = _outbox_rows(session)
+    assert len({r.event_id for r in rows}) == len(rows)  # no duplicates at all
+    created = [
+        r for r in rows
+        if r.event_type == "ObjectCreated" and r.aggregate_id.startswith("obj:ai_conversation:")
+    ]
+    assert len(created) == 1  # the conversation was created exactly once
+
+    _sync(client)
+    hits = _search(client, text="What should I do today?")
+    assert any(h["object_id"] == created[0].aggregate_id for h in hits)
+    # Re-syncing never adds rows and never changes the index.
+    assert _sync(client) == {"applied": 0}
+    assert len(_outbox_rows(session)) == len(rows)
+
+
+def test_generic_crud_events_are_durable_and_unique(harness):
+    """Generic object CRUD (POST/PUT /objects) feeds the relay exactly once
+    per mutation — the index stays consistent through the outbox."""
+    client, session, _ = harness
+    doc_id = _create_object(client, title="CRUD Doc")
+    rows = _outbox_rows(session)
+    assert [r.event_type for r in rows] == ["ObjectCreated"]
+    _sync(client)
+    assert _search(client, title="CRUD Doc")[0]["object_id"] == doc_id
+
+    res = client.put(
+        f"{API}/objects/{doc_id}", json={"status": "archived", "updated_by": "x"}
+    )
+    assert res.status_code == 200, res.text
+    rows = _outbox_rows(session)
+    assert len(rows) == 2  # ObjectCreated + the status-change event
+    assert len({r.event_id for r in rows}) == len(rows)
+    assert rows[0].event_type == "ObjectCreated"
+
+    _sync(client)
+    _sync(client)  # replay is idempotent — no new rows, no index changes
+    assert len(_outbox_rows(session)) == 2
+    hits = _search(client, title="CRUD Doc")
+    assert hits[0]["version"] == 2
 
 
 # ------------------------------------------------------------ permissions

@@ -163,6 +163,36 @@ def test_replay_idempotency(db, repo):
     assert [(r.object_id, r.title, r.version) for r in _index_rows(db)] == first
 
 
+def test_explicit_rows_and_pending_events_cannot_double_write(db, repo):
+    """Passing explicit outbox rows for events that are STILL pending on
+    the aggregate (no pop) must produce exactly one persisted row — the
+    two channels are deduplicated by event_id within the same save."""
+    obj = UniversalObject.create(ObjectType.DOCUMENT, "Both", created_by="f:1")
+    events = obj.domain_events  # deliberately NOT popped
+    assert len(events) == 1
+    repo.save(obj, outbox_events=[to_outbox_row(events[0])])
+
+    pending = _pending_events(db)
+    assert [e["event_type"] for e in pending] == ["ObjectCreated"]
+    assert len(pending) == 1  # the explicit row; the auto-emit skipped it
+
+
+def test_resave_with_pending_events_never_duplicates(db, repo):
+    """Saving the same aggregate twice while its events are un-popped must
+    not duplicate outbox rows — event_id is the durable idempotency key
+    (this is how the assistant flow saves a conversation twice)."""
+    obj = UniversalObject.create(ObjectType.DOCUMENT, "Twice", created_by="f:1")
+    repo.save(obj)  # auto-emits ObjectCreated, events stay on the aggregate
+    repo.save(obj)  # same pending event -> skipped
+
+    pending = _pending_events(db)
+    assert [e["event_type"] for e in pending] == ["ObjectCreated"]
+    SearchIndexApplier(db).apply_pending()
+    rows = _index_rows(db)
+    assert len(rows) == 1
+    assert rows[0].title == "Twice"
+
+
 def test_duplicate_event_handling(db, repo):
     """Re-issuing the same event content (fresh event id, e.g. after a
     crash between apply and mark) converges to the same single row."""

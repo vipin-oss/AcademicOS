@@ -224,9 +224,10 @@ class SQLAlchemyObjectRepository(ObjectRepository):
 
         Sprint-5 M1 — events still pending on the aggregate (``domain_events``)
         are additionally persisted as durable outbox rows in the same
-        transaction, so every save path feeds the relay. The explicit
-        ``outbox_events`` rows and the aggregate's pending events are
-        disjoint by construction (callers pop before passing rows).
+        transaction, so every save path feeds the relay. Event ids already
+        recorded (re-saves of the same aggregate, or explicit rows passed
+        for the same events) are skipped — ``event_id`` is the durable
+        idempotency key.
         """
         snap = SnapshotMapper.to_snapshot(entity)
         edge_models = self._edge_models_from_snapshot(snap)
@@ -288,8 +289,33 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             # index any object lifecycle, not just the document path.
             # Read-only: popped aggregates add nothing, and the in-memory
             # projection (pop_domain_events) is left untouched.
-            for event in entity.domain_events:
-                self._session.add(OutboxEventModel(**to_outbox_row(event)))
+            # Deduplication by event_id — the durable idempotency key:
+            # (1) events already recorded by an earlier save of the same
+            #     aggregate are skipped;
+            # (2) events passed explicitly as outbox_events in THIS save
+            #     (visible only in the session, not yet in the table) are
+            #     skipped — the two channels can never double-write.
+            pending = entity.domain_events
+            if pending:
+                explicit_ids = {row["event_id"] for row in outbox_events}
+                to_record = [
+                    event
+                    for event in pending
+                    if str(event.event_id) not in explicit_ids
+                ]
+                if to_record:
+                    recorded = set(
+                        self._session.execute(
+                            select(OutboxEventModel.event_id).where(
+                                OutboxEventModel.event_id.in_(
+                                    [str(event.event_id) for event in to_record]
+                                )
+                            )
+                        ).scalars().all()
+                    )
+                    for event in to_record:
+                        if str(event.event_id) not in recorded:
+                            self._session.add(OutboxEventModel(**to_outbox_row(event)))
             # Immutable version record: the frozen snapshot rides the SAME
             # transaction (and retry) as the aggregate write, so a committed
             # save always leaves a complete version history behind it. A
