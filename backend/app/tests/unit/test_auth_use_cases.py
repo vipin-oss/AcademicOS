@@ -222,3 +222,29 @@ def test_refresh_rejects_garbage_and_deleted_account(world):
         world["refresh"].execute(
             RefreshTokensCommand(input=RefreshInput(refresh_token=login.refresh_token))
         )
+
+
+# ------------------------------------------------------------ config guard
+# The default JWT secret must never run outside development/test.
+
+
+def test_default_jwt_secret_rejected_outside_development(monkeypatch):
+    import app.core.config as config_module
+
+    # Stale cached settings must not leak across tests.
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    with pytest.raises(ValueError, match="JWT_SECRET"):
+        config_module.Settings()
+    config_module.get_settings.cache_clear()
+
+
+def test_default_jwt_secret_accepted_in_development(monkeypatch):
+    import app.core.config as config_module
+
+    config_module.get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    assert config_module.Settings().jwt_secret == "change-me-in-production"
+    config_module.get_settings.cache_clear()
