@@ -28,6 +28,7 @@ from app.application.exceptions import (
 )
 from app.application.queries.get_object import GetObjectQuery
 from app.application.queries.list_objects import ListObjectsQuery
+from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.use_cases.auth.helpers import get_roles
 from app.application.use_cases.create_object import CreateObjectUseCase
 from app.application.use_cases.delete_object import DeleteObjectUseCase
@@ -39,7 +40,6 @@ from app.application.use_cases.object_acl import (
 from app.application.use_cases.object_acl import (
     update_object_acl as update_object_acl_uc,
 )
-from app.application.use_cases.object_graph import ObjectGraphUseCase
 from app.application.use_cases.update_object import UpdateObjectUseCase
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import PermissionAction, RelationshipKind
@@ -249,17 +249,48 @@ def object_graph(
     _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
     direction: str = Query("outgoing", pattern="^(outgoing|incoming)$"),
     kind: str | None = Query(None),
+    depth: int = Query(1, ge=1, le=5),
+    mode: str = Query("bfs", pattern="^(bfs|dfs)$"),
 ) -> dict:
     try:
         kind_enum = RelationshipKind(kind) if kind else None
-        result = ObjectGraphUseCase(repo, ObjectPermissionEvaluator()).execute(
+        result = GraphRuntimeService(repo, ObjectPermissionEvaluator()).traverse(
             ObjectId(object_id),
             direction=direction,
             kind=kind_enum,
+            depth=depth,
+            mode=mode,
             principal={"sub": str(user.id), "roles": get_roles(user)},
         )
     except ObjectNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except (ValueError, ValidationError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    return {"items": result, "total_count": len(result)}
+    return result
+
+
+@router.get("/{object_id}/graph/path")
+def object_graph_path(
+    object_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
+    target: str = Query(...),
+    direction: str = Query("outgoing", pattern="^(outgoing|incoming)$"),
+    kind: str | None = Query(None),
+    max_hops: int = Query(5, ge=1, le=5),
+) -> dict:
+    try:
+        kind_enum = RelationshipKind(kind) if kind else None
+        return GraphRuntimeService(repo, ObjectPermissionEvaluator()).find_shortest_path(
+            ObjectId(object_id),
+            ObjectId(target),
+            direction=direction,
+            kind=kind_enum,
+            max_hops=max_hops,
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
