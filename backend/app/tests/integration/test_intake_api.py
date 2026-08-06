@@ -617,3 +617,86 @@ def test_commit_requires_authentication(harness):
     ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
     assert client.post(f"{API}/items/{ghost}/commit").status_code == 401
     assert client.get(f"{API}/items/{ghost}/commit-preview").status_code == 401
+
+
+def test_proposal_http_full_workflow(harness):
+    """The production review->commit loop over HTTP: generate -> review ->
+    commit -> document. The M1.3 commit gate is satisfied by the HTTP
+    proposal endpoints — no direct service calls."""
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+    # Drop the seed's inline proposal so we exercise the HTTP generate path.
+    from app.application.dtos.intake import KEY_PROPOSAL
+
+    item.set_metadata(
+        MetadataEntry(KEY_PROPOSAL, "", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+        actor="intake",
+    )
+    repo = SQLAlchemyObjectRepository(request_session)
+    repo.save(item)
+
+    # 1. GET before generation -> 422 (no proposal yet).
+    assert client.get(f"{API}/items/{item.id}/proposal").status_code == 422
+
+    # 2. PUT without an existing proposal -> 422 (generate first).
+    assert (
+        client.put(
+            f"{API}/items/{item.id}/proposal",
+            json={"title": "x", "document_type": "pdf", "description": "d"},
+        ).status_code
+        == 422
+    )
+
+    # 3. Regenerate acts as the generator -> 200 with factual proposal.
+    gen = client.post(f"{API}/items/{item.id}/proposal/regenerate")
+    assert gen.status_code == 200, gen.text
+    body = gen.json()
+    assert body["item_id"] == str(item.id)
+    assert body["document_type"] == "pdf"
+    assert body["title"] == "seed.pdf"
+
+    # 4. GET returns it.
+    got = client.get(f"{API}/items/{item.id}/proposal")
+    assert got.status_code == 200
+    assert got.json()["title"] == "seed.pdf"
+
+    # 5. Review (PUT) with an invalid type -> 422; valid -> 200.
+    assert (
+        client.put(
+            f"{API}/items/{item.id}/proposal",
+            json={"title": "Reviewed", "document_type": "not-a-type", "description": "d"},
+        ).status_code
+        == 422
+    )
+    reviewed = client.put(
+        f"{API}/items/{item.id}/proposal",
+        json={"title": "Reviewed Title", "document_type": "txt", "description": "human"},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["title"] == "Reviewed Title"
+    assert reviewed.json()["confidence"] == 1.0
+
+    # 6. Commit now succeeds and uses the reviewed title.
+    commit = client.post(f"{API}/items/{item.id}/commit")
+    assert commit.status_code == 200, commit.text
+    assert commit.json()["document_title"] == "Reviewed Title"
+    doc_id = commit.json()["document_id"]
+
+    # 7. The document exists with the reviewed title.
+    doc = repo.get_by_id(ObjectId(doc_id))
+    assert doc is not None and doc.title == "Reviewed Title"
+
+    # 8. Replay: commit again -> 409; proposal GET still returns the review.
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 409
+    assert client.get(f"{API}/items/{item.id}/proposal").status_code == 200
+
+
+def test_proposal_http_status_codes(harness):
+    """401/404 matrix for the proposal endpoints."""
+    client, *_ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.get(f"{API}/items/{ghost}/proposal").status_code == 401
+    assert client.put(f"{API}/items/{ghost}/proposal",
+                      json={"title": "x", "document_type": "pdf", "description": ""}).status_code == 401
+    assert client.post(f"{API}/items/{ghost}/proposal/regenerate").status_code == 401

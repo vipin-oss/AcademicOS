@@ -138,3 +138,34 @@ def commit_item_response(out) -> CommitItemResponseModel:
         document_id=out.document_id,
         document_title=out.document_title,
     )
+
+class ProposalResponseModel(BaseModel):
+    """Response for the proposal endpoints (Sprint-3 M2 integration).
+
+    ``document_type`` is validated against the same DOCUMENT_TYPES
+    vocabulary the commit path uses.
+    """
+
+    item_id: str
+    title: str
+    document_type: str
+    description: str
+    confidence: float
+
+
+class ProposalUpdateRequest(BaseModel):
+    """Body for PUT /items/{id}/proposal — the reviewed proposal."""
+
+    title: str
+    document_type: str
+    description: str = ""
+
+
+def proposal_response(item_id: str, proposal) -> ProposalResponseModel:
+    return ProposalResponseModel(
+        item_id=item_id,
+        title=proposal.title,
+        document_type=proposal.document_type,
+        description=proposal.description,
+        confidence=proposal.confidence,
+    )

@@ -34,9 +34,12 @@ from app.api.mappers.intake_mapper import (
     IntakeSessionResponseModel,
     ListIntakeItemsResponseModel,
     ListIntakeSessionsResponseModel,
+    ProposalResponseModel,
+    ProposalUpdateRequest,
     commit_item_response,
     item_response,
     progress_response,
+    proposal_response,
     session_response,
     to_create_input,
 )
@@ -53,6 +56,10 @@ from app.application.exceptions import (
 )
 from app.application.intake.commit_engine import CommitEngineService
 from app.application.intake.jobs import IntakeJobManager
+from app.application.intake.proposal_engine import (
+    ProposalEngineService,
+    ProposalReviewService,
+)
 from app.application.queries.get_intake_extracted_text import GetIntakeExtractedTextQuery
 from app.application.queries.get_intake_progress import GetIntakeProgressQuery
 from app.application.queries.get_intake_session import GetIntakeSessionQuery
@@ -368,3 +375,55 @@ def commit_item(
     except ObjectAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return commit_item_response(out)
+
+@router.get("/items/{item_id}/proposal", response_model=ProposalResponseModel)
+def get_item_proposal(
+    item_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> ProposalResponseModel:
+    """The item's current proposal (422 when none generated yet)."""
+    try:
+        proposal = ProposalEngineService(repo).get(item_id)
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    return proposal_response(item_id, proposal)
+
+
+@router.put("/items/{item_id}/proposal", response_model=ProposalResponseModel)
+def put_item_proposal(
+    item_id: str,
+    body: ProposalUpdateRequest,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+) -> ProposalResponseModel:
+    """Review (or create) the item's proposal. A generated proposal is
+    required first (422); the reviewed title/type drive the eventual commit."""
+    try:
+        proposal = ProposalReviewService(repo).update(
+            item_id,
+            title=body.title,
+            document_type=body.document_type,
+            description=body.description,
+            actor=str(user.id),
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    return proposal_response(item_id, proposal)
+
+
+@router.post("/items/{item_id}/proposal/regenerate", response_model=ProposalResponseModel)
+def regenerate_item_proposal(
+    item_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+) -> ProposalResponseModel:
+    """Discard human edits and regenerate the proposal from the item's facts."""
+    try:
+        proposal = ProposalReviewService(repo).regenerate(item_id, actor=str(user.id))
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return proposal_response(item_id, proposal)
