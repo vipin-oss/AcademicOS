@@ -248,3 +248,97 @@ def test_default_jwt_secret_accepted_in_development(monkeypatch):
     monkeypatch.delenv("JWT_SECRET", raising=False)
     assert config_module.Settings().jwt_secret == "change-me-in-production"
     config_module.get_settings.cache_clear()
+
+
+# ------------------------------------------------------- adversarial regressions
+# Findings from the independent security audit (Sprint-1):
+
+
+def test_user_id_is_deterministic_per_username():
+    from app.application.use_cases.auth.register_user import _user_id_for
+
+    first = _user_id_for("same.user")
+    second = _user_id_for("same.user")
+    other = _user_id_for("other.user")
+    assert str(first) == str(second)
+    assert str(first) != str(other)
+    assert str(first).startswith("obj:user:")
+
+
+def test_concurrent_registration_loser_gets_409(world, monkeypatch):
+    """The check-then-insert race: when the pre-check misses but the
+    deterministic id already exists (a concurrent winner), the loser's
+    INSERT conflicts and surfaces as ObjectAlreadyExistsError — never two
+    accounts with one username."""
+    from app.application.use_cases.auth.register_user import (
+        RegisterUserUseCase,
+        _user_id_for,
+    )
+    from app.domain.exceptions import OptimisticConcurrencyError
+
+    # Pre-insert the "concurrent winner" (same deterministic id, same title).
+    winner = UniversalObject.create(
+        ObjectType.USER,
+        "race.target",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=_user_id_for("race.target"),
+    )
+    winner.pop_domain_events()
+    world["repo"].save(winner)
+
+    # Simulate the loser whose pre-check saw an empty table, running against
+    # a repository that mirrors the real adapter's primary-key conflict.
+    class PkEnforcingRepo(world["repo"].__class__):
+        def save(self, entity: UniversalObject) -> None:
+            if any(o.id == entity.id for o in self.list()):
+                raise OptimisticConcurrencyError(
+                    f"Object {entity.id} was created concurrently."
+                )
+            super().save(entity)
+
+    race_repo = PkEnforcingRepo()
+    race_repo._store = dict(world["repo"]._store)
+
+    monkeypatch.setattr(
+        "app.application.use_cases.auth.register_user.find_user", lambda repo, name: None
+    )
+    with pytest.raises(ObjectAlreadyExistsError):
+        RegisterUserUseCase(race_repo, world["hasher"]).execute(
+            RegisterUserCommand(
+                input=RegisterUserInput(username="race.target", password="some-password")
+            )
+        )
+
+    # Exactly one account exists.
+    from app.application.use_cases.auth.helpers import find_user
+
+    assert find_user(world["repo"], "race.target") is not None
+    assert len(
+        [o for o in world["repo"].list() if o.object_type is ObjectType.USER]
+    ) == 1
+
+
+def test_login_unknown_user_still_runs_a_verify(world):
+    """Timing equalisation: an unknown username must pay the same bcrypt
+    cost as a known one (no username-enumeration timing side channel)."""
+    from app.application.use_cases.auth.login_user import _DUMMY_PASSWORD_HASH
+
+    calls: list[str] = []
+
+    class CountingHasher:
+        def hash_password(self, password: str) -> str:
+            return f"hash:{password}"
+
+        def verify_password(self, password: str, password_hash: str) -> bool:
+            calls.append(password_hash)
+            return False
+
+    world["login"]._password_hasher = CountingHasher()  # type: ignore[attr-defined]
+    with pytest.raises(AuthenticationError):
+        world["login"].execute(
+            LoginUserCommand(input=LoginInput(username="ghost.user", password="whatever"))
+        )
+    # Exactly one verify ran, against the precomputed dummy hash.
+    assert len(calls) == 1
+    assert calls[0] == _DUMMY_PASSWORD_HASH
