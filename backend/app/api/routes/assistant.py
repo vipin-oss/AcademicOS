@@ -143,7 +143,6 @@ def get_assistant_retrieval(
 
 
 def get_assistant_memory(
-    db: Session = Depends(get_db),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
 ) -> AssistantMemoryService:
