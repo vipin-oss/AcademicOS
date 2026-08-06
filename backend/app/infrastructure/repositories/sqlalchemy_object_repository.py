@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -37,6 +38,7 @@ from app.infrastructure.db.models.object_model import ObjectModel
 from app.infrastructure.db.models.object_relationship_model import (
     ObjectRelationshipModel,
 )
+from app.infrastructure.db.models.object_version_model import ObjectVersionModel
 from app.infrastructure.db.models.outbox_model import OutboxEventModel
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.snapshots import (
@@ -197,11 +199,22 @@ class SQLAlchemyObjectRepository(ObjectRepository):
 
         The snapshot and the write lambda are built once; lock-contention
         retries re-issue the same lambda, which is idempotent (same CAS
-        predicate, same edge set).
+        predicate, same edge set, same version/outbox rows).
+
+        Sprint-4 Milestone B — when this save stores a version the object has
+        never had (create, or an update whose version changed), an immutable
+        ``object_versions`` row holding the frozen ``ObjectSnapshot`` is
+        appended in the SAME transaction. A save that does not change the
+        version writes no version row.
         """
         snap = SnapshotMapper.to_snapshot(entity)
         edge_models = self._edge_models_from_snapshot(snap)
         expected_version = entity._expected_version
+        # Sprint-4 Milestone B — version snapshots: this save introduces a
+        # new version only when it writes one the object has never stored (a
+        # create, or an update whose version actually changed). Re-saving an
+        # unchanged aggregate records nothing.
+        captures_version = expected_version is None or snap.version != expected_version
         values = {
             "object_type": snap.object_type,
             "title": snap.title,
@@ -248,6 +261,20 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             # object never loses its events.
             for row in outbox_events:
                 self._session.add(OutboxEventModel(**row))
+            # Immutable version record: the frozen snapshot rides the SAME
+            # transaction (and retry) as the aggregate write, so a committed
+            # save always leaves a complete version history behind it. A
+            # retry re-issues this lambda and re-adds the row; the previous
+            # attempt's copy was rolled back, so no duplicate can survive.
+            if captures_version:
+                self._session.add(
+                    ObjectVersionModel(
+                        object_id=snap.id,
+                        version=snap.version,
+                        snapshot=snap.to_dict(),
+                        created_at=datetime.now(UTC).isoformat(),
+                    )
+                )
 
         self._commit_with_retry(write)
         entity._expected_version = snap.version
@@ -271,6 +298,13 @@ class SQLAlchemyObjectRepository(ObjectRepository):
                 self._session.execute(
                     delete(ObjectRelationshipModel).where(
                         ObjectRelationshipModel.source_id == str(id)
+                    )
+                )
+                # Same doctrine for version snapshots (Milestone B): no
+                # orphaned history rows on either engine.
+                self._session.execute(
+                    delete(ObjectVersionModel).where(
+                        ObjectVersionModel.object_id == str(id)
                     )
                 )
                 self._session.delete(model)
