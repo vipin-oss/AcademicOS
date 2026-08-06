@@ -37,6 +37,7 @@ from app.application.dtos import assistant as dto
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
+from app.application.services.model_registry import ModelRegistry, resolve_model
 from app.application.use_cases.assistant.helpers import (
     append_message,
     auto_title_if_needed,
@@ -64,6 +65,8 @@ class AskQuestionUseCase:
         citation_builder: CitationBuilder | None = None,
         verifier: AnswerVerifier | None = None,
         review_queue: AssistantReviewQueue | None = None,
+        registry: ModelRegistry | None = None,
+        provider_factory=None,
     ) -> None:
         self._repository = repository
         self._provider = provider
@@ -73,13 +76,17 @@ class AskQuestionUseCase:
         self._citation_builder = citation_builder
         self._verifier = verifier
         self._review_queue = review_queue
+        self._registry = registry
+        self._provider_factory = provider_factory
 
     def execute(self, command: AskQuestionCommand) -> dto.AskOutput:
-        """Normal mode — the synchronous pipeline (Sprint-6 M1-M3), unchanged."""
+        """Normal mode — the synchronous pipeline (Sprint-6 M1-M3), with
+        model selection (Sprint-7 M2)."""
         assert_valid_ask_input(command.input)
         obj, question, asked_by = self._prepare(command)
+        provider = self._select_provider(obj, command.input.model_id)
         _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
-        answer = self._provider.answer(question, asked_by, **kwargs)
+        answer = provider.answer(question, asked_by, **kwargs)
         return self._finalize(obj, question, answer, citations, asked_by)
 
     def stream(self, command: AskQuestionCommand):
@@ -97,11 +104,12 @@ class AskQuestionUseCase:
         """
         assert_valid_ask_input(command.input)
         obj, question, asked_by = self._prepare(command)
+        provider = self._select_provider(obj, command.input.model_id)
         _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
-        stream_fn = getattr(self._provider, "stream", None)
+        stream_fn = getattr(provider, "stream", None)
         if stream_fn is None:
             # Provider cannot stream: a deterministic single completion.
-            answer = self._provider.answer(question, asked_by, **kwargs)
+            answer = provider.answer(question, asked_by, **kwargs)
             yield {"event": "token", "data": {"delta": answer.summary}}
         else:
             try:
@@ -124,7 +132,56 @@ class AskQuestionUseCase:
             obj = create_conversation_object(
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
+        if self._registry is not None:
+            self._bind_model(obj, command.input.model_id)
         return obj, command.input.question.strip(), command.input.asked_by
+
+    def _bind_model(self, obj: UniversalObject, requested_model_id: str | None) -> None:
+        """Pin the resolved model on the conversation (S7 M2).
+
+        The FIRST resolution (request override or registry default) becomes
+        the conversation's model; the pin is stored as L1/SYSTEM metadata
+        and persists across follow-ups. An explicit request override always
+        wins for the current ask and re-pins the conversation.
+        """
+        current = obj.metadata.get_value(dto.KEY_MODEL_ID)
+        if current and not requested_model_id:
+            return  # already pinned; no override requested
+        spec = resolve_model(
+            self._registry,  # type: ignore[arg-type]
+            conversation_model_id=current or None,
+            requested_model_id=requested_model_id,
+        )
+        if current == spec.id:
+            return
+        from app.domain.value_objects.metadata import (
+            MetadataEntry,
+            MetadataLayer,
+            Provenance,
+        )
+
+        obj.set_metadata(
+            MetadataEntry(
+                dto.KEY_MODEL_ID, spec.id, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
+            ),
+            actor="system",
+        )
+
+    def _select_provider(self, obj: UniversalObject, requested_model_id: str | None):
+        """The provider for THIS ask (S7 M2).
+
+        Registry-driven: resolve the model (override > pin > default) and
+        build the provider via the shared factory. Without a registry the
+        injected default provider is used (backward compatible). Sync and
+        streaming both call this — identical selection.
+        """
+        if self._registry is None or self._provider_factory is None:
+            return self._provider
+        model_id = requested_model_id or obj.metadata.get_value(dto.KEY_MODEL_ID)
+        spec = resolve_model(
+            self._registry, conversation_model_id=model_id, requested_model_id=requested_model_id
+        )
+        return self._provider_factory(spec, self._repository)
 
     def _call_kwargs(
         self, obj: UniversalObject, question: str, asked_by: str

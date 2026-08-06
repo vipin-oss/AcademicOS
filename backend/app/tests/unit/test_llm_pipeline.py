@@ -15,16 +15,23 @@ import pytest
 from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.providers import (
     FallbackAssistantProvider,
     RuleBasedAssistantProvider,
 )
+from app.application.assistant.verifier import AnswerVerifier
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos.assistant import AskQuestionInput
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.model_registry import (
+    PROVIDER_KIND_RULES,
+    ModelRegistry,
+    ModelSpec,
+)
 from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.helpers import read_messages
@@ -603,3 +610,142 @@ def test_stream_follow_up_on_existing_conversation(db, repo):
     assert completion["conversation"]["id"] == conv_id
     assert completion["conversation"]["message_count"] == 4  # follow-up persisted
     assert completion["answer"]["summary"] == "First answer"
+
+
+# ----------------------------------------------------- model selection (M2)
+
+
+def _registry_for_tests() -> ModelRegistry:
+    registry = ModelRegistry(default_id="main")
+    registry.register(ModelSpec(id="main", base_url="http://a/v1", model="model-main"))
+    registry.register(ModelSpec(id="alt", base_url="http://b/v1", model="model-alt"))
+    registry.register(
+        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
+    )
+    return registry
+
+
+def _wired_with_registry(db, repo, vectors, handler, registry=None):
+    """The full pipeline wired with the model registry + factory."""
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    registry = registry or _registry_for_tests()
+
+    def factory(spec: ModelSpec, repository) -> FallbackAssistantProvider:
+        primary = LlmAssistantProvider(
+            client, model=spec.model, base_url=spec.base_url,
+            retry_attempts=2, retry_backoff_seconds=0,
+        )
+        fallback = RuleBasedAssistantProvider(
+            repository, permission_evaluator=ObjectPermissionEvaluator()
+        )
+        return FallbackAssistantProvider(primary, fallback)
+
+    search = SearchObjectsUseCase(
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        vector_repository=vectors, embedder=HashingEmbedder(),
+    )
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    retrieval = AssistantRetrievalService(search, graph)
+    return AskQuestionUseCase(
+        repo,
+        None,  # unused when the registry path is active
+        retrieval=retrieval,
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        registry=registry,
+        provider_factory=factory,
+    )
+
+
+def _ask_with_model(use_case, question: str, model_id: str | None = None, conversation_id: str | None = None):
+    return use_case.execute(
+        AskQuestionCommand(input=AskQuestionInput(
+            question=question, asked_by="obj:user:alice-0001",
+            conversation_id=conversation_id, model_id=model_id,
+        ))
+    )
+
+
+def test_conversation_pins_default_model_and_persists(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["model"] = json.loads(request.content)["model"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "a"}}]})
+
+    use_case = _wired_with_registry(db, repo, vectors, handler)
+    first = _ask_with_model(use_case, "find quantum")
+    # Default model was used and pinned on the conversation.
+    assert captured["model"] == "model-main"
+    conv_id = str(first.conversation.id)
+    stored = repo.get_by_id(ObjectId(conv_id))
+    assert stored.metadata.get_value("assistant.model_id") == "main"
+
+    # Follow-up WITHOUT an override reuses the pin.
+    captured.clear()
+    _ask_with_model(use_case, "find quantum", conversation_id=conv_id)
+    assert captured["model"] == "model-main"
+
+
+def test_request_override_replaces_model_and_repins(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["model"] = json.loads(request.content)["model"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "a"}}]})
+
+    use_case = _wired_with_registry(db, repo, vectors, handler)
+    first = _ask_with_model(use_case, "find quantum", model_id="alt")
+    assert captured["model"] == "model-alt"
+    conv_id = str(first.conversation.id)
+    stored = repo.get_by_id(ObjectId(conv_id))
+    assert stored.metadata.get_value("assistant.model_id") == "alt"  # re-pinned
+
+    # Follow-up without override now uses the new pin.
+    captured.clear()
+    _ask_with_model(use_case, "find quantum", conversation_id=conv_id)
+    assert captured["model"] == "model-alt"
+
+
+def test_stream_uses_identical_selection(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["model"] = json.loads(request.content)["model"]
+        return httpx.Response(
+            200, content=_sse_content("streamed", " answer")
+        )
+
+    use_case = _wired_with_registry(db, repo, vectors, handler)
+    events = list(use_case.stream(
+        AskQuestionCommand(input=AskQuestionInput(
+            question="find quantum", asked_by="obj:user:alice-0001", model_id="alt"
+        ))
+    ))
+    assert captured["model"] == "model-alt"
+    completion = [e for e in events if e["event"] == "completion"][0]
+    assert completion["data"]["answer"]["summary"] == "streamed answer"
+
+
+def test_invalid_model_id_is_rejected(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    _seed_asker(repo)
+    vectors = _index(db, repo, doc)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "a"}}]})
+
+    use_case = _wired_with_registry(db, repo, vectors, handler)
+    with pytest.raises(KeyError, match="Unknown model"):
+        _ask_with_model(use_case, "find quantum", model_id="ghost")

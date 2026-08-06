@@ -139,13 +139,16 @@ def _unprocessable(exc: Exception) -> HTTPException:
 # Request models (extra=forbid, module doctrine)
 # ---------------------------------------------------------------------------
 class StrictBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # ``model_id`` (S7 M2) collides with pydantic's "model_" protected
+    # namespace — disabled like the other assistant body fields.
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
 
 class AskBody(StrictBody):
     question: str
     conversation_id: str | None = None
     asked_by: str | None = None
+    model_id: str | None = None  # S7 M2: per-request model override
 
 
 class CreateConversationBody(StrictBody):
@@ -206,6 +209,9 @@ def _ask_use_case(
         retrieval=retrieval,
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(prompt_registry=prompt_registry),
+        # S7 M2: the model registry drives per-conversation selection.
+        registry=registry_from_settings(settings),
+        provider_factory=build_provider,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         # Human review gate (S6 M5): when enabled, every fresh answer is

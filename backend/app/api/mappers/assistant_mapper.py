@@ -25,6 +25,7 @@ def to_ask_input(body: dict) -> AskQuestionInput:
         question=str(body.get("question") or ""),
         conversation_id=str(conversation_id) if conversation_id else None,
         asked_by=(body.get("asked_by") or DEFAULT_ACTOR),
+        model_id=(str(body.get("model_id")) if body.get("model_id") else None),
     )
 
 
