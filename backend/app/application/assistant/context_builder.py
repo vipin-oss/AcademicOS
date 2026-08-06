@@ -21,8 +21,12 @@ from __future__ import annotations
 from app.application.dtos.assistant import (
     CONTEXT_CHAR_BUDGET,
     CONTEXT_HISTORY_CHAR_BUDGET,
+    CONTEXT_MEMORY_CHAR_BUDGET,
     AssistantContext,
     AssistantRetrievalResult,
+    KnowledgeItem,
+    MemoryItem,
+    MemoryRecall,
     RetrievedItem,
 )
 from app.application.use_cases.assistant.helpers import read_messages
@@ -34,37 +38,49 @@ def _chars(*parts: str) -> int:
 
 
 class AssistantContextBuilder:
-    """Composes history + retrieval into one bounded context envelope."""
+    """Composes history + retrieval + memory into one bounded envelope."""
 
     def __init__(
         self,
         *,
         context_budget: int = CONTEXT_CHAR_BUDGET,
         history_budget: int = CONTEXT_HISTORY_CHAR_BUDGET,
+        memory_budget: int = CONTEXT_MEMORY_CHAR_BUDGET,
     ) -> None:
         self._context_budget = context_budget
         self._history_budget = history_budget
+        self._memory_budget = memory_budget
 
     def build(
         self,
         conversation: UniversalObject | None,
         question: str,
         retrieval: AssistantRetrievalResult | None,
+        *,
+        memory: MemoryRecall | None = None,
     ) -> AssistantContext:
         """Deterministic context for one question.
 
         ``conversation`` may be ``None`` (first turn of a new thread);
         ``retrieval`` may be ``None`` (retrieval unavailable — the context
-        then carries history alone).
+        then carries history alone). ``memory`` (Sprint-8 M2) is the
+        automatic memory recall — recalled conversations and the
+        graph-discovered knowledge objects — trimmed to the memory
+        budget; ``None`` keeps the pre-M2 envelope (empty memory fields).
         """
         history = self._trim_history(conversation)
+        memories, knowledge, memory_truncated = self._trim_memory(
+            memory, self._memory_budget
+        )
         remaining = max(self._context_budget - _chars(question, *[c for _r, c in history]), 0)
         retrieved, retrieved_truncated = self._trim_retrieval(retrieval, remaining)
         return AssistantContext(
             question=question,
             history=tuple(history),
             retrieved=tuple(retrieved),
-            truncated=retrieved_truncated or self._history_trimmed,
+            memories=tuple(memories),
+            knowledge=tuple(knowledge),
+            truncated=retrieved_truncated or self._history_trimmed or memory_truncated,
         )
 
     # ---------------------------------------------------------------- parts
@@ -110,6 +126,39 @@ class AssistantContextBuilder:
             kept.append(item)
             used += cost
         return kept, len(kept) < len(retrieval.items)
+
+    @staticmethod
+    def _trim_memory(
+        memory: MemoryRecall | None, budget: int
+    ) -> tuple[list[MemoryItem], list[KnowledgeItem], bool]:
+        """Recalled memories + knowledge trimmed to the memory budget.
+
+        Deterministic: memories are kept head-first in recall order (the
+        most relevant first), knowledge fills the remainder — trimming
+        drops the LEAST relevant content, mirroring the retrieval
+        doctrine.
+        """
+        if memory is None:
+            return [], [], False
+        kept_memories: list[MemoryItem] = []
+        kept_knowledge: list[KnowledgeItem] = []
+        used = 0
+        truncated = False
+        for item in memory.conversations:
+            cost = _chars(item.title, item.question, item.answer)
+            if used + cost > budget:
+                truncated = True
+                break
+            kept_memories.append(item)
+            used += cost
+        for item in memory.knowledge:
+            cost = _chars(item.object_id, item.title)
+            if used + cost > budget:
+                truncated = True
+                break
+            kept_knowledge.append(item)
+            used += cost
+        return kept_memories, kept_knowledge, truncated
 
 
 __all__ = ["AssistantContextBuilder"]

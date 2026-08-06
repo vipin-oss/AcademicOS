@@ -307,6 +307,11 @@ class AskOutput:
 # token budget; trimming always drops the OLDEST content first.
 CONTEXT_CHAR_BUDGET = 6000
 CONTEXT_HISTORY_CHAR_BUDGET = 2000
+# Sprint-8 M2 — retrieved memories (prior conversations + the graph-
+# discovered knowledge objects) get their own budget, mirroring the
+# history doctrine: the current retrieval keeps its context budget, and
+# the prompt builder's hard cap remains the final guard.
+CONTEXT_MEMORY_CHAR_BUDGET = 2000
 
 
 @dataclass(frozen=True)
@@ -336,14 +341,19 @@ class AssistantContext:
 
     ``history`` is the conversation thread trimmed oldest-first to the
     history budget; ``retrieved`` is the merged retrieval (search + graph)
-    trimmed to the remaining context budget. ``truncated`` reports whether
-    any trimming occurred. Pure data — the provider renders it.
+    trimmed to the remaining context budget. ``memories`` / ``knowledge``
+    (Sprint-8 M2 — memory-augmented asks) are the automatically recalled
+    prior conversations and their graph-discovered related objects,
+    trimmed to the memory budget. ``truncated`` reports whether any
+    trimming occurred. Pure data — the provider renders it.
     """
 
     question: str
     history: tuple[tuple[str, str], ...]  # (role, content) pairs, oldest first
     retrieved: tuple[RetrievedItem, ...]
     truncated: bool
+    memories: tuple[MemoryItem, ...] = ()
+    knowledge: tuple[KnowledgeItem, ...] = ()
 
 
 @dataclass(frozen=True)

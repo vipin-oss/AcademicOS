@@ -125,3 +125,91 @@ def test_budget_is_deterministic_across_builds():
     second = builder.build(conv, "q", None)
     assert first.history == second.history
     assert first.truncated == second.truncated
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M2 — memory & knowledge in the envelope
+# ---------------------------------------------------------------------------
+def _memory_item(conversation_id: str, question: str, answer: str):
+    from app.application.dtos.assistant import MemoryItem
+
+    return MemoryItem(
+        conversation_id=conversation_id,
+        title="Prior chat",
+        question=question,
+        answer=answer,
+    )
+
+
+def _knowledge_item(object_id: str, title: str):
+    from app.application.dtos.assistant import KnowledgeItem
+
+    return KnowledgeItem(
+        object_id=object_id, object_type="document", title=title, sources=("graph",),
+    )
+
+
+def _recall(memories=(), knowledge=()):
+    from app.application.dtos.assistant import MemoryRecall
+
+    return MemoryRecall(
+        conversations=tuple(memories),
+        knowledge=tuple(knowledge),
+        search_count=len(memories),
+        graph_count=len(knowledge),
+    )
+
+
+def test_memory_is_trimmed_to_its_budget_tail_first():
+    from app.application.dtos.assistant import CONTEXT_MEMORY_CHAR_BUDGET
+
+    # One memory (title 10 + question 2 + answer) fits the budget; the
+    # second (cost ~25) overflows it and is dropped (tail = least
+    # relevant).
+    long_answer = "x" * (CONTEXT_MEMORY_CHAR_BUDGET - 30)
+    memory = _recall(
+        memories=(
+            _memory_item("obj:ai_conversation:1", "q1", long_answer),
+            _memory_item("obj:ai_conversation:2", "q2", "second memory"),
+        )
+    )
+    context = AssistantContextBuilder(memory_budget=CONTEXT_MEMORY_CHAR_BUDGET).build(
+        None, "q", None, memory=memory
+    )
+    assert [m.conversation_id for m in context.memories] == ["obj:ai_conversation:1"]
+    assert context.truncated
+
+
+def test_knowledge_fills_the_memory_budget_remainder():
+    context = AssistantContextBuilder(memory_budget=100).build(
+        None, "q", None,
+        memory=_recall(
+            memories=(_memory_item("obj:ai_conversation:1", "q1", "a1"),),
+            knowledge=(_knowledge_item("obj:document:B", "Lab Notes"),),
+        ),
+    )
+    assert [m.conversation_id for m in context.memories] == ["obj:ai_conversation:1"]
+    assert [k.object_id for k in context.knowledge] == ["obj:document:B"]
+
+
+def test_knowledge_is_dropped_first_when_budget_is_exhausted():
+    # The memory costs ~14 chars (title 10 + q 2 + a 2); the knowledge
+    # item costs ~23 chars — a 15-char budget keeps the memory and drops
+    # the knowledge.
+    context = AssistantContextBuilder(memory_budget=15).build(
+        None, "q", None,
+        memory=_recall(
+            memories=(_memory_item("obj:ai_conversation:1", "q1", "a1"),),
+            knowledge=(_knowledge_item("obj:document:B", "Lab Notes"),),
+        ),
+    )
+    assert context.memories  # memories are prioritized
+    assert context.knowledge == ()
+    assert context.truncated
+
+
+def test_without_memory_the_envelope_is_pre_m2():
+    context = AssistantContextBuilder().build(None, "q", None)
+    assert context.memories == ()
+    assert context.knowledge == ()
+    assert context.truncated is False

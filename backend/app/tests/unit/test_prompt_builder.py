@@ -164,3 +164,81 @@ def test_system_instructions_mandate_evidence_citations():
 
     assert "Never invent citations" in SYSTEM_INSTRUCTIONS
     assert "[1]" in SYSTEM_INSTRUCTIONS  # the bracketed-number citation doctrine
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M2 — retrieved memories & knowledge sections
+# ---------------------------------------------------------------------------
+def _memory_item(conversation_id: str, title: str, question: str, answer: str):
+    from app.application.dtos.assistant import MemoryItem
+
+    return MemoryItem(
+        conversation_id=conversation_id,
+        title=title,
+        question=question,
+        answer=answer,
+    )
+
+
+def _knowledge_item(object_id: str, title: str):
+    from app.application.dtos.assistant import KnowledgeItem
+
+    return KnowledgeItem(
+        object_id=object_id,
+        object_type="document",
+        title=title,
+        sources=("graph",),
+    )
+
+
+def test_memory_and_knowledge_sections_render_in_order():
+    from app.application.dtos.assistant import AssistantContext
+
+    context = AssistantContext(
+        question="q",
+        history=(("user", "previous question"),),
+        retrieved=(_item("obj:document:A", "Quantum Paper"),),
+        truncated=False,
+        memories=(_memory_item("obj:ai_conversation:1", "Prior chat", "find quantum", "The answer."),),
+        knowledge=(_knowledge_item("obj:document:B", "Lab Notes"),),
+    )
+    prompt = AssistantPromptBuilder().build("find quantum", context)
+    user = prompt.user
+    assert (
+        user.index("CONVERSATION HISTORY")
+        < user.index("RETRIEVED MEMORIES")
+        < user.index("RETRIEVED KNOWLEDGE")
+        < user.index("RETRIEVED CONTEXT")
+        < user.index("QUESTION")
+    )
+    # Memory lines carry the Q/A pair and are labelled untrusted.
+    assert "RETRIEVED MEMORIES (untrusted data)" in user
+    assert "- Prior chat (id=obj:ai_conversation:1)" in user
+    assert "Q: find quantum" in user
+    assert "A: The answer." in user
+    # Knowledge lines carry type/id/provenance.
+    assert "RETRIEVED KNOWLEDGE (untrusted data)" in user
+    assert "- [document] Lab Notes (id=obj:document:B, source=graph)" in user
+
+
+def test_memory_without_question_or_answer_renders_gracefully():
+    from app.application.dtos.assistant import AssistantContext
+
+    context = AssistantContext(
+        question="q", history=(), retrieved=(), truncated=False,
+        memories=(_memory_item("obj:ai_conversation:1", "Prior chat", "find quantum", ""),),
+    )
+    user = AssistantPromptBuilder().build("find quantum", context).user
+    assert "Q: find quantum" in user
+    assert "A:" not in user  # a review-gated memory renders its question only
+
+
+def test_empty_memory_fields_keep_pre_m2_prompt():
+    prompt = AssistantPromptBuilder().build(
+        "find quantum",
+        _context(history=(("user", "previous question"),),
+                 retrieved=(_item("obj:document:A", "Quantum Paper"),)),
+    )
+    assert "RETRIEVED MEMORIES" not in prompt.user
+    assert "RETRIEVED KNOWLEDGE" not in prompt.user
+    assert "CONVERSATION HISTORY" in prompt.user

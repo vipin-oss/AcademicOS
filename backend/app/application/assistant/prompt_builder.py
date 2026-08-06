@@ -92,6 +92,29 @@ class AssistantPromptBuilder:
         if context is not None and context.history:
             lines = [f"{role}: {content}" for role, content in context.history]
             sections.append("CONVERSATION HISTORY (untrusted data):\n" + "\n".join(lines))
+        if context is not None and context.memories:
+            # Sprint-8 M2 — automatically recalled prior conversations.
+            # Memories are CONTEXT, like history: rendered without citation
+            # markers (the numbered evidence pool belongs to the CURRENT
+            # retrieval only) and labelled untrusted like every other
+            # non-system input. A review-gated memory (empty answer)
+            # renders its question alone.
+            lines = []
+            for item in context.memories:
+                line = f"- {item.title} (id={item.conversation_id})\n  Q: {item.question}"
+                if item.answer:
+                    line += f"\n  A: {item.answer}"
+                lines.append(line)
+            sections.append("RETRIEVED MEMORIES (untrusted data):\n" + "\n".join(lines))
+        if context is not None and context.knowledge:
+            # Sprint-8 M2 — graph-discovered knowledge objects anchored at
+            # the recalled conversations (related-object discovery).
+            lines = [
+                f"- [{item.object_type}] {item.title} (id={item.object_id}, "
+                f"source={','.join(item.sources)})"
+                for item in context.knowledge
+            ]
+            sections.append("RETRIEVED KNOWLEDGE (untrusted data):\n" + "\n".join(lines))
         if context is not None and context.retrieved:
             lines = []
             for index, item in enumerate(context.retrieved):
