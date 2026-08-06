@@ -143,12 +143,17 @@ def get_assistant_retrieval(
 
 
 def get_assistant_memory(
+    db: Session = Depends(get_db),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
 ) -> AssistantMemoryService:
-    """Composition seam (Sprint-8 M1): assistant memory over the SAME
-    retrieval pipeline as the ask flow. Overridable in tests."""
-    return AssistantMemoryService(repo, retrieval)
+    """Composition seam (Sprint-8 M1/M3): assistant memory over the SAME
+    retrieval pipeline as the ask flow. Sprint-8 M3 — the review-decision
+    store (S7 M5) is wired so recalled memories are re-ranked by human
+    review history. Overridable in tests."""
+    return AssistantMemoryService(
+        repo, retrieval, decision_store=SQLReviewDecisionStore(db)
+    )
 
 
 def _not_found(exc: ObjectNotFoundError) -> HTTPException:

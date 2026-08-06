@@ -530,3 +530,152 @@ def test_review_boost_is_neutral_for_pending_unreviewed_and_stale():
     # Stale mismatch: the live status is the authority.
     assert review_boost(approved, REVIEW_REJECTED) == 0.0
     assert review_boost(_decision(REVIEW_REJECTED), REVIEW_APPROVED) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M3 — review-ranked recall
+# ---------------------------------------------------------------------------
+class _StubDecisionStore:
+    """A deterministic ReviewDecisionStore stub: decisions keyed by
+    conversation id, chronological (oldest first)."""
+
+    def __init__(self, decisions=None) -> None:
+        self._decisions = decisions or {}
+
+    def add(self, decision):
+        raise NotImplementedError("stub")
+
+    def by_conversation(self, conversation_id: str) -> list:
+        return list(self._decisions.get(conversation_id, []))
+
+    def recent(self, limit: int) -> list:
+        return []
+
+
+def _reviewed_memory_service(world, store):
+    from app.application.services.assistant_memory import AssistantMemoryService
+
+    return AssistantMemoryService(world["repo"], world["retrieval"], decision_store=store)
+
+
+def _reviewed_conversation(repo, *, title, review, citations=(), question="find quantum", answer="The quantum answer."):
+    conv = _conversation(
+        repo, question=question, answer=answer, citations=citations, review=review
+    )
+    return conv
+
+
+def test_recall_ranks_approved_above_rejected_and_neutral(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    approved = _reviewed_conversation(repo, title="A", review=REVIEW_APPROVED)
+    rejected = _reviewed_conversation(repo, title="R", review=REVIEW_REJECTED)
+    neutral = _reviewed_conversation(repo, title="N", review="")
+    index(approved, rejected, neutral)
+    store = _StubDecisionStore({
+        str(approved.id): [_decision(REVIEW_APPROVED, rating=5, confidence=1.0)],
+        str(rejected.id): [_decision(REVIEW_REJECTED, rating=2, confidence=0.4)],
+    })
+    memory = _reviewed_memory_service(world, store)
+
+    recall = memory.recall("find quantum", asker, limit=10)
+    by_id = [m.conversation_id for m in recall.conversations]
+    assert by_id[0] == str(approved.id)  # approved always first (+1.0)
+    assert by_id[-1] == str(rejected.id)  # rejected always last (-0.16)
+    # review scores are exposed and signed.
+    scores = {m.conversation_id: m.review_score for m in recall.conversations}
+    assert scores[str(approved.id)] == pytest.approx(1.0)
+    assert scores[str(rejected.id)] == pytest.approx(-0.16)
+    assert scores[str(neutral.id)] == 0.0
+
+
+def test_recall_pending_review_is_rank_neutral(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    pending = _reviewed_conversation(repo, title="P", review=REVIEW_PENDING)
+    index(pending)
+    # Defensive: even a store holding a decision for it cannot boost it —
+    # the live status is pending, so review_boost returns 0.
+    store = _StubDecisionStore({
+        str(pending.id): [_decision(REVIEW_APPROVED, rating=5, confidence=1.0)],
+    })
+    memory = _reviewed_memory_service(world, store)
+
+    recall = memory.recall("find quantum", asker)
+    assert len(recall.conversations) == 1
+    assert recall.conversations[0].review_score == 0.0
+    assert recall.conversations[0].review_status == REVIEW_PENDING
+
+
+def test_recall_latest_decision_wins(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    conv = _reviewed_conversation(repo, title="F", review=REVIEW_REJECTED)
+    index(conv)
+    # approve -> reject: the LATEST decision (rejected) drives ranking.
+    store = _StubDecisionStore({
+        str(conv.id): [
+            _decision(REVIEW_APPROVED, rating=5, confidence=1.0),
+            _decision(REVIEW_REJECTED, rating=2, confidence=0.4),
+        ],
+    })
+    memory = _reviewed_memory_service(world, store)
+
+    item = memory.recall("find quantum", asker).conversations[0]
+    assert item.review_score == pytest.approx(-0.16)
+
+
+def test_recall_ranking_preserves_citations(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    approved = _reviewed_conversation(
+        repo, title="A", review=REVIEW_APPROVED, citations=_citations()
+    )
+    index(approved)
+    store = _StubDecisionStore({
+        str(approved.id): [_decision(REVIEW_APPROVED, rating=5, confidence=1.0)],
+    })
+    memory = _reviewed_memory_service(world, store)
+
+    item = memory.recall("find quantum", asker).conversations[0]
+    assert item.citations == _citations()
+    assert item.review_score == pytest.approx(1.0)
+
+
+def test_recall_ranking_is_deterministic(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    approved = _reviewed_conversation(repo, title="A", review=REVIEW_APPROVED)
+    rejected = _reviewed_conversation(repo, title="R", review=REVIEW_REJECTED)
+    index(approved, rejected)
+    store = _StubDecisionStore({
+        str(approved.id): [_decision(REVIEW_APPROVED)],
+        str(rejected.id): [_decision(REVIEW_REJECTED)],
+    })
+    memory = _reviewed_memory_service(world, store)
+
+    first = memory.recall("find quantum", asker, limit=10)
+    second = memory.recall("find quantum", asker, limit=10)
+    assert [m.conversation_id for m in first.conversations] == [
+        m.conversation_id for m in second.conversations
+    ]
+    assert [m.review_score for m in first.conversations] == [
+        m.review_score for m in second.conversations
+    ]
+
+
+def test_recall_without_decision_store_is_pre_m3_order(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    approved = _reviewed_conversation(repo, title="A", review=REVIEW_APPROVED)
+    index(approved)
+    # The M1/M2 construction shape: no decision store -> no re-ranking.
+    recall = world["memory"].recall("find quantum", asker)
+    assert all(m.review_score == 0.0 for m in recall.conversations)
+    assert recall.conversations[0].conversation_id == str(approved.id)

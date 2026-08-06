@@ -94,9 +94,14 @@ class AssistantMemoryService(AssistantMemoryRetriever):
         self,
         repository: ObjectRepository,
         retrieval: AssistantRetrievalService,
+        *,
+        decision_store: ReviewDecisionStore | None = None,
     ) -> None:
         self._repository = repository
         self._retrieval = retrieval
+        # Sprint-8 M3 — the review-feedback ranking source. None keeps the
+        # pre-M3 recall ordering (backward compatible).
+        self._decision_store = decision_store
 
     def recall(
         self,
@@ -146,11 +151,43 @@ class AssistantMemoryService(AssistantMemoryRetriever):
                         sources=item.sources,
                     )
                 )
+        conversations = self._rank(conversations)
         return dto.MemoryRecall(
             conversations=tuple(conversations),
             knowledge=tuple(knowledge),
             search_count=result.search_count,
             graph_count=result.graph_count,
+        )
+
+    # ----------------------------------------------------------- ranking
+    def _rank(self, items: list[dto.MemoryItem]) -> list[dto.MemoryItem]:
+        """Re-rank recalled memories by human review history (Sprint-8 M3).
+
+        Each memory's ``review_score`` is derived from its LIVE review
+        status and the latest matching audit decision (``review_boost``);
+        the recall order becomes ``score + review_score`` descending. The
+        sort is STABLE — ties keep the deterministic retrieval order.
+        Without a decision store the order is the pre-M3 retrieval order
+        and every review_score stays 0.0.
+        """
+        if self._decision_store is None:
+            return items
+        ranked: list[dto.MemoryItem] = []
+        for item in items:
+            boost = 0.0
+            if item.review_status in (dto.REVIEW_APPROVED, dto.REVIEW_REJECTED):
+                decisions = self._decision_store.by_conversation(
+                    item.conversation_id
+                )
+                boost = review_boost(
+                    decisions[-1] if decisions else None,
+                    item.review_status,
+                )
+            ranked.append(replace(item, review_score=boost))
+        return sorted(
+            ranked,
+            key=lambda item: item.score + item.review_score,
+            reverse=True,
         )
 
     # ----------------------------------------------------------- hydration
