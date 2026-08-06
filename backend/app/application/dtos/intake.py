@@ -59,6 +59,9 @@ class IntakeItemStatus(str, Enum):
     RETRYING = "retrying"
     AWAITING_REVIEW = "awaiting_review"
     ERROR = "error"
+    # Sprint-3 M1 (commit engine): the item was promoted to a Document.
+    # Terminal and idempotent — a committed item is never committed twice.
+    COMMITTED = "committed"
 
 
 class IntakeStage(str, Enum):
@@ -183,6 +186,18 @@ KEY_ATTEMPTS = "intake.attempts"
 # separate storage blob under the intake-extracted/ prefix, never staged data)
 KEY_EXTRACTION = "intake.extraction"
 KEY_EXTRACTED_KEY = "intake.extracted_key"
+# Sprint-3 M1: the Document Object id the item was committed to (set once,
+# read for idempotency).
+KEY_COMMITTED_DOCUMENT = "intake.committed_document"
+
+
+@dataclass
+class CommitItemOutput:
+    """Result of committing one intake item to a Document (Sprint-3 M1)."""
+
+    item_id: str
+    document_id: str
+    document_title: str
 
 
 # --------------------------------------------------------------------------
