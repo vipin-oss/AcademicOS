@@ -132,17 +132,17 @@ class AskQuestionUseCase:
             obj = create_conversation_object(
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
-        if self._registry is not None:
+        if self._registry is not None and command.input.model_id is not None:
+            # An explicit override re-pins the conversation.
             self._bind_model(obj, command.input.model_id)
         return obj, command.input.question.strip(), command.input.asked_by
 
     def _bind_model(self, obj: UniversalObject, requested_model_id: str | None) -> None:
         """Pin the resolved model on the conversation (S7 M2).
 
-        The FIRST resolution (request override or registry default) becomes
-        the conversation's model; the pin is stored as L1/SYSTEM metadata
-        and persists across follow-ups. An explicit request override always
-        wins for the current ask and re-pins the conversation.
+        The resolved model (override or registry default) becomes the
+        conversation's model, stored as L1/SYSTEM metadata, persisting
+        across follow-ups. An explicit override always wins and re-pins.
         """
         current = obj.metadata.get_value(dto.KEY_MODEL_ID)
         if current and not requested_model_id:
@@ -177,11 +177,23 @@ class AskQuestionUseCase:
         """
         if self._registry is None or self._provider_factory is None:
             return self._provider
-        model_id = requested_model_id or obj.metadata.get_value(dto.KEY_MODEL_ID)
+        pinned = obj.metadata.get_value(dto.KEY_MODEL_ID)
+        if not requested_model_id and not pinned and self._provider is not None:
+            # No pin, no override: the injected provider (the route's
+            # default) is authoritative — this preserves the pre-M2 path
+            # exactly, including test overrides. With no injected provider
+            # (registry-only wiring) the registry default drives selection.
+            return self._provider
+        model_id = requested_model_id or pinned
         spec = resolve_model(
             self._registry, conversation_model_id=model_id, requested_model_id=requested_model_id
         )
-        return self._provider_factory(spec, self._repository)
+        provider = self._provider_factory(spec, self._repository)
+        # The registry drove selection: record the pin so follow-ups reuse
+        # the same model (S7 M2).
+        if not pinned:
+            self._bind_model(obj, spec.id)
+        return provider
 
     def _call_kwargs(
         self, obj: UniversalObject, question: str, asked_by: str

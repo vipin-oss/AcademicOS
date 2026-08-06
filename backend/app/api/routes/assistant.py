@@ -193,6 +193,9 @@ def ask_question(
         raise _unprocessable(exc) from exc
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
+    except KeyError as exc:
+        # S7 M2: an unknown model override is a client error (422).
+        raise _unprocessable(exc) from exc
     return output_dict(out)
 
 
@@ -261,11 +264,19 @@ def ask_question_stream(
     command = AskQuestionCommand(
         input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
     )
+    from app.application.services.model_registry import resolve_model
     from app.application.validators.assistant import assert_valid_ask_input
 
     try:
         assert_valid_ask_input(command.input)
+        # Eager model validation (S7 M2): an unknown override fails fast
+        # with 422 instead of mid-stream. The registry is the single source
+        # of truth; conversation pinning happens inside the stream itself.
+        if command.input.model_id:
+            resolve_model(registry_from_settings(settings), requested_model_id=command.input.model_id)
     except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    except KeyError as exc:
         raise _unprocessable(exc) from exc
 
     def events():
