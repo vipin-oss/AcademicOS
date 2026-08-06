@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     # no roles yet (first-admin bootstrap; idempotent).
     bootstrap_admin_username: str | None = None
 
+    # LLM assistant provider (Sprint-6 M2): OpenAI-compatible chat
+    # completions. The provider is ENABLED only when a base URL is set;
+    # without one the assistant stays on the deterministic rules provider.
+    # An empty API key is allowed (self-hosted endpoints often need none);
+    # the key is sent as "Bearer <key>" when present.
+    assistant_llm_base_url: str | None = None
+    assistant_llm_model: str = "academicos-default"
+    assistant_llm_api_key: str = ""
+    assistant_llm_timeout_seconds: float = 30.0
+
     @model_validator(mode="after")
     def _reject_insecure_default_secret(self) -> Settings:
         # Sprint-1 auth foundation: the default JWT secret must never run in

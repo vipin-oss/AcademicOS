@@ -25,6 +25,7 @@ Surface:
 """
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
@@ -39,7 +40,10 @@ from app.api.mappers.assistant_mapper import (
 )
 from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.assistant.context_builder import AssistantContextBuilder
-from app.application.assistant.providers import RuleBasedAssistantProvider
+from app.application.assistant.providers import (
+    FallbackAssistantProvider,
+    RuleBasedAssistantProvider,
+)
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.commands.create_conversation import CreateConversationCommand
 from app.application.commands.delete_conversation import DeleteConversationCommand
@@ -61,9 +65,11 @@ from app.application.use_cases.assistant.get_home import GetAssistantHomeUseCase
 from app.application.use_cases.assistant.list_conversations import ListConversationsUseCase
 from app.application.use_cases.assistant.update_conversation import UpdateConversationUseCase
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
+from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.db.session import get_db
+from app.infrastructure.llm.llm_provider import LlmAssistantProvider
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -82,13 +88,31 @@ def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
 def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
 ) -> AssistantProvider:
-    """Composition seam: V1 = local rules; future sanctioned LLM adapters plug
-    in HERE (integration tests already override this dependency). The rules
-    provider is wired with the shared R4 evaluator so its degradation path
-    is scoped to the initiator's permissions (S6 M1)."""
-    return RuleBasedAssistantProvider(
+    """Composition seam: the production chain is
+    ``FallbackAssistantProvider(LlmAssistantProvider, RuleBasedAssistantProvider)``
+    when an LLM endpoint is configured (Sprint-6 M2); without one the
+    assistant runs on the deterministic rules provider. Integration tests
+    override this dependency to inject stubs/transports."""
+    rules = RuleBasedAssistantProvider(
         repo, permission_evaluator=ObjectPermissionEvaluator()
     )
+    if not settings.assistant_llm_base_url:
+        return rules
+    headers = (
+        {"Authorization": f"Bearer {settings.assistant_llm_api_key}"}
+        if settings.assistant_llm_api_key
+        else {}
+    )
+    client = httpx.Client(
+        timeout=settings.assistant_llm_timeout_seconds,
+        headers=headers,
+    )
+    primary = LlmAssistantProvider(
+        client,
+        model=settings.assistant_llm_model,
+        base_url=settings.assistant_llm_base_url,
+    )
+    return FallbackAssistantProvider(primary, rules)
 
 
 def get_assistant_retrieval(

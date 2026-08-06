@@ -22,7 +22,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.application.dtos.assistant import AssistantAnswerOutput, AssistantContext
+from app.application.dtos.assistant import (
+    AssistantAnswerOutput,
+    AssistantContext,
+    AssistantPrompt,
+)
 
 
 class AssistantProvider(Protocol):
@@ -39,6 +43,7 @@ class AssistantProvider(Protocol):
         asked_by: str,
         *,
         context: AssistantContext | None = None,
+        prompt: AssistantPrompt | None = None,
     ) -> AssistantAnswerOutput:
         """Produce a deterministic, data-grounded answer. Never raises for a
         well-formed question — unknowns degrade to knowledge search results.
@@ -48,5 +53,10 @@ class AssistantProvider(Protocol):
         filtered upstream) and MAY ignore it when their logic does not need
         retrieval. Backward compatible: callers without a context pass
         nothing.
+
+        ``prompt`` (S6 M2) is the deterministic prompt envelope built by
+        the Prompt Builder; transport providers map it onto their wire
+        format. Providers MUST NOT construct prompts themselves — prompt
+        construction is the Prompt Builder's single responsibility.
         """
         ...

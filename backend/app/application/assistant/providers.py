@@ -15,6 +15,7 @@ actions, and the source modules consulted — the brief's PART 3/4/5 surface.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, is_dataclass
 
 from app.application.assistant.intents import ParsedQuestion, parse_question
@@ -86,6 +87,8 @@ from app.domain.value_objects.object_id import ObjectId
 
 PROVIDER_NAME = "rules-v1"
 DEFAULT_ASKER = "system"
+
+_log = logging.getLogger(__name__)
 # report-output envelope keys that must not leak into headline metrics
 _REPORT_NOISE_KEYS = {
     "kind", "title", "generated_at", "generated_by", "filters", "scope",
@@ -235,7 +238,9 @@ class RuleBasedAssistantProvider:
         asked_by: str = DEFAULT_ASKER,
         *,
         context: dto.AssistantContext | None = None,
+        prompt: dto.AssistantPrompt | None = None,
     ) -> dto.AssistantAnswerOutput:
+        del prompt  # deterministic rules ignore the LLM prompt envelope
         parsed = parse_question(question)
         if parsed.intent == dto.INTENT_KNOWLEDGE_SEARCH:
             # The retrieval intent consumes the grounded context envelope;
@@ -1102,3 +1107,37 @@ def _humanize(key: str) -> str:
 
 
 AssistantCardT = dto.AssistantCardOutput
+
+
+class FallbackAssistantProvider:
+    """Composition: primary provider with a deterministic fallback.
+
+    Sprint-6 M2 — graceful degradation seam. Any failure of the primary
+    (LLM endpoint down, timeout, malformed response) is logged and the
+    fallback (the deterministic rules provider) answers instead — the
+    assistant stays operational, the conversation still persists, and no
+    permission state is involved (both providers consume the same
+    permission-filtered context).
+    """
+
+    def __init__(self, primary, fallback) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    @property
+    def name(self) -> str:
+        return f"{self._primary.name}+{self._fallback.name}"
+
+    def answer(
+        self,
+        question: str,
+        asked_by: str = DEFAULT_ASKER,
+        *,
+        context: dto.AssistantContext | None = None,
+        prompt: dto.AssistantPrompt | None = None,
+    ) -> dto.AssistantAnswerOutput:
+        try:
+            return self._primary.answer(question, asked_by, context=context, prompt=prompt)
+        except Exception:  # noqa: BLE001 — the provider boundary must never crash the assistant
+            _log.exception("Primary assistant provider failed; using deterministic fallback.")
+            return self._fallback.answer(question, asked_by, context=context, prompt=prompt)

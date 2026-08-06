@@ -342,3 +342,18 @@ class AssistantContext:
     history: tuple[tuple[str, str], ...]  # (role, content) pairs, oldest first
     retrieved: tuple[RetrievedItem, ...]
     truncated: bool
+
+
+@dataclass(frozen=True)
+class AssistantPrompt:
+    """The deterministic prompt envelope built by the Prompt Builder.
+
+    ``system`` carries the standing instructions (role, grounding rules,
+    injection-safety); ``user`` carries the conversation history, the
+    permission-filtered retrieval provenance, and the question. Providers
+    map this onto their transport format — prompt construction lives ONLY
+    in the Prompt Builder service.
+    """
+
+    system: str
+    user: str
