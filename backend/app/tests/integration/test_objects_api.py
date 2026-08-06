@@ -413,3 +413,35 @@ def test_graph_runtime_depth_cycles_and_path(client):
     # Bad params are 422.
     assert client.get(f"/api/v1/objects/{a}/graph?depth=9", headers=H).status_code == 422
     assert client.get(f"/api/v1/objects/{a}/graph/path?target={c}&max_hops=9", headers=H).status_code == 422
+
+
+def test_delete_referenced_object_rejected(client):
+    """S2 M3 — hard delete must not orphan inbound edges: deleting an
+    object that others reference is rejected with 422."""
+    owner_token = _register_login(client, "integrity.owner")
+    H = {"Authorization": f"Bearer {owner_token}"}
+
+    a = client.post("/api/v1/objects", headers=H, json={"object_type": "course", "title": "I-A", "created_by": "x", "status": "draft"}).json()["id"]
+    b = client.post("/api/v1/objects", headers=H, json={"object_type": "course", "title": "I-B", "created_by": "x", "status": "draft"}).json()["id"]
+
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+    from app.domain.value_objects.enums import RelationshipKind, Provenance
+    from app.domain.value_objects.object_id import ObjectId
+
+    session = next(app.dependency_overrides[get_db]())
+    repo = SQLAlchemyObjectRepository(session)
+    a_obj = repo.get_by_id(ObjectId(a))
+    a_obj.add_relationship(ObjectId(b), RelationshipKind.PREREQUISITE_OF, Provenance.ASSERTED)
+    repo.save(a_obj)
+
+    # A references B, so deleting B is refused.
+    assert (
+        client.delete(f"/api/v1/objects/{b}", headers=H).status_code
+        == 422
+    )
+    # Deleting A (which nothing references) works.
+    assert client.delete(f"/api/v1/objects/{a}", headers=H).status_code == 204
+    # After A is gone, B is deletable.
+    assert client.delete(f"/api/v1/objects/{b}", headers=H).status_code == 204

@@ -202,7 +202,10 @@ def delete_object(
             DeleteObjectCommand(object_id=ObjectId.parse(object_id))
         )
     except ObjectNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        # Graph integrity: deleting an object others reference is refused.
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return None
 
 

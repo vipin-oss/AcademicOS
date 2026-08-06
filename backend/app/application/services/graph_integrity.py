@@ -57,3 +57,22 @@ def assert_edge_targets(
             raise ValidationError(
                 f"{label} {target} must be a {expected_type.value}; got {obj.object_type.value}."
             )
+
+
+def assert_no_inbound_edges(
+    repository: ObjectRepository,
+    object_id: ObjectId,
+) -> None:
+    """Reject deletion of an Object that others still reference.
+
+    Hard delete would orphan every inbound edge (dangling references are
+    the graph's primary consistency risk — readers only skip them). The
+    caller decides the policy: this validator surfaces the conflict and
+    the caller may reject the delete or cascade.
+    """
+    inbound = repository.find_inbound(object_id)
+    if inbound:
+        raise ValidationError(
+            f"Object {object_id} is referenced by {len(inbound)} other object(s); "
+            "remove the relationships before deleting it."
+        )

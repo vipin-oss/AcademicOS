@@ -14,9 +14,12 @@ from app.domain.value_objects.object_id import ObjectId
 class InMemoryRepo(ObjectRepository):
     def __init__(self) -> None:
         self._store: dict[str, UniversalObject] = {}
+        self._inbound: dict[str, list[str]] = {}
 
     def save(self, entity: UniversalObject) -> None:
         self._store[str(entity.id)] = entity
+        for rel in entity.relationships:
+            self._inbound.setdefault(str(rel.target), []).append(str(entity.id))
 
     def get_by_id(self, id: ObjectId) -> UniversalObject | None:
         return self._store.get(str(id))
@@ -46,7 +49,7 @@ class InMemoryRepo(ObjectRepository):
         return []
 
     def find_inbound(self, object_id: ObjectId, kind=None) -> list[ObjectId]:
-        return []
+        return [ObjectId(i) for i in self._inbound.get(str(object_id), [])]
 
     def find(self, *, object_type=None, status=None, metadata_key=None,
              metadata_value=None, page=1, page_size=0, sort_by=None, order="asc"):
@@ -110,3 +113,26 @@ def test_no_type_expectation_skips_type_check():
     source = _node(repo)
     any_type = _node(repo, "X", ObjectType.SETTINGS)
     assert_edge_targets(repo, [(any_type.id, None)], source_id=source.id)
+
+
+def test_no_inbound_edges_allows_delete():
+    repo = InMemoryRepo()
+    obj = _node(repo)
+    assert_edge_targets(repo, [], source_id=obj.id)
+    from app.application.services.graph_integrity import assert_no_inbound_edges
+
+    assert_no_inbound_edges(repo, obj.id)  # no error
+
+
+def test_inbound_edges_block_delete():
+    from app.application.services.graph_integrity import assert_no_inbound_edges
+    from app.domain.value_objects.enums import Provenance, RelationshipKind
+
+    repo = InMemoryRepo()
+    a = _node(repo, "A")
+    b = _node(repo, "B")
+    a.add_relationship(b.id, RelationshipKind.PREREQUISITE_OF, Provenance.ASSERTED)
+    repo.save(a)
+
+    with pytest.raises(ValidationError, match="referenced"):
+        assert_no_inbound_edges(repo, b.id)
