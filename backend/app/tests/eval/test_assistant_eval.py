@@ -28,6 +28,11 @@ from app.application.services.assistant_eval import (
 )
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.model_registry import (
+    PROVIDER_KIND_RULES,
+    ModelRegistry,
+    ModelSpec,
+)
 from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
@@ -224,3 +229,70 @@ def test_eval_suite_reports_counts_and_is_reproducible(db, repo):
     again, passed_again = run_eval_suite(use_case, cases)
     assert passed_again == passed
     assert [r.passed for r in again] == [r.passed for r in results]
+
+
+def test_eval_runs_across_all_registered_models(db, repo):
+    """The evaluation runner executes the same suite against every
+    registered model, deterministically (side-by-side comparison)."""
+    from app.application.services.model_registry import (
+        PROVIDER_KIND_RULES,
+        ModelRegistry,
+        ModelSpec,
+    )
+
+    registry = ModelRegistry(default_id="main")
+    registry.register(ModelSpec(id="main", base_url="http://a/v1", model="model-main"))
+    registry.register(ModelSpec(id="alt", base_url="http://b/v1", model="model-alt"))
+    registry.register(
+        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
+    )
+
+    vectors = _seed_world(db, repo)
+
+    def build_use_case(model_id: str) -> AskQuestionUseCase:
+        # Each model gets a provider whose fake answer names the model.
+        provider = _fake_llm_chain(repo, f"answer from {model_id}")
+        return _eval_use_case(db, repo, vectors, provider)
+
+    from app.application.services.assistant_eval import run_eval_suite_across_models
+
+    cases = [
+        EvalCase(name="grounded", question="find quantum",
+                 expected_contains=("answer from",), expect_citations=True),
+    ]
+    outcomes = run_eval_suite_across_models(registry, repo, build_use_case, cases)
+
+    # Every registered model was evaluated (main, alt, rules).
+    assert set(outcomes) == {"main", "alt", "rules"}
+    for _model_id, (results, passed) in outcomes.items():
+        assert passed == 1
+        assert results[0].passed
+        assert results[0].name == "grounded"
+
+    # Deterministic: a second run yields identical outcomes.
+    again = run_eval_suite_across_models(registry, repo, build_use_case, cases)
+    assert again == outcomes
+
+
+def test_eval_across_models_marks_failures_per_model(db, repo):
+    registry = ModelRegistry(default_id="good")
+    registry.register(ModelSpec(id="good", base_url="http://a/v1", model="m-good"))
+    registry.register(
+        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
+    )
+    vectors = _seed_world(db, repo)
+
+    def build_use_case(model_id: str) -> AskQuestionUseCase:
+        # The rules model answers with text that does NOT contain the
+        # expected marker -> its case fails, the good model passes.
+        answer = "good marker text" if model_id == "good" else "rules fallback text"
+        return _eval_use_case(db, repo, vectors, _fake_llm_chain(repo, answer))
+
+    cases = [EvalCase(name="marker", question="find quantum",
+                      expected_contains=("marker",))]
+    from app.application.services.assistant_eval import run_eval_suite_across_models
+
+    outcomes = run_eval_suite_across_models(registry, repo, build_use_case, cases)
+    assert outcomes["good"][1] == 1
+    assert outcomes["rules"][1] == 0
+    assert not outcomes["rules"][0][0].passed

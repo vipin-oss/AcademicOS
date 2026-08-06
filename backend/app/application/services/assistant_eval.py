@@ -88,3 +88,23 @@ def run_eval_suite(
 
 
 __all__ = ["EvalCase", "EvalResult", "run_eval_case", "run_eval_suite"]
+
+
+def run_eval_suite_across_models(
+    registry,
+    repository,
+    build_use_case,
+    cases: list[EvalCase],
+) -> dict[str, tuple[list[EvalResult], int]]:
+    """Run the SAME evaluation suite against EVERY registered model (S7 M2).
+
+    Deterministic side-by-side comparison: one fresh pipeline per model
+    (built by ``build_use_case(model_id)``), the same static cases, the
+    same pure predicates — so results are comparable across models and
+    reproducible across runs. Returns ``{model_id: (results, passed)}``.
+    """
+    outcomes: dict[str, tuple[list[EvalResult], int]] = {}
+    for spec in registry.all():
+        use_case = build_use_case(spec.id)
+        outcomes[spec.id] = run_eval_suite(use_case, cases)
+    return outcomes
