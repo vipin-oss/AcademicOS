@@ -353,13 +353,17 @@ def _ask_use_case(world, provider, *, with_memory: bool):
     )
 
 
-def _ask(use_case, question: str = "find quantum") -> tuple:
+def _ask(use_case, question: str = "find quantum", conversation_id=None) -> tuple:
     from app.application.commands.ask_question import AskQuestionCommand
     from app.application.dtos.assistant import AskQuestionInput
 
     out = use_case.execute(
         AskQuestionCommand(
-            input=AskQuestionInput(question=question, asked_by="obj:user:eval-0001")
+            input=AskQuestionInput(
+                question=question,
+                asked_by="obj:user:eval-0001",
+                conversation_id=conversation_id,
+            )
         )
     )
     return out, use_case
@@ -389,15 +393,26 @@ def test_ask_excludes_the_current_conversation_from_memories(world):
     index(asker)
     prior = _conversation(repo, question="find quantum", answer="Prior answer")
     index(prior)
+    # A follow-up ask on an INDEXED conversation: it is searchable, so
+    # without the exclusion it would appear as its own memory.
+    current = _conversation(repo, question="find quantum", answer="Current thread")
+    index(current)
 
     provider = _RecordingProvider()
-    _ask(_ask_use_case(world, provider, with_memory=True))
-    # The new conversation was created during the ask; the prior one is the
-    # memory. The current conversation's id must not appear in the memory
-    # section (its history is already in the prompt).
-    memory_section = provider.seen_prompt.user.split("RETRIEVED MEMORIES")[1].split("RETRIEVED KNOWLEDGE")[0]
+    _ask(
+        _ask_use_case(world, provider, with_memory=True),
+        conversation_id=str(current.id),
+    )
+    prompt_user = provider.seen_prompt.user
+    _, _, memory_section = prompt_user.partition("RETRIEVED MEMORIES")
+    for marker in ("RETRIEVED KNOWLEDGE", "RETRIEVED CONTEXT"):
+        memory_section = memory_section.split(marker)[0]
     assert "Prior answer" in memory_section
     assert str(prior.id) in memory_section
+    # The current thread is excluded from the MEMORIES — its history is
+    # already in the prompt. (It may still appear in the current
+    # retrieval's RETRIEVED CONTEXT section — pre-existing behavior.)
+    assert str(current.id) not in memory_section
 
 
 def test_ask_without_memory_is_the_pre_m2_fallback(world):
