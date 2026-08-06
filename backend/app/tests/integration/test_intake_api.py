@@ -6,9 +6,6 @@ overridden local storage root, and a per-suite job manager wired through
 ``dependency_overrides`` — no PostgreSQL, no leftover disk state.
 """
 from __future__ import annotations
-from app.domain.value_objects.enums import ObjectStatus, ObjectType
-from app.domain.entities.object import UniversalObject
-from app.api.dependencies.auth import get_current_user
 
 import json
 import time
@@ -19,10 +16,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.api.dependencies.auth import get_current_user
 from app.api.routes.documents import get_storage
 from app.api.routes.intake import get_job_manager
+from app.application.dtos.intake import IntakeItemStatus, IntakeSessionStatus
 from app.application.intake.jobs import IntakeJobManager
 from app.application.use_cases.intake.helpers import set_system_metadata
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import ObjectStatus, ObjectType, Provenance
+from app.domain.value_objects.metadata import Metadata, MetadataEntry, MetadataLayer
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.session import get_db
@@ -33,9 +35,6 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 from app.infrastructure.storage.local import LocalFileStorage
 from app.main import app
 from app.tests.unit.extraction_fixtures import make_docx_bytes, make_pdf_bytes
-from app.application.dtos.intake import IntakeItemStatus, IntakeSessionStatus
-from app.domain.value_objects.metadata import Metadata, MetadataEntry, MetadataLayer
-from app.domain.value_objects.enums import Provenance
 
 API = "/api/v1/intake"
 
@@ -515,8 +514,7 @@ def _seed_commit_item(session, storage, *, status="awaiting_review"):
 def test_proposal_generate_and_review_flow(harness):
     """Proposal API: generate -> read -> update -> regenerate, no commits."""
     client, storage, _manager, request_session = harness
-    from app.application.intake.proposal_engine import ProposalEngineService
-    from app.application.intake.proposal_engine import ProposalReviewService
+    from app.application.intake.proposal_engine import ProposalEngineService, ProposalReviewService
 
     repo = SQLAlchemyObjectRepository(request_session)
     session_obj = UniversalObject.create(
