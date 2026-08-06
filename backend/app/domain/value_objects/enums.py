@@ -51,6 +51,10 @@ class ObjectType(str, Enum):
     CALENDAR_ENTRY = "calendar_entry"
     # Settings & Preferences (appended — same doctrine; no existing member changed)
     SETTINGS = "settings"
+    # Identity & Access (appended — Sprint-1 auth foundation; same doctrine:
+    # one USER object per account, username as the Object title, credentials
+    # as system-layer metadata. RBAC/roles land in a later milestone.)
+    USER = "user"
     # Academic Intelligence Assistant (appended — same doctrine; no existing
     # member changed). One aggregate per conversation; messages embedded as
     # numbered metadata entries (see application/use_cases/assistant).
