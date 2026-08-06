@@ -14,6 +14,13 @@ from app.domain.value_objects.enums import MetadataLayer, ObjectStatus, ObjectTy
 from app.domain.value_objects.metadata import Metadata
 from app.domain.value_objects.object_id import ObjectId
 
+# Object-level ACL (Sprint-2 M1): JSON lists of principal ids or "role:<name>".
+ACL_OWNER = "acl.owner"
+ACL_READERS = "acl.readers"
+ACL_WRITERS = "acl.writers"
+ACL_MANAGERS = "acl.managers"
+ACL_KEYS = (ACL_OWNER, ACL_READERS, ACL_WRITERS, ACL_MANAGERS)
+
 
 @dataclass
 class CreateObjectInput:
