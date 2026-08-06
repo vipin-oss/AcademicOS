@@ -58,6 +58,7 @@ class AssistantRetrievalService:
         query: str,
         user: UniversalObject,
         *,
+        object_type: str | None = None,
         search_limit: int = DEFAULT_SEARCH_LIMIT,
         graph_anchors: int = DEFAULT_GRAPH_ANCHORS,
         graph_depth: int = DEFAULT_GRAPH_DEPTH,
@@ -66,9 +67,14 @@ class AssistantRetrievalService:
         """Merged, deduplicated, deterministically ordered retrieval.
 
         ``user`` is the authenticated principal (its READ permissions gate
-        both legs inside the reused consumers).
+        both legs inside the reused consumers). ``object_type`` (Sprint-8
+        M1) narrows the search leg to one object type — the assistant
+        memory recall uses it for conversations; ``None`` keeps the
+        pre-M1 behavior (all types).
         """
-        hits = self._search.execute(user=user, text=query, limit=search_limit)
+        hits = self._search.execute(
+            user=user, text=query, object_type=object_type, limit=search_limit
+        )
         graph_items = self._graph_items(
             hits, user, anchors=graph_anchors, depth=graph_depth
         )
