@@ -237,6 +237,7 @@ class AssistantAnswerOutput:
     cards: list[AssistantCardOutput] = field(default_factory=list)
     actions: list[AssistantActionOutput] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)  # modules consulted
+    citations: list[AssistantCitation] = field(default_factory=list)  # S6 M3 evidence
 
 
 @dataclass
@@ -357,3 +358,22 @@ class AssistantPrompt:
 
     system: str
     user: str
+
+
+@dataclass(frozen=True)
+class AssistantCitation:
+    """One verifiable evidence item attached to an answer (Sprint-6 M3).
+
+    Carries ONLY facts already present on the retrieval item — the
+    deterministic citation ``number``, the object identity and type, the
+    title, the provenance ``sources``, and the version/score — so no
+    metadata is duplicated. ``object_id`` is the stable identifier.
+    """
+
+    number: int
+    object_id: str
+    object_type: str
+    title: str
+    sources: tuple[str, ...]
+    version: int
+    score: float

@@ -106,7 +106,8 @@ def test_ask_creates_conversation_with_answer(client: TestClient):
     assert answer["intent"] == "today_plan"
     assert answer["intent_label"]
     assert set(answer) == {"intent", "intent_label", "question", "summary",
-                           "metrics", "items", "cards", "actions", "sources"}
+                           "metrics", "items", "cards", "actions", "sources",
+                           "citations"}  # S6 M3 additive evidence field
     assert answer["metrics"]["Tasks due today"].isdigit()
     for card in answer["cards"]:
         assert card["href"] and card["object_type"] and card["title"]
