@@ -58,7 +58,7 @@ def _unprocessable(exc: Exception) -> HTTPException:
 
 
 class CompareBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(extra="forbid")
 
     base_run_id: str
     candidate_run_id: str
