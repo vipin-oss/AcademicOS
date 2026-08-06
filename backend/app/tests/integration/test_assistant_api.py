@@ -258,6 +258,11 @@ def test_health_regression_and_openapi_tags(client: TestClient):
     assert client.get("/api/v1/health").status_code == 200
     openapi = client.get("/openapi.json").json()
     assistant_paths = [p for p in openapi["paths"] if p.startswith("/api/v1/assistant")]
-    assert len(assistant_paths) == 9  # home / ask / ask/stream / review/pending / review/approve / review/reject / suggested / conversations / {id}
+    # home / ask / ask/stream / suggested / conversations / {id} /
+    # review x3 / eval x4 (S7 M4 evaluation history surface).
+    assert len(assistant_paths) == 13
     assert "/api/v1/assistant/ask/stream" in assistant_paths  # S6 M4 SSE
     assert "/api/v1/assistant/review/pending" in assistant_paths  # S6 M5
+    assert "/api/v1/assistant/eval/runs" in assistant_paths  # S7 M4
+    assert "/api/v1/assistant/eval/compare" in assistant_paths  # S7 M4
+    assert "/api/v1/assistant/eval/models/{model_id}/compare/latest" in assistant_paths  # S7 M4
