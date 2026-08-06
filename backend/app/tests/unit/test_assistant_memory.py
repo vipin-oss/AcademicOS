@@ -679,3 +679,61 @@ def test_recall_without_decision_store_is_pre_m3_order(world):
     recall = world["memory"].recall("find quantum", asker)
     assert all(m.review_score == 0.0 for m in recall.conversations)
     assert recall.conversations[0].conversation_id == str(approved.id)
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M4 — superseded memories are ignored by default
+# ---------------------------------------------------------------------------
+def test_recall_ignores_superseded_memories(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    superseded = _conversation(repo, question="find quantum", answer="Old duplicate answer")
+    superseded.change_status(ObjectStatus.SUPERSEDED, actor="system")
+    repo.save(superseded)
+    index(superseded)
+
+    # The superseded conversation is fully intact...
+    reloaded = repo.get_by_id(superseded.id)
+    assert reloaded.status is ObjectStatus.SUPERSEDED
+    from app.application.use_cases.assistant.helpers import read_messages
+
+    assert len(read_messages(reloaded)) == 2
+    # ...but recall ignores it by default.
+    recall = world["memory"].recall("find quantum", asker)
+    assert recall.conversations == ()
+    assert recall.knowledge == ()
+
+
+def test_recall_after_consolidation_returns_only_the_canonical(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    from app.application.services.memory_consolidation import MemoryConsolidationService
+
+    first = _conversation(repo, question="find quantum", answer="The quantum answer.")
+    second = _conversation(repo, question="find quantum", answer="The quantum answer.")
+    index(first, second)
+    MemoryConsolidationService(repo).consolidate(actor="system")
+
+    recall = world["memory"].recall("find quantum", asker)
+    assert [m.conversation_id for m in recall.conversations] == [str(second.id)]
+    assert recall.conversations[0].answer == "The quantum answer."
+
+
+def test_recall_active_and_archived_memories_is_unchanged(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    active = _conversation(repo, question="find quantum", answer="Active answer")
+    archived = _conversation(repo, question="find quantum", answer="Archived answer")
+    archived.change_status(ObjectStatus.ARCHIVED, actor="system")
+    repo.save(archived)
+    index(archived)
+
+    recall = world["memory"].recall("find quantum", asker)
+    recalled = {m.conversation_id for m in recall.conversations}
+    assert str(active.id) in recalled
+    # ARCHIVED is not SUPERSEDED — forgetting only applies to superseded
+    # memories (backward compatible with the pre-M4 behavior).
+    assert str(archived.id) in recalled

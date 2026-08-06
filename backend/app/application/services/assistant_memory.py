@@ -47,7 +47,7 @@ from app.application.use_cases.assistant.helpers import (
 )
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
-from app.domain.value_objects.enums import ObjectType
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.value_objects.object_id import ObjectId
 
 DEFAULT_MEMORY_LIMIT = 10
@@ -202,6 +202,12 @@ class AssistantMemoryService(AssistantMemoryRetriever):
         except ValueError:
             return None
         if obj is None or obj.object_type is not ObjectType.AI_CONVERSATION:
+            return None
+        if obj.status is ObjectStatus.SUPERSEDED:
+            # Sprint-8 M4 — forgetting: superseded memories (consolidated
+            # duplicates) are ignored by default. The live object is the
+            # authority; the superseded conversation itself is fully
+            # intact (messages, citations, review, ACLs, graph).
             return None
         messages = read_messages(obj)
         user_messages = [
