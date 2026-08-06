@@ -191,6 +191,26 @@ KEY_EXTRACTED_KEY = "intake.extracted_key"
 KEY_COMMITTED_DOCUMENT = "intake.committed_document"
 
 
+# Sprint-3 M2 (proposal engine): the generated reviewable proposal for an
+# item, stored as JSON metadata. Persisted once per item; the review
+# workflow edits it in place before commit.
+KEY_PROPOSAL = "intake.proposal"
+
+
+@dataclass
+class ItemProposal:
+    """A reviewable proposal for one intake item (Sprint-3 M2).
+
+    Generated deterministically from the item's real facts; human-editable
+    through the review workflow before the item is committed.
+    """
+
+    title: str
+    document_type: str
+    description: str
+    confidence: float
+
+
 @dataclass
 class CommitItemOutput:
     """Result of committing one intake item to a Document (Sprint-3 M1)."""
