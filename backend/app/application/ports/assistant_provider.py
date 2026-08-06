@@ -30,7 +30,14 @@ from app.application.dtos.assistant import (
 
 
 class AssistantProvider(Protocol):
-    """Answers one natural-language question against AcademicOS data."""
+    """Answers one natural-language question against AcademicOS data.
+
+    Sprint-6 M4 — optional streaming capability. A provider MAY additionally
+    expose ``stream(...)`` (below); callers MUST detect it via
+    ``getattr(provider, "stream", None)`` and fall back to ``answer`` when
+    absent (deterministic single completion). Streaming is strictly
+    additive — the synchronous contract is unchanged.
+    """
 
     @property
     def name(self) -> str:
@@ -58,5 +65,33 @@ class AssistantProvider(Protocol):
         the Prompt Builder; transport providers map it onto their wire
         format. Providers MUST NOT construct prompts themselves — prompt
         construction is the Prompt Builder's single responsibility.
+        """
+        ...
+
+    def stream(
+        self,
+        question: str,
+        asked_by: str,
+        *,
+        context: AssistantContext | None = None,
+        prompt: AssistantPrompt | None = None,
+    ):
+        """OPTIONAL (S6 M4): stream partial tokens, then one completion.
+
+        Yields event dicts with exactly two shapes:
+
+        - ``{"type": "token", "delta": str}`` — one per partial chunk
+          (non-empty text only, in wire order);
+        - ``{"type": "complete", "answer": AssistantAnswerOutput}`` —
+          exactly once, after the final token, carrying the FULL answer
+          (the provider assembles it from the streamed text, same as
+          ``answer`` would).
+
+        The stream is a synchronous iterator. On failure the provider MUST
+        raise (``LlmProviderError`` for the LLM transport); the composition
+        layer (``FallbackAssistantProvider.stream``) converts that into a
+        deterministic single completion. Cancellation is cooperative:
+        closing the iterator (``GeneratorExit``) aborts without further
+        events.
         """
         ...
