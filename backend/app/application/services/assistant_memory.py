@@ -19,6 +19,10 @@ retrieval pipeline for the memory recall:
 3. **Knowledge** — non-conversation objects the graph leg discovered from
    the conversation anchors (graph-aware retrieval) become
    ``KnowledgeItem`` entries.
+4. **Review ranking** (Sprint-8 M3) — recalled memories are re-ranked by
+   human review history when a ``ReviewDecisionStore`` is wired: approved
+   conversations rise, rejected ones fall, pending/unreviewed stay
+   neutral (``review_boost``). Stable — ties keep the retrieval order.
 
 The service implements the ``AssistantMemoryRetriever`` port — the
 retrieval abstraction reusable by future RAG consumers.
@@ -29,8 +33,13 @@ from dataclasses import replace
 
 from app.application.dtos import assistant as dto
 from app.application.ports.assistant_memory import AssistantMemoryRetriever
+from app.application.ports.review_decision_store import ReviewDecisionStore
 from app.application.services.assistant_retrieval import AssistantRetrievalService
-from app.application.services.assistant_review import _review_status
+from app.application.services.assistant_review import (
+    REVIEW_RATING_MAX,
+    ReviewDecision,
+    _review_status,
+)
 from app.application.use_cases.assistant.helpers import (
     last_message_at,
     message_output,
@@ -45,6 +54,37 @@ DEFAULT_MEMORY_LIMIT = 10
 DEFAULT_SEARCH_LIMIT = 8
 DEFAULT_GRAPH_ANCHORS = 3
 DEFAULT_GRAPH_DEPTH = 2
+
+
+def review_boost(decision: ReviewDecision | None, status: str) -> float:
+    """The deterministic ranking contribution of a conversation's review
+    history (Sprint-8 M3).
+
+    Learning from human feedback: an APPROVED conversation is boosted by
+    ``(rating/5) * confidence`` (defaults 5 and 1.0 — a bare approve is a
+    full-strength positive); a REJECTED conversation is penalized by the
+    same magnitude (negative). Everything else is NEUTRAL (0.0):
+
+    - ``status`` pending or "" — an unreviewed / re-pended latest answer
+      never influences ranking (decisions are only recorded on
+      approve/reject, so pending conversations have no decisions by
+      construction — this gate also covers a re-pended conversation whose
+      earlier answers were reviewed, preventing stale influence);
+    - ``decision`` None — a reviewed status without an audit row (legacy
+      pre-S7 M5 data): nothing to learn from;
+    - ``decision.decision != status`` — a stale mismatch (defensive):
+      the live status is the authority.
+
+    Deterministic: a pure function of the immutable decision record.
+    """
+    if status not in (dto.REVIEW_APPROVED, dto.REVIEW_REJECTED):
+        return 0.0
+    if decision is None or decision.decision != status:
+        return 0.0
+    magnitude = (
+        (decision.rating or REVIEW_RATING_MAX) / REVIEW_RATING_MAX
+    ) * (decision.confidence if decision.confidence is not None else 1.0)
+    return magnitude if status == dto.REVIEW_APPROVED else -magnitude
 
 
 class AssistantMemoryService(AssistantMemoryRetriever):
@@ -173,4 +213,5 @@ __all__ = [
     "DEFAULT_GRAPH_DEPTH",
     "DEFAULT_MEMORY_LIMIT",
     "DEFAULT_SEARCH_LIMIT",
+    "review_boost",
 ]

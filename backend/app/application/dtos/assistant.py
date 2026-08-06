@@ -375,6 +375,9 @@ class MemoryItem:
     citations: tuple[AssistantCitation, ...] = ()
     review_status: str = ""  # "" | pending | approved | rejected
     score: float = 0.0
+    # Sprint-8 M3 — the review-feedback ranking contribution (in [-1, 1];
+    # 0.0 when neutral). The recalled ORDER reflects score + review_score.
+    review_score: float = 0.0
     sources: tuple[str, ...] = ()
     version: int = 1
     last_message_at: str | None = None

@@ -23,6 +23,7 @@ from app.application.dtos.assistant import (
     AssistantCitation,
     REVIEW_APPROVED,
     REVIEW_PENDING,
+    REVIEW_REJECTED,
 )
 from app.application.services.assistant_memory import AssistantMemoryService
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
@@ -481,3 +482,51 @@ def test_evaluation_is_compatible_with_memory_wiring(world):
     enriched = run_eval_case(_ask_use_case(world, _RecordingProvider(), with_memory=True), case)
     assert plain == enriched
     assert plain.passed
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M3 — review-feedback ranking (pure function)
+# ---------------------------------------------------------------------------
+def _decision(decision: str, *, rating=None, confidence=None):
+    from app.application.services.assistant_review import ReviewDecision
+
+    return ReviewDecision(
+        decision_id="d1",
+        conversation_id="obj:ai_conversation:1",
+        decision=decision,
+        reviewer="obj:user:reviewer-0001",
+        previous_status="pending",
+        rating=rating,
+        confidence=confidence,
+        created_at="2026-08-06T10:00:00+00:00",
+    )
+
+
+def test_review_boost_approved_is_positive_and_scaled():
+    from app.application.services.assistant_memory import review_boost
+
+    assert review_boost(_decision(REVIEW_APPROVED, rating=5, confidence=1.0), REVIEW_APPROVED) == pytest.approx(1.0)
+    assert review_boost(_decision(REVIEW_APPROVED, rating=3, confidence=0.5), REVIEW_APPROVED) == pytest.approx(0.3)
+    assert review_boost(_decision(REVIEW_APPROVED, rating=1, confidence=0.1), REVIEW_APPROVED) == pytest.approx(0.02)
+    # A bare approve (no rating/confidence) is a full-strength positive.
+    assert review_boost(_decision(REVIEW_APPROVED), REVIEW_APPROVED) == pytest.approx(1.0)
+
+
+def test_review_boost_rejected_is_negative_and_scaled():
+    from app.application.services.assistant_memory import review_boost
+
+    assert review_boost(_decision(REVIEW_REJECTED, rating=2, confidence=0.4), REVIEW_REJECTED) == pytest.approx(-0.16)
+    assert review_boost(_decision(REVIEW_REJECTED), REVIEW_REJECTED) == pytest.approx(-1.0)
+
+
+def test_review_boost_is_neutral_for_pending_unreviewed_and_stale():
+    from app.application.services.assistant_memory import review_boost
+
+    approved = _decision(REVIEW_APPROVED, rating=5, confidence=1.0)
+    # Pending / never reviewed: neutral by construction.
+    assert review_boost(approved, REVIEW_PENDING) == 0.0
+    assert review_boost(None, "") == 0.0
+    assert review_boost(None, REVIEW_APPROVED) == 0.0
+    # Stale mismatch: the live status is the authority.
+    assert review_boost(approved, REVIEW_REJECTED) == 0.0
+    assert review_boost(_decision(REVIEW_REJECTED), REVIEW_APPROVED) == 0.0
