@@ -292,6 +292,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         IntakeItemStatus.RETRYING.value: 0,
         IntakeItemStatus.AWAITING_REVIEW.value: 0,
         IntakeItemStatus.ERROR.value: 0,
+        IntakeItemStatus.COMMITTED.value: 0,
     }
     hashed = 0
     staged = 0
@@ -321,7 +322,11 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
             needs_ocr += 1
         if fact.status is IntakeItemStatus.ERROR and fact.attempts < RETRY_LIMIT:
             retryable += 1
-    processed = counts[IntakeItemStatus.AWAITING_REVIEW.value] + counts[IntakeItemStatus.ERROR.value]
+    processed = (
+        counts[IntakeItemStatus.AWAITING_REVIEW.value]
+        + counts[IntakeItemStatus.COMMITTED.value]
+        + counts[IntakeItemStatus.ERROR.value]
+    )
     percent = round(100.0 * processed / total, 1) if total else (100.0 if enumerated else 0.0)
     return {
         "total_items": total,
@@ -332,6 +337,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         "hashed": hashed,
         "staged_items": staged,
         "awaiting_review": counts[IntakeItemStatus.AWAITING_REVIEW.value],
+        "committed_items": counts[IntakeItemStatus.COMMITTED.value],
         "errors": counts[IntakeItemStatus.ERROR.value],
         "total_bytes": total_bytes,
         "by_extension": dict(sorted(by_extension.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -603,6 +609,7 @@ def intake_session_progress_of(
         "staged": summary["staged"],
         "hashed": summary["hashed"],
         "awaiting_review": summary["awaiting_review"],
+        "committed_items": summary["committed_items"],
         "errors": summary["errors"],
         # M2.3 — queue counters
         "extracting": summary["extracting"],
@@ -674,6 +681,7 @@ def intake_progress_output(obj: UniversalObject, items: list[UniversalObject]) -
             "staged": progress["staged"],
             "hashed": progress["hashed"],
             "awaiting_review": progress["awaiting_review"],
+            "committed": progress["committed_items"],
             "errors": progress["errors"],
             "extracting": progress["extracting"],
             "retrying": progress["retrying"],
