@@ -527,6 +527,11 @@ def test_commit_success_then_double_submit_409(harness):
     assert again.status_code == 409
     assert out["document_id"] in again.json()["detail"]
 
+    # Preview after success also reports the conflict (409, not 500).
+    preview_again = client.get(f"{API}/items/{item.id}/commit-preview")
+    assert preview_again.status_code == 409
+    assert out["document_id"] in preview_again.json()["detail"]
+
     # Exactly one document.
     assert len(repo.find_by_type(ObjectType.DOCUMENT)) == 1
 

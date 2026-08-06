@@ -339,6 +339,10 @@ def commit_item_preview(
         raise _not_found(exc) from exc
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
+    except ObjectAlreadyExistsError as exc:
+        # Previewing an already-committed item reports the same conflict as
+        # the commit (409 with the existing document id).
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return commit_item_response(out)
 
 
