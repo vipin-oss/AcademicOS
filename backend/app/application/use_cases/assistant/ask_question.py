@@ -9,6 +9,11 @@ the orchestrator):
 3. retrieve search context      — ``AssistantRetrievalService`` (hybrid search)
 4. retrieve graph context       — same service (graph runtime, BFS)
 5. merge context                — same service (dedupe, deterministic order)
+5b. recall memory               — AssistantMemoryService (Sprint-8 M2):
+                                 prior conversations + graph knowledge,
+                                 current thread excluded; rendered as
+                                 distinct prompt sections by the Prompt
+                                 Builder
 6. enforce permissions          — applied INSIDE the reused consumers
                                  (search use case + graph runtime gate every
                                  candidate through the R4 evaluator)
@@ -34,6 +39,7 @@ from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos import assistant as dto
+from app.application.ports.assistant_memory import AssistantMemoryRetriever
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
@@ -67,6 +73,7 @@ class AskQuestionUseCase:
         review_queue: AssistantReviewQueue | None = None,
         registry: ModelRegistry | None = None,
         provider_factory=None,
+        memory: AssistantMemoryRetriever | None = None,
     ) -> None:
         self._repository = repository
         self._provider = provider
@@ -78,6 +85,7 @@ class AskQuestionUseCase:
         self._review_queue = review_queue
         self._registry = registry
         self._provider_factory = provider_factory
+        self._memory = memory
 
     def execute(self, command: AskQuestionCommand) -> dto.AskOutput:
         """Normal mode — the synchronous pipeline (Sprint-6 M1-M3), with
@@ -332,4 +340,17 @@ class AskQuestionUseCase:
         if asker is None or asker.object_type is not ObjectType.USER:
             return None  # no retrievable principal
         result = self._retrieval.retrieve(question, asker)
-        return self._context_builder.build(conversation, question, result)
+        # Sprint-8 M2 — memory-augmented asks: automatically recall prior
+        # conversations (and their graph-discovered knowledge) through the
+        # SAME memory service the recall endpoint exposes. The current
+        # conversation is excluded — its history is already in the prompt.
+        memory_recall = None
+        if self._memory is not None:
+            memory_recall = self._memory.recall(
+                question,
+                asker,
+                exclude_conversation_id=str(conversation.id),
+            )
+        return self._context_builder.build(
+            conversation, question, result, memory=memory_recall
+        )

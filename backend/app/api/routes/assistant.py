@@ -142,6 +142,16 @@ def get_assistant_retrieval(
     return AssistantRetrievalService(search, graph)
 
 
+def get_assistant_memory(
+    db: Session = Depends(get_db),
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+) -> AssistantMemoryService:
+    """Composition seam (Sprint-8 M1): assistant memory over the SAME
+    retrieval pipeline as the ask flow. Overridable in tests."""
+    return AssistantMemoryService(repo, retrieval)
+
+
 def _not_found(exc: ObjectNotFoundError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
@@ -201,10 +211,11 @@ def ask_question(
     provider: AssistantProvider = Depends(get_assistant_provider),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
     provider_factory=Depends(get_assistant_provider_factory),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
     user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = _ask_use_case(repo, provider, retrieval, provider_factory).execute(
+        out = _ask_use_case(repo, provider, retrieval, provider_factory, memory).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
@@ -222,6 +233,7 @@ def _ask_use_case(
     provider: AssistantProvider,
     retrieval: AssistantRetrievalService,
     provider_factory=None,
+    memory: AssistantMemoryService | None = None,
 ) -> AskQuestionUseCase:
     """One construction site for the ask pipeline (sync and stream modes)."""
     prompt_registry = _default_prompt_registry()
@@ -231,6 +243,9 @@ def _ask_use_case(
         retrieval=retrieval,
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(prompt_registry=prompt_registry),
+        # S8 M2: memory-augmented asks — prior conversations are recalled
+        # before answering and become distinct prompt sections.
+        memory=memory,
         # S7 M2: the model registry drives per-conversation selection.
         registry=registry_from_settings(settings),
         provider_factory=provider_factory or build_provider,
@@ -273,6 +288,7 @@ def ask_question_stream(
     provider: AssistantProvider = Depends(get_assistant_provider),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
     provider_factory=Depends(get_assistant_provider_factory),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Streaming ask (Sprint-6 M4): Server-Sent Events over the SAME
@@ -280,7 +296,7 @@ def ask_question_stream(
     ``completion`` (verified answer + persisted conversation, mirroring
     the sync response shape) or ``error`` (nothing persisted). The client
     can disconnect at any time — partial tokens are never stored."""
-    use_case = _ask_use_case(repo, provider, retrieval, provider_factory)
+    use_case = _ask_use_case(repo, provider, retrieval, provider_factory, memory)
     command = AskQuestionCommand(
         input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
     )
@@ -311,16 +327,6 @@ def ask_question_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-def get_assistant_memory(
-    db: Session = Depends(get_db),
-    repo: SQLAlchemyObjectRepository = Depends(_repository),
-    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
-) -> AssistantMemoryService:
-    """Composition seam (Sprint-8 M1): assistant memory over the SAME
-    retrieval pipeline as the ask flow. Overridable in tests."""
-    return AssistantMemoryService(repo, retrieval)
 
 
 @router.get("/memory/recall")

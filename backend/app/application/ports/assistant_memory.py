@@ -27,11 +27,14 @@ class AssistantMemoryRetriever(Protocol):
         user: UniversalObject,
         *,
         limit: int = 10,
+        exclude_conversation_id: str | None = None,
     ) -> MemoryRecall:
         """The memory recall for ``query`` as seen by ``user``.
 
         ``user`` is the authenticated principal: its READ permissions gate
-        every recalled item inside the reused retrieval consumers. The
-        result is deterministic (fixed ordering, no randomness).
+        every recalled item inside the reused retrieval consumers.
+        ``exclude_conversation_id`` drops one conversation from the
+        recalled memories (the ask pipeline excludes the current thread).
+        The result is deterministic (fixed ordering, no randomness).
         """
         ...

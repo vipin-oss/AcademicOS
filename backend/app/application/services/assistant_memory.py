@@ -64,14 +64,19 @@ class AssistantMemoryService(AssistantMemoryRetriever):
         user: UniversalObject,
         *,
         limit: int = DEFAULT_MEMORY_LIMIT,
+        exclude_conversation_id: str | None = None,
     ) -> dto.MemoryRecall:
         """The deterministic memory recall for ``query``.
 
         The search leg is narrowed to conversations; the graph leg then
         discovers related objects from the top conversation anchors.
-        Permission filtering is NOT duplicated here: both legs already
-        apply the shared R4 evaluator, so every recalled item has passed
-        it (the same doctrine as ``AssistantRetrievalService``).
+        ``exclude_conversation_id`` (Sprint-8 M2) drops one conversation
+        from the recalled memories — the ask pipeline excludes the
+        CURRENT thread so it never appears as its own memory (its history
+        is already in the prompt). Permission filtering is NOT duplicated
+        here: both legs already apply the shared R4 evaluator, so every
+        recalled item has passed it (the same doctrine as
+        ``AssistantRetrievalService``).
         """
         result = self._retrieval.retrieve(
             query,
@@ -86,6 +91,8 @@ class AssistantMemoryService(AssistantMemoryRetriever):
         knowledge: list[dto.KnowledgeItem] = []
         for item in result.items:
             if item.object_type == ObjectType.AI_CONVERSATION.value:
+                if exclude_conversation_id and item.object_id == exclude_conversation_id:
+                    continue
                 memory = self._hydrate(item)
                 if memory is not None:
                     conversations.append(memory)

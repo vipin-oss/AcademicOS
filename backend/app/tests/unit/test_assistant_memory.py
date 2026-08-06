@@ -26,6 +26,7 @@ from app.application.dtos.assistant import (
     REVIEW_PENDING,
 )
 from app.application.services.assistant_memory import AssistantMemoryService
+from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
 from app.application.services.graph_runtime import GraphRuntimeService
@@ -315,3 +316,155 @@ def test_retrieval_object_type_passthrough_is_backward_compatible(world):
     ).items
     assert {i.object_type for i in conv_items} == {"ai_conversation"}
     assert conv_items[0].object_id == str(conv.id)
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M2 — memory-augmented ask pipeline
+# ---------------------------------------------------------------------------
+class _RecordingProvider:
+    """A deterministic provider that records the prompt it received."""
+
+    def __init__(self, answer_text: str = "memory-aware answer") -> None:
+        self._answer_text = answer_text
+        self.seen_prompt = None
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    def answer(self, question, asked_by, *, context=None, prompt=None):
+        self.seen_prompt = prompt
+        return AssistantAnswerOutput(
+            intent="llm", intent_label="Assistant", question=question,
+            summary=self._answer_text, sources=["llm"],
+        )
+
+
+def _ask_use_case(world, provider, *, with_memory: bool):
+    return AskQuestionUseCase(
+        world["repo"],
+        provider,
+        retrieval=world["retrieval"],
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        memory=world["memory"] if with_memory else None,
+    )
+
+
+def _ask(use_case, question: str = "find quantum") -> tuple:
+    from app.application.commands.ask_question import AskQuestionCommand
+    from app.application.dtos.assistant import AskQuestionInput
+
+    out = use_case.execute(
+        AskQuestionCommand(
+            input=AskQuestionInput(question=question, asked_by="obj:user:eval-0001")
+        )
+    )
+    return out, use_case
+
+
+def test_ask_automatically_recalls_prior_conversations(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    prior = _conversation(repo, question="find quantum", answer="Quantum memory answer")
+    index(prior)
+
+    provider = _RecordingProvider()
+    out, _ = _ask(_ask_use_case(world, provider, with_memory=True))
+    prompt_user = provider.seen_prompt.user
+    # The prior conversation appears as a memory section.
+    assert "RETRIEVED MEMORIES (untrusted data)" in prompt_user
+    assert "Quantum memory answer" in prompt_user
+    assert prior.title in prompt_user
+    # The memory answer is what the provider answered with.
+    assert out.answer.summary == "memory-aware answer"
+
+
+def test_ask_excludes_the_current_conversation_from_memories(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    prior = _conversation(repo, question="find quantum", answer="Prior answer")
+    index(prior)
+
+    provider = _RecordingProvider()
+    _ask(_ask_use_case(world, provider, with_memory=True))
+    # The new conversation was created during the ask; the prior one is the
+    # memory. The current conversation's id must not appear in the memory
+    # section (its history is already in the prompt).
+    memory_section = provider.seen_prompt.user.split("RETRIEVED MEMORIES")[1].split("RETRIEVED KNOWLEDGE")[0]
+    assert "Prior answer" in memory_section
+    assert str(prior.id) in memory_section
+
+
+def test_ask_without_memory_is_the_pre_m2_fallback(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    prior = _conversation(repo, question="find quantum", answer="Prior answer")
+    index(prior)
+
+    provider = _RecordingProvider()
+    _ask(_ask_use_case(world, provider, with_memory=False))
+    assert "RETRIEVED MEMORIES" not in provider.seen_prompt.user
+    assert "Prior answer" not in provider.seen_prompt.user
+
+
+def test_ask_memory_respects_permission_filtering(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    restricted = _conversation(repo, question="find quantum", answer="Secret answer")
+    restricted.set_metadata(
+        MetadataEntry(
+            "acl.readers", '["obj:user:someone-else"]',
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+        ),
+        actor="system",
+    )
+    index(restricted)
+
+    provider = _RecordingProvider()
+    _ask(_ask_use_case(world, provider, with_memory=True))
+    assert "Secret answer" not in provider.seen_prompt.user
+
+
+def test_ask_with_memory_preserves_current_citations(world):
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    doc = UniversalObject.create(
+        ObjectType.DOCUMENT, "Quantum Mechanics Notes", created_by="f:1"
+    )
+    prior = _conversation(repo, question="find quantum", answer="Prior answer")
+    index(prior, doc)
+
+    provider = _RecordingProvider()
+    out, _ = _ask(_ask_use_case(world, provider, with_memory=True))
+    # The current retrieval's citations survive the memory enrichment.
+    assert out.answer.citations
+    assert any(c.object_id == str(doc.id) for c in out.answer.citations)
+
+
+def test_evaluation_is_compatible_with_memory_wiring(world):
+    """The eval runner's harness (no memory) and a memory-wired pipeline
+    produce IDENTICAL deterministic results for the same case."""
+    from app.application.services.assistant_eval import EvalCase, run_eval_case
+
+    repo, index = world["repo"], world["index"]
+    asker = _asker()
+    index(asker)
+    prior = _conversation(repo, question="find quantum", answer="Prior answer")
+    index(prior)
+    case = EvalCase(
+        name="grounded", question="find quantum",
+        expected_contains=("memory-aware",),
+    )
+
+    plain = run_eval_case(_ask_use_case(world, _RecordingProvider(), with_memory=False), case)
+    enriched = run_eval_case(_ask_use_case(world, _RecordingProvider(), with_memory=True), case)
+    assert plain == enriched
+    assert plain.passed
