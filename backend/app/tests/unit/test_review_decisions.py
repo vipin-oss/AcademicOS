@@ -12,12 +12,25 @@ import pytest
 from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.application.dtos.assistant import REVIEW_APPROVED, REVIEW_REJECTED
+from app.application.dtos.assistant import (
+    REVIEW_APPROVED,
+    REVIEW_PENDING,
+    REVIEW_REJECTED,
+)
 from app.application.services.assistant_review import (
     REVIEW_NOTES_MAX,
     ReviewDecision,
+    _review_status,
 )
-from app.infrastructure.db.models.object_model import Base
+# Register every table before ``Base.metadata.create_all`` (the repository
+# writes object_relationships / object_versions / outbox_events too).
+from app.infrastructure.db.models.object_model import Base  # noqa: E402
+from app.infrastructure.db.models.object_relationship_model import (  # noqa: E402,F401
+    ObjectRelationshipModel,
+)
+from app.infrastructure.db.models.object_version_model import ObjectVersionModel  # noqa: E402,F401
+from app.infrastructure.db.models.outbox_model import OutboxEventModel  # noqa: E402,F401
+from app.infrastructure.db.models.search_document_model import SearchDocumentModel  # noqa: E402,F401
 from app.infrastructure.persistence.review_decision_store import (
     SQLReviewDecisionStore,
 )
@@ -140,3 +153,172 @@ def test_recent_returns_the_newest_first_workspace_feed(db, store):
     assert [d.decision_id for d in store.recent(10)] == ["d2", "d3", "d1"]
     assert [d.decision_id for d in store.recent(2)] == ["d2", "d3"]
     assert store.recent(0) == []
+
+
+# ------------------------------------------------------------- the queue
+def _queue_world(db):
+    """A conversation with an assistant answer, pending review, plus the
+    queue wired with a real decision store."""
+    from app.application.dtos.assistant import AssistantAnswerOutput
+    from app.application.services.assistant_review import AssistantReviewQueue
+    from app.application.use_cases.assistant.helpers import (
+        append_message,
+        create_conversation_object,
+    )
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    repo = SQLAlchemyObjectRepository(db)
+    conv = create_conversation_object(repo, "New conversation", "u:1", title_auto=True)
+    append_message(conv, "user", "find quantum", None)
+    append_message(
+        conv,
+        "assistant",
+        "The grounded answer.",
+        AssistantAnswerOutput(
+            intent="llm", intent_label="Assistant", question="find quantum",
+            summary="The grounded answer.", sources=["llm"],
+        ),
+    )
+    repo.save(conv)
+    queue = AssistantReviewQueue(
+        repo, decision_store=SQLReviewDecisionStore(db)
+    )
+    queue.enqueue(str(conv.id))
+    return repo, queue, str(conv.id)
+
+
+def test_approve_records_the_full_human_feedback(db):
+    repo, queue, conv_id = _queue_world(db)
+    outcome = queue.approve(
+        conv_id,
+        reviewer="obj:user:reviewer-0001",
+        notes="Well grounded, minor wording.",
+        rating=4,
+        confidence=0.85,
+        eval_run_id="run-abc",
+    )
+    assert outcome.decision is not None
+    assert outcome.decision.decision == REVIEW_APPROVED
+    assert outcome.decision.reviewer == "obj:user:reviewer-0001"
+    assert outcome.decision.notes == "Well grounded, minor wording."
+    assert outcome.decision.rating == 4
+    assert outcome.decision.confidence == 0.85
+    assert outcome.decision.eval_run_id == "run-abc"
+    assert outcome.decision.previous_status == REVIEW_PENDING
+    assert outcome.decision.created_at
+
+    trail = queue.decisions(conv_id)
+    assert len(trail) == 1
+    assert trail[0] == outcome.decision
+
+
+def test_review_history_records_every_action_including_reviews(db):
+    repo, queue, conv_id = _queue_world(db)
+    queue.approve(conv_id, reviewer="obj:user:r1", notes="Looks good.")
+    queue.reject(conv_id, reviewer="obj:user:r2", notes="Factual error.",
+                 rating=2, confidence=0.4)
+    queue.approve(conv_id, reviewer="obj:user:r3", notes="Fixed.")  # re-review
+
+    trail = queue.decisions(conv_id)
+    assert [d.decision for d in trail] == [
+        REVIEW_APPROVED, REVIEW_REJECTED, REVIEW_APPROVED,
+    ]
+    assert [d.previous_status for d in trail] == [
+        REVIEW_PENDING, REVIEW_APPROVED, REVIEW_REJECTED,
+    ]
+    assert [d.reviewer for d in trail] == ["obj:user:r1", "obj:user:r2", "obj:user:r3"]
+    # The live state reflects the last action.
+    from app.application.services.assistant_review import _review_status
+    from app.application.use_cases.assistant.helpers import get_conversation_object
+
+    assert _review_status(get_conversation_object(repo, conv_id)) == REVIEW_APPROVED
+    assert queue.pending() == []
+
+
+def test_recent_decisions_is_the_workspace_feed(db):
+    repo, queue, conv_id = _queue_world(db)
+    queue.approve(conv_id, reviewer="obj:user:r1")
+    # A second conversation in the feed.
+    from app.application.dtos.assistant import AssistantAnswerOutput
+    from app.application.services.assistant_review import AssistantReviewQueue
+    from app.application.use_cases.assistant.helpers import (
+        append_message,
+        create_conversation_object,
+    )
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    repo2 = SQLAlchemyObjectRepository(db)
+    conv2 = create_conversation_object(repo2, "Second", "u:1", title_auto=True)
+    append_message(conv2, "user", "q", None)
+    append_message(
+        conv2, "assistant", "Another answer.",
+        AssistantAnswerOutput(
+            intent="llm", intent_label="Assistant", question="q",
+            summary="Another answer.", sources=["llm"],
+        ),
+    )
+    repo2.save(conv2)
+    queue2 = AssistantReviewQueue(repo2, decision_store=SQLReviewDecisionStore(db))
+    queue2.enqueue(str(conv2.id))
+    queue2.reject(str(conv2.id), reviewer="obj:user:r2", rating=1)
+
+    feed = queue.recent_decisions(10)
+    assert [d.decision for d in feed] == [REVIEW_REJECTED, REVIEW_APPROVED]
+    assert feed[0].conversation_id == str(conv2.id)
+    assert [d.decision_id for d in queue.recent_decisions(1)] == [feed[0].decision_id]
+
+
+def test_queue_without_decision_store_is_backward_compatible(db):
+    from app.application.dtos.assistant import AssistantAnswerOutput
+    from app.application.services.assistant_review import AssistantReviewQueue
+    from app.application.use_cases.assistant.helpers import (
+        append_message,
+        create_conversation_object,
+        get_conversation_object,
+    )
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    repo = SQLAlchemyObjectRepository(db)
+    conv = create_conversation_object(repo, "New conversation", "u:1", title_auto=True)
+    append_message(conv, "user", "q", None)
+    append_message(
+        conv, "assistant", "Answer.",
+        AssistantAnswerOutput(
+            intent="llm", intent_label="Assistant", question="q",
+            summary="Answer.", sources=["llm"],
+        ),
+    )
+    repo.save(conv)
+    queue = AssistantReviewQueue(repo)  # no store -> pre-M5 behavior
+    queue.enqueue(str(conv.id))
+
+    outcome = queue.approve(str(conv.id))
+    assert outcome.decision is None  # no audit row without a store
+    assert outcome.conversation.id == str(conv.id)
+    assert _review_status(get_conversation_object(repo, str(conv.id))) == REVIEW_APPROVED
+    assert queue.decisions(str(conv.id)) == []
+    assert queue.recent_decisions(10) == []
+
+
+def test_no_decision_recorded_when_nothing_to_review(db):
+    from app.application.services.assistant_review import AssistantReviewQueue
+    from app.application.use_cases.assistant.helpers import create_conversation_object
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    repo = SQLAlchemyObjectRepository(db)
+    conv = create_conversation_object(repo, "Empty", "u:1", title_auto=True)
+    repo.save(conv)
+    queue = AssistantReviewQueue(
+        repo, decision_store=SQLReviewDecisionStore(db)
+    )
+    outcome = queue.approve(str(conv.id))
+    assert outcome.decision is None  # nothing to review -> no audit noise
+    assert queue.decisions(str(conv.id)) == []
