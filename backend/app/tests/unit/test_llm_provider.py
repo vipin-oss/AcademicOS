@@ -7,6 +7,8 @@ fakes the wire — no network in CI.
 """
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -249,3 +251,184 @@ def test_fallback_chain_passes_through_success():
     out = chain.answer("q", "u:1")
     assert out.summary == "llm:q"
     assert calls["n"] == 1
+
+
+# ------------------------------------------------------------- streaming (M4)
+
+
+def _sse_content(*chunks: str) -> bytes:
+    """OpenAI-style SSE body: one data line per chunk, then [DONE]."""
+    lines = [f"data: {json.dumps({'choices': [{'delta': {'content': c}}]})}" for c in chunks]
+    lines.append("data: [DONE]")
+    return ("\n\n".join(lines) + "\n\n").encode()
+
+
+def _stream_prompt() -> AssistantPrompt:
+    return AssistantPrompt(
+        system="sys",
+        user="RETRIEVED CONTEXT:\n- [1] [document] Paper\n\nQUESTION: find quantum",
+        citations=(),
+    )
+
+
+def test_stream_yields_tokens_then_completion():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, content=_sse_content("Hello", " world", "!"))
+
+    provider = _provider(handler)
+    events = list(provider.stream("find quantum", "u:1", prompt=_stream_prompt()))
+
+    tokens = [e for e in events if e["type"] == "token"]
+    assert [t["delta"] for t in tokens] == ["Hello", " world", "!"]
+    completes = [e for e in events if e["type"] == "complete"]
+    assert len(completes) == 1
+    answer = completes[0]["answer"]
+    assert answer.summary == "Hello world!"
+    assert answer.intent == "llm"
+    assert answer.metrics["model"] == "test-model"
+    # The request carried stream=True and the citations.
+    assert captured["body"]["stream"] is True
+    assert captured["body"]["citations"] == []
+
+
+def test_stream_4xx_fails_immediately_no_retries():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(401, json={})
+
+    provider = _provider(handler)
+    with pytest.raises(LlmProviderError, match="401"):
+        list(provider.stream("q", "u:1", prompt=_stream_prompt()))
+    assert calls["n"] == 1
+
+
+def test_stream_connect_error_retries_then_raises():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("connection refused", request=request)
+
+    provider = _provider(handler, retry_attempts=3, retry_backoff_seconds=0)
+    with pytest.raises(LlmProviderError, match="unreachable"):
+        list(provider.stream("q", "u:1", prompt=_stream_prompt()))
+    assert calls["n"] == 3
+
+
+def test_stream_5xx_retries_before_first_token():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, json={})
+
+    provider = _provider(handler, retry_attempts=2, retry_backoff_seconds=0)
+    with pytest.raises(LlmProviderError, match="503"):
+        list(provider.stream("q", "u:1", prompt=_stream_prompt()))
+    assert calls["n"] == 2
+
+
+def test_stream_malformed_chunk_raises_after_tokens():
+    """A malformed SSE chunk after valid tokens raises immediately — the
+    tokens already yielded stand, and the error propagates (the chain
+    converts it into a deterministic fallback completion)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'data: {"choices": [{"delta": {"content": "a"}}]}\n\n'
+            b'data: bad\n\ndata: [DONE]\n\n',
+        )
+
+    provider = _provider(handler)
+    gen = provider.stream("q", "u:1", prompt=_stream_prompt())
+    assert next(gen)["delta"] == "a"
+    with pytest.raises(LlmProviderError, match="unexpected shape"):
+        next(gen)
+
+
+def test_stream_empty_text_raises():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse_content())
+
+    provider = _provider(handler)
+    with pytest.raises(LlmProviderError, match="no text"):
+        list(provider.stream("q", "u:1", prompt=_stream_prompt()))
+
+
+def test_chain_stream_passes_tokens_through():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse_content("token", "s"))
+
+    class Fallback:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            raise AssertionError("fallback must not run on success")
+
+    chain = FallbackAssistantProvider(
+        _provider(handler), Fallback()
+    )
+    events = list(chain.stream("q", "u:1", prompt=_stream_prompt()))
+    assert [e["type"] for e in events] == ["token", "token", "complete"]
+    assert events[-1]["answer"].summary == "tokens"
+
+
+def test_chain_stream_falls_back_on_primary_failure():
+    class BoomStream:
+        name = "boom"
+
+        def stream(self, question, asked_by, *, context=None, prompt=None):
+            yield {"type": "token", "delta": "partial"}
+            raise LlmProviderError("connection lost mid-stream")
+
+    class Fallback:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            return AssistantAnswerOutput(
+                intent="knowledge_search", intent_label="Knowledge search",
+                question=question, summary="fallback answer", sources=["rules"],
+            )
+
+    chain = FallbackAssistantProvider(BoomStream(), Fallback())
+    events = list(chain.stream("q", "u:1", prompt=_stream_prompt()))
+    assert [e["type"] for e in events] == ["token", "complete"]
+    assert events[0]["delta"] == "partial"  # tokens already sent
+    assert events[1]["answer"].summary == "fallback answer"  # then degraded
+
+
+def test_chain_stream_without_primary_stream_yields_single_completion():
+    class NoStream:
+        name = "rules-v1"
+
+        def answer(self, question, asked_by, *, context=None, prompt=None):
+            return AssistantAnswerOutput(
+                intent="knowledge_search", intent_label="Knowledge search",
+                question=question, summary="deterministic", sources=["rules"],
+            )
+
+    chain = FallbackAssistantProvider(NoStream(), NoStream())
+    events = list(chain.stream("q", "u:1"))
+    assert len(events) == 1
+    assert events[0]["type"] == "complete"
+    assert events[0]["answer"].summary == "deterministic"
+
+
+def test_stream_cancellation_closes_without_events():
+    """Closing the iterator mid-stream (client disconnect) must not yield a
+    completion and must propagate GeneratorExit."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse_content("a", "b", "c"))
+
+    provider = _provider(handler)
+    gen = provider.stream("q", "u:1", prompt=_stream_prompt())
+    assert next(gen)["delta"] == "a"
+    gen.close()  # client disconnect: generator closed mid-stream
+    with pytest.raises(StopIteration):
+        next(gen)  # no further events, no completion

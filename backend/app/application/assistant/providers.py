@@ -1115,3 +1115,42 @@ class FallbackAssistantProvider:
         except Exception:  # noqa: BLE001 — the provider boundary must never crash the assistant
             _log.exception("Primary assistant provider failed; using deterministic fallback.")
             return self._fallback.answer(question, asked_by, context=context, prompt=prompt)
+
+    def stream(
+        self,
+        question: str,
+        asked_by: str = DEFAULT_ASKER,
+        *,
+        context: dto.AssistantContext | None = None,
+        prompt: dto.AssistantPrompt | None = None,
+    ):
+        """Stream from the primary; deterministic completion on ANY failure.
+
+        Sprint-6 M4 — the stream-side degradation seam. When the primary
+        cannot stream (no ``stream`` capability) a single completion from
+        its ``answer`` is yielded; when the primary's stream raises —
+        before or mid-stream — the deterministic fallback answers as one
+        completion. ``GeneratorExit`` (client disconnect) propagates
+        without being caught.
+        """
+        stream_fn = getattr(self._primary, "stream", None)
+        if stream_fn is None:
+            yield {
+                "type": "complete",
+                "answer": self._primary.answer(
+                    question, asked_by, context=context, prompt=prompt
+                ),
+            }
+            return
+        try:
+            yield from stream_fn(question, asked_by, context=context, prompt=prompt)
+        except Exception:  # noqa: BLE001 — the provider boundary must never crash the assistant
+            _log.exception(
+                "Primary assistant provider stream failed; using deterministic fallback."
+            )
+            yield {
+                "type": "complete",
+                "answer": self._fallback.answer(
+                    question, asked_by, context=context, prompt=prompt
+                ),
+            }

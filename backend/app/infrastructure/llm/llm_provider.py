@@ -22,6 +22,7 @@ Failure doctrine:
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict
 
@@ -135,6 +136,107 @@ class LlmAssistantProvider:
                 )
             return self._parse(response)
         raise LlmProviderError(f"LLM request failed: {last_error}")  # pragma: no cover
+
+    # ------------------------------------------------------------- streaming
+    def stream(
+        self,
+        question: str,
+        asked_by: str,
+        *,
+        context: AssistantContext | None = None,
+        prompt: AssistantPrompt | None = None,
+    ):
+        """Stream partial tokens, then one completion (Sprint-6 M4).
+
+        Synchronous iterator over the same deterministic request the sync
+        path sends. Retries are bounded and apply ONLY before the first
+        token (transport errors + 5xx) — once streaming has started a
+        failure raises immediately. 4xx and malformed chunks raise
+        immediately (parity with the sync path). The completion carries
+        the full answer assembled from the streamed text.
+        """
+        del context, asked_by  # transport only: the prompt is the input
+        if prompt is None:
+            raise LlmProviderError("No prompt supplied to the LLM provider.")
+        body = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": prompt.system},
+                {"role": "user", "content": prompt.user},
+            ],
+            "temperature": 0,
+            "stream": True,
+            "citations": [asdict(citation) for citation in prompt.citations],
+        }
+        url = f"{self._base_url}/chat/completions"
+        chunks: list[str] = []
+        started = False
+        last_error: Exception | None = None
+        for attempt in range(self._retry_attempts):
+            try:
+                with self._client.stream("POST", url, json=body) as response:
+                    if response.status_code in _NO_RETRY_STATUS:
+                        raise LlmProviderError(
+                            f"LLM endpoint rejected the request (HTTP {response.status_code})."
+                        )
+                    if response.status_code != 200:
+                        last_error = LlmProviderError(
+                            f"LLM endpoint error (HTTP {response.status_code})."
+                        )
+                        if attempt < self._retry_attempts - 1:
+                            time.sleep(self._retry_backoff_seconds)
+                            continue
+                        raise last_error
+                    started = True  # past the status gate: no more retries
+                    for line in response.iter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        payload = line[len("data:"):].strip()
+                        if payload == "[DONE]":
+                            break
+                        delta = self._extract_delta(payload)
+                        if delta:
+                            chunks.append(delta)
+                            yield {"type": "token", "delta": delta}
+                    if not chunks:
+                        raise LlmProviderError("LLM stream contained no text.")
+                    yield {
+                        "type": "complete",
+                        "answer": self._build_answer(question, chunks),
+                    }
+                    return
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if started or attempt == self._retry_attempts - 1:
+                    raise LlmProviderError(
+                        f"LLM endpoint unreachable after {self._retry_attempts} attempts: {exc}"
+                    ) from exc
+                time.sleep(self._retry_backoff_seconds)
+        raise LlmProviderError(f"LLM stream failed: {last_error}")  # pragma: no cover
+
+    @staticmethod
+    def _extract_delta(payload: str) -> str:
+        """The text of one SSE data chunk (OpenAI delta or message form)."""
+        try:
+            data = json.loads(payload)
+            choice = data["choices"][0]
+            delta = choice.get("delta") or choice.get("message") or {}
+            content = delta.get("content")
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise LlmProviderError("LLM stream had an unexpected shape.") from exc
+        return str(content) if content else ""
+
+    def _build_answer(self, question: str, chunks: list[str]) -> AssistantAnswerOutput:
+        """Assemble the full answer from the streamed text (same shape the
+        sync path produces)."""
+        return AssistantAnswerOutput(
+            intent="llm",
+            intent_label="Assistant",
+            question=question.strip(),
+            summary="".join(chunks).strip(),
+            sources=["llm"],
+            metrics={"provider": PROVIDER_NAME, "model": self._model},
+        )
 
     @staticmethod
     def _parse(response: httpx.Response) -> str:
