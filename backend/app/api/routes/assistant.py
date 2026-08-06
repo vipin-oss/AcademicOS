@@ -105,6 +105,12 @@ def get_assistant_provider(
     return build_provider(registry.default(), repo)
 
 
+def get_assistant_provider_factory():
+    """The provider factory used for per-conversation model selection
+    (Sprint-7 M2). Overridable in tests to inject transports."""
+    return build_provider
+
+
 def get_assistant_retrieval(
     db: Session = Depends(get_db),
     vector_repository: VectorRepository | None = Depends(get_vector_repository),
@@ -183,10 +189,11 @@ def ask_question(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     provider: AssistantProvider = Depends(get_assistant_provider),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+    provider_factory=Depends(get_assistant_provider_factory),
     user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = _ask_use_case(repo, provider, retrieval).execute(
+        out = _ask_use_case(repo, provider, retrieval, provider_factory).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
@@ -203,6 +210,7 @@ def _ask_use_case(
     repo: SQLAlchemyObjectRepository,
     provider: AssistantProvider,
     retrieval: AssistantRetrievalService,
+    provider_factory=None,
 ) -> AskQuestionUseCase:
     """One construction site for the ask pipeline (sync and stream modes)."""
     prompt_registry = _default_prompt_registry()
@@ -214,7 +222,7 @@ def _ask_use_case(
         prompt_builder=AssistantPromptBuilder(prompt_registry=prompt_registry),
         # S7 M2: the model registry drives per-conversation selection.
         registry=registry_from_settings(settings),
-        provider_factory=build_provider,
+        provider_factory=provider_factory or build_provider,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         # Human review gate (S6 M5): when enabled, every fresh answer is
@@ -253,6 +261,7 @@ def ask_question_stream(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     provider: AssistantProvider = Depends(get_assistant_provider),
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+    provider_factory=Depends(get_assistant_provider_factory),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Streaming ask (Sprint-6 M4): Server-Sent Events over the SAME
@@ -260,7 +269,7 @@ def ask_question_stream(
     ``completion`` (verified answer + persisted conversation, mirroring
     the sync response shape) or ``error`` (nothing persisted). The client
     can disconnect at any time — partial tokens are never stored."""
-    use_case = _ask_use_case(repo, provider, retrieval)
+    use_case = _ask_use_case(repo, provider, retrieval, provider_factory)
     command = AskQuestionCommand(
         input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
     )

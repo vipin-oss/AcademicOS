@@ -530,6 +530,26 @@ def test_model_selection_over_http_pin_override_invalid(harness):
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
         _install_llm_chain(handler, repo)
+        # The registry-driven factory must use the same MockTransport.
+        from app.application.services.model_registry import ModelSpec as _MS
+        from app.application.assistant.providers import (
+            FallbackAssistantProvider as _FAP,
+            RuleBasedAssistantProvider as _RBAP,
+        )
+        from app.infrastructure.llm.llm_provider import LlmAssistantProvider as _LAP
+        from app.api.routes.assistant import get_assistant_provider_factory
+
+        _client = httpx.Client(transport=httpx.MockTransport(handler))
+
+        def _factory(spec: _MS, repository):
+            primary = _LAP(
+                _client, model=spec.model, base_url=spec.base_url or "http://x/v1",
+                retry_attempts=2, retry_backoff_seconds=0,
+            )
+            fallback = _RBAP(repository, permission_evaluator=ObjectPermissionEvaluator())
+            return _FAP(primary, fallback)
+
+        app.dependency_overrides[get_assistant_provider_factory] = lambda: _factory
 
         # 1. An explicit override selects the model and pins the conversation.
         out = _ask(client, "find quantum", model_id="main")
@@ -560,5 +580,6 @@ def test_model_selection_over_http_pin_override_invalid(harness):
         })
         assert res.status_code == 422
     finally:
+        app.dependency_overrides.pop(get_assistant_provider_factory, None)
         config_mod.settings.assistant_models_json = original_json
         config_mod.settings.assistant_default_model = original_default
