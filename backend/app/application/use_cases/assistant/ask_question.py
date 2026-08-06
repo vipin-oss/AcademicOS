@@ -13,7 +13,9 @@ the orchestrator):
                                  (search use case + graph runtime gate every
                                  candidate through the R4 evaluator)
 7. build provider prompt        — ``AssistantContextBuilder`` (history +
-                                 retrieval, budgeted)
+                                 retrieval, budgeted) then
+                                 ``AssistantPromptBuilder`` (deterministic
+                                 system + user envelope)
 8. invoke provider              — the injected ``AssistantProvider``
 9. persist assistant response   — existing ``append_message`` + repository
 10. return DTO                  — existing ``conversation_output``
@@ -25,6 +27,7 @@ context) — backward compatible and graceful.
 from __future__ import annotations
 
 from app.application.assistant.context_builder import AssistantContextBuilder
+from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos import assistant as dto
 from app.application.ports.assistant_provider import AssistantProvider
@@ -52,11 +55,13 @@ class AskQuestionUseCase:
         *,
         retrieval: AssistantRetrievalService | None = None,
         context_builder: AssistantContextBuilder | None = None,
+        prompt_builder: AssistantPromptBuilder | None = None,
     ) -> None:
         self._repository = repository
         self._provider = provider
         self._retrieval = retrieval
         self._context_builder = context_builder
+        self._prompt_builder = prompt_builder
 
     def execute(self, command: AskQuestionCommand) -> dto.AskOutput:
         assert_valid_ask_input(command.input)
@@ -68,10 +73,11 @@ class AskQuestionUseCase:
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
         context = self._build_context(obj, question, command.input.asked_by)
-        if context is None:
-            answer = self._provider.answer(question, command.input.asked_by)
-        else:
-            answer = self._provider.answer(question, command.input.asked_by, context=context)
+        prompt = self._build_prompt(question, context)
+        kwargs = {"context": context} if context is not None else {}
+        if prompt is not None:
+            kwargs["prompt"] = prompt
+        answer = self._provider.answer(question, command.input.asked_by, **kwargs)
         auto_title_if_needed(obj, question)
         user_seq, user_payload = append_message(obj, "user", question, None)
         assistant_seq, assistant_payload = append_message(
@@ -86,6 +92,18 @@ class AskQuestionUseCase:
         )
 
     # ------------------------------------------------------------- pipeline
+    def _build_prompt(
+        self, question: str, context: dto.AssistantContext | None
+    ) -> dto.AssistantPrompt | None:
+        """Step 5 — build the provider prompt (Prompt Builder owns it).
+
+        ``None`` when the builder is not wired or there is no context: the
+        provider is then called without a prompt (backward compatible).
+        """
+        if self._prompt_builder is None or context is None:
+            return None
+        return self._prompt_builder.build(question, context)
+
     def _build_context(
         self,
         conversation: UniversalObject,

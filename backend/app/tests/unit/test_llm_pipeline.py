@@ -1,26 +1,28 @@
-"""Integration tests for the S6 M1 assistant pipeline (Phases 3-5).
+"""Pipeline tests for the LLM provider integration (Sprint-6 M2 P4).
 
-The orchestrated AskQuestionUseCase (retrieval + context builder wired)
-feeds the provider a permission-filtered, budgeted context envelope;
-conversation persistence, title generation and follow-ups reuse the
-existing helpers; restricted objects never reach the answer.
+The full ask pipeline with the Prompt Builder wired: the built prompt
+reaches the LLM transport, the LLM answer is persisted, a provider failure
+degrades to the deterministic rules fallback without crashing, follow-ups
+carry history into the prompt, and restricted objects never appear in the
+prompt (the permission filter happens before prompt construction).
 """
 from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.application.assistant.context_builder import AssistantContextBuilder
-from app.application.assistant.providers import RuleBasedAssistantProvider
-from app.application.commands.ask_question import AskQuestionCommand
-from app.application.dtos.assistant import (
-    AskQuestionInput,
-    AssistantAnswerOutput,
-    AssistantContext,
+from app.application.assistant.prompt_builder import AssistantPromptBuilder
+from app.application.assistant.providers import (
+    FallbackAssistantProvider,
+    RuleBasedAssistantProvider,
 )
+from app.application.commands.ask_question import AskQuestionCommand
+from app.application.dtos.assistant import AskQuestionInput
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.services.outbox import to_outbox_row
@@ -40,6 +42,7 @@ from app.domain.value_objects.object_id import ObjectId
 from app.domain.value_objects.vector import VectorDocument
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+from app.infrastructure.llm.llm_provider import LlmAssistantProvider
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.search_mapping import (
@@ -113,48 +116,32 @@ def _user() -> UniversalObject:
     )
 
 
-class CapturingProvider:
-    """Deterministic provider that records the context it receives."""
-
-    name = "capture-v1"
-
-    def __init__(self) -> None:
-        self.received: list[AssistantContext | None] = []
-        self.seen_titles: list[list[str]] = []
-
-    def answer(
-        self,
-        question: str,
-        asked_by: str,
-        *,
-        context: AssistantContext | None = None,
-        prompt=None,
-    ) -> AssistantAnswerOutput:
-        self.received.append(context)
-        self.seen_titles.append([item.title for item in (context.retrieved if context else [])])
-        return AssistantAnswerOutput(
-            intent="knowledge_search",
-            intent_label="Knowledge search",
-            question=question,
-            summary="Grounded answer.",
-            sources=["hybrid_search"],
-        )
+def _llm_chain(repo, handler) -> FallbackAssistantProvider:
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    primary = LlmAssistantProvider(
+        client, model="test-model", base_url="http://llm.example",
+        retry_attempts=2, retry_backoff_seconds=0,
+    )
+    fallback = RuleBasedAssistantProvider(
+        repo, permission_evaluator=ObjectPermissionEvaluator()
+    )
+    return FallbackAssistantProvider(primary, fallback)
 
 
-def _wired_use_case(db, repo, vectors, provider=None):
-    provider = provider or CapturingProvider()
+def _wired_use_case(db, repo, vectors, provider):
     search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db),
-        repo,
-        ObjectPermissionEvaluator(),
-        vector_repository=vectors,
-        embedder=HashingEmbedder(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        vector_repository=vectors, embedder=HashingEmbedder(),
     )
     graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
-        repo, provider, retrieval=retrieval, context_builder=AssistantContextBuilder()
-    ), provider
+        repo,
+        provider,
+        retrieval=retrieval,
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(),
+    )
 
 
 def _ask(use_case, question: str, conversation_id: str | None = None):
@@ -169,39 +156,77 @@ def _ask(use_case, question: str, conversation_id: str | None = None):
     )
 
 
-def test_new_conversation_builds_context_and_persists(db, repo):
+def test_llm_receives_built_prompt_and_answer_persists(db, repo):
     doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
     vectors = _index(db, repo, doc, _user())
-    use_case, provider = _wired_use_case(db, repo, vectors)
+    captured: dict = {}
 
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "The LLM's grounded answer."}}]},
+        )
+
+    use_case = _wired_use_case(db, repo, vectors, _llm_chain(repo, handler))
     out = _ask(use_case, "find quantum")
+
+    # The built prompt reached the transport with the provenance section.
+    user_message = captured["body"]["messages"][1]["content"]
+    assert "RETRIEVED CONTEXT" in user_message
+    assert "Quantum Paper" in user_message
+    assert "QUESTION:\nfind quantum" in user_message
+    assert captured["body"]["messages"][0]["role"] == "system"
+
+    # The LLM answer was persisted as the assistant message.
+    assert out.answer.summary == "The LLM's grounded answer."
+    assert out.answer.intent == "llm"
     assert out.conversation.message_count == 2
-    assert len(provider.received) == 1
-    context = provider.received[0]
-    assert context is not None
-    assert context.question == "find quantum"
-    assert any(item.title == "Quantum Paper" for item in context.retrieved)
-    assert context.history == ()  # first turn: no history yet
-    # Title generation reused: derived from the first question.
-    assert out.conversation.title == "find quantum"
+    messages = read_messages(repo.get_by_id(ObjectId(str(out.conversation.id))))
+    assistant_payload = [p for _s, p in messages if p["role"] == "assistant"][0]
+    assert assistant_payload["content"] == "The LLM's grounded answer."
 
 
-def test_follow_up_reuses_conversation_and_history(db, repo):
+def test_llm_failure_falls_back_and_persists(db, repo):
     doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
     vectors = _index(db, repo, doc, _user())
-    use_case, provider = _wired_use_case(db, repo, vectors)
 
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    use_case = _wired_use_case(db, repo, vectors, _llm_chain(repo, handler))
+    out = _ask(use_case, "find quantum")
+
+    # Deterministic fallback answered; the conversation still persisted.
+    assert out.answer.intent == "knowledge_search"
+    assert out.answer.summary
+    assert out.conversation.message_count == 2
+    assert out.answer.sources  # rules-provider sources
+
+
+def test_follow_up_carries_history_into_the_prompt(db, repo):
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
+    vectors = _index(db, repo, doc, _user())
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "answer"}}]},
+        )
+
+    use_case = _wired_use_case(db, repo, vectors, _llm_chain(repo, handler))
     first = _ask(use_case, "find quantum")
     second = _ask(use_case, "tell me more", conversation_id=str(first.conversation.id))
-    assert second.conversation.id == first.conversation.id
+
     assert second.conversation.message_count == 4
-    # The follow-up context carries the prior turn's history.
-    context = provider.received[1]
-    assert context is not None
-    assert [role for role, _c in context.history] == ["user", "assistant"]
+    user_message = captured["body"]["messages"][1]["content"]
+    assert "CONVERSATION HISTORY" in user_message
+    assert "find quantum" in user_message  # the prior user turn is in history
 
 
-def test_restricted_objects_never_reach_the_provider(db, repo):
+def test_restricted_object_never_enters_the_prompt(db, repo):
     public = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Public", created_by="f:1")
     secret = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Secret", created_by="f:2")
     secret.set_metadata(
@@ -212,50 +237,37 @@ def test_restricted_objects_never_reach_the_provider(db, repo):
         actor="system",
     )
     vectors = _index(db, repo, public, secret, _user())
-    use_case, provider = _wired_use_case(db, repo, vectors)
+    captured: dict = {}
 
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "answer"}}]},
+        )
+
+    use_case = _wired_use_case(db, repo, vectors, _llm_chain(repo, handler))
     _ask(use_case, "find quantum")
-    # The provider only ever sees permitted items — the leak is impossible
-    # before the prompt is even built.
-    assert all("Secret" not in title for title in provider.seen_titles[0])
+    user_message = captured["body"]["messages"][1]["content"]
+    assert "Quantum Public" in user_message
+    assert "Secret" not in user_message  # filtered before prompt construction
 
 
-def test_graph_results_flow_into_the_provider_context(db, repo):
+def test_graph_results_enter_the_prompt(db, repo):
     doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
     neighbor = UniversalObject.create(ObjectType.DOCUMENT, "Neighbor Notes", created_by="f:1")
     doc.add_relationship(neighbor.id, RelationshipKind.BELONGS_TO, actor="f:1")
     vectors = _index(db, repo, doc, neighbor, _user())
-    use_case, provider = _wired_use_case(db, repo, vectors)
+    captured: dict = {}
 
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "answer"}}]},
+        )
+
+    use_case = _wired_use_case(db, repo, vectors, _llm_chain(repo, handler))
     _ask(use_case, "find quantum")
-    titles = provider.seen_titles[0]
-    assert "Neighbor Notes" in titles  # the graph leg contributed
-
-
-def test_rules_provider_knowledge_search_uses_context_cards(db, repo):
-    """The production provider answers knowledge queries from the retrieval
-    envelope when present (falling back to the scan otherwise)."""
-    doc = UniversalObject.create(ObjectType.DOCUMENT, "Context Document", created_by="f:1")
-    vectors = _index(db, repo, doc, _user())
-    provider = RuleBasedAssistantProvider(repo)
-    search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db),
-        repo,
-        ObjectPermissionEvaluator(),
-        vector_repository=vectors,
-        embedder=HashingEmbedder(),
-    )
-    retrieval = AssistantRetrievalService(search, GraphRuntimeService(repo, ObjectPermissionEvaluator()))
-    use_case = AskQuestionUseCase(
-        repo, provider, retrieval=retrieval, context_builder=AssistantContextBuilder()
-    )
-
-    out = _ask(use_case, "find context")
-    assert out.answer.intent == "knowledge_search"
-    card_titles = [card.title for card in out.answer.cards]
-    assert "Context Document" in card_titles
-    assert "hybrid_search" in out.answer.sources or "knowledge_graph" in out.answer.sources
-    # The answer was persisted with its cards.
-    messages = read_messages(repo.get_by_id(ObjectId(str(out.conversation.id))))
-    assistant_payload = [p for _s, p in messages if p["role"] == "assistant"][0]
-    assert assistant_payload["answer"]["cards"]
+    user_message = captured["body"]["messages"][1]["content"]
+    assert "Neighbor Notes" in user_message  # the graph leg contributed

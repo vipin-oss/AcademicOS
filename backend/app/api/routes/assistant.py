@@ -40,6 +40,7 @@ from app.api.mappers.assistant_mapper import (
 )
 from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.assistant.context_builder import AssistantContextBuilder
+from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.providers import (
     FallbackAssistantProvider,
     RuleBasedAssistantProvider,
@@ -198,6 +199,7 @@ def ask_question(
             provider,
             retrieval=retrieval,
             context_builder=AssistantContextBuilder(),
+            prompt_builder=AssistantPromptBuilder(),
         ).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
