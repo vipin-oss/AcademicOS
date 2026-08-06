@@ -341,7 +341,6 @@ def test_object_graph_traversal_with_acl_filtering(client):
     # B, while the grantee sees it.
     grantee_token = _register_login(client, "graph.grantee")
     grantee_id = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {grantee_token}"}).json()["id"]
-    outsider_id = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {outsider_token}"}).json()["id"]
     client.put(
         f"/api/v1/objects/{b}/acl",
         headers=H,
@@ -358,3 +357,59 @@ def test_object_graph_traversal_with_acl_filtering(client):
     )
     assert grantee_graph.status_code == 200
     assert {i["id"] for i in grantee_graph.json()["items"]} == {b, c}  # B visible to its grantee
+
+
+def test_graph_runtime_depth_cycles_and_path(client):
+    """S2 M2 — multi-hop traversal, cycle detection and shortest path over HTTP."""
+    owner_token = _register_login(client, "runtime.owner")
+    H = {"Authorization": f"Bearer {owner_token}"}
+
+    a = client.post("/api/v1/objects", headers=H, json={"object_type": "course", "title": "R-A", "created_by": "x", "status": "draft"}).json()["id"]
+    b = client.post("/api/v1/objects", headers=H, json={"object_type": "course", "title": "R-B", "created_by": "x", "status": "draft"}).json()["id"]
+    c = client.post("/api/v1/objects", headers=H, json={"object_type": "course", "title": "R-C", "created_by": "x", "status": "draft"}).json()["id"]
+
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+    from app.domain.value_objects.enums import RelationshipKind, Provenance
+    from app.domain.value_objects.object_id import ObjectId
+
+    session = next(app.dependency_overrides[get_db]())
+    repo = SQLAlchemyObjectRepository(session)
+    for source, target in ((a, b), (b, c), (c, a)):  # cycle A->B->C->A
+        obj = repo.get_by_id(ObjectId(source))
+        obj.add_relationship(ObjectId(target), RelationshipKind.PREREQUISITE_OF, Provenance.ASSERTED)
+        repo.save(obj)
+
+    # Depth-3 BFS reaches B and C and expands C, completing the cycle walk
+    # A->B->C->A — the cycle is detected inside the traversed subgraph.
+    out = client.get(f"/api/v1/objects/{a}/graph?depth=3", headers=H)
+    assert out.status_code == 200
+    body = out.json()
+    assert {i["id"] for i in body["items"]} == {b, c}
+    assert body["has_cycle"] is True
+    assert body["total_count"] == 2
+    # Item shape is additive: title + level present.
+    by_id = {i["id"]: i for i in body["items"]}
+    assert by_id[b]["title"] == "R-B" and by_id[b]["level"] == 1
+    assert by_id[c]["level"] == 2
+
+    # DFS mode reaches the same nodes (cycle requires depth 3 to close).
+    dfs = client.get(f"/api/v1/objects/{a}/graph?depth=3&mode=dfs", headers=H)
+    assert {i["id"] for i in dfs.json()["items"]} == {b, c}
+
+    # Shortest path A -> C is A->B->C (2 hops).
+    path = client.get(f"/api/v1/objects/{a}/graph/path?target={c}&max_hops=3", headers=H)
+    assert path.status_code == 200
+    body = path.json()
+    assert body["found"] is True
+    assert body["path"] == [a, b, c]
+    assert body["hops"] == 2
+
+    # Hop limit excludes the route.
+    short = client.get(f"/api/v1/objects/{a}/graph/path?target={c}&max_hops=1", headers=H)
+    assert short.json()["found"] is False
+
+    # Bad params are 422.
+    assert client.get(f"/api/v1/objects/{a}/graph?depth=9", headers=H).status_code == 422
+    assert client.get(f"/api/v1/objects/{a}/graph/path?target={c}&max_hops=9", headers=H).status_code == 422
