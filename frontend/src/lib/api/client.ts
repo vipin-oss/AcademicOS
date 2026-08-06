@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/config/env";
+import { getToken } from "@/lib/auth/token";
 
 /**
  * Thin fetch wrapper. No business logic — transport + error normalisation only.
@@ -182,6 +183,7 @@ async function request<T>(
   const hasBody = init.body !== undefined && init.body !== null;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (hasBody) headers["Content-Type"] = "application/json";
+  attachAuthorization(headers);
 
   let res: Response;
   try {
@@ -275,10 +277,12 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
 
   let res: Response;
   try {
+    const rawHeaders: Record<string, string> = { Accept: "text/plain" };
+    attachAuthorization(rawHeaders);
     res = await fetch(buildUrl(path, options.query), {
       method: "GET",
       signal: controller.signal,
-      headers: { Accept: "text/plain" },
+      headers: rawHeaders,
     });
   } catch (error) {
     if (external?.aborted) {
@@ -322,10 +326,100 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
   return res.text();
 }
 
+/** Attach the bearer token when one is stored (Sprint-3 M3 — auth-scoped
+ * API access: every request rides the authenticated principal). No token,
+ * no header — public endpoints keep working unauthenticated. */
+function attachAuthorization(headers: Record<string, string>): void {
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+}
+
+/**
+ * Raw-bytes variant of {@link request} (Sprint-3 M3 — inline document
+ * preview). Identical transport guarantees (offline/timeout/abort,
+ * status-normalised `ApiError`s) but the success body is returned as a
+ * `Blob` — an iframe cannot send the Authorization header, so the preview
+ * fetches the bytes with the token and renders them via an object URL.
+ */
+async function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new ApiError("You appear to be offline. Check your connection and try again.", {
+      kind: "offline",
+    });
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const external = options.signal;
+  const forwardAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", forwardAbort);
+  }
+
+  const rawHeaders: Record<string, string> = { Accept: "*/*" };
+  attachAuthorization(rawHeaders);
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method: "GET",
+      signal: controller.signal,
+      headers: rawHeaders,
+    });
+  } catch (error) {
+    if (external?.aborted) {
+      throw new ApiError("Request cancelled.", { kind: "aborted" });
+    }
+    if (timedOut) {
+      throw new ApiError(
+        `The server did not respond within ${Math.round(timeoutMs / 1000)}s. Please try again.`,
+        { kind: "timeout" },
+      );
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new ApiError("You appear to be offline. Check your connection and try again.", {
+        kind: "offline",
+      });
+    }
+    throw new ApiError(
+      `Cannot reach the API at ${API_BASE_URL}. Make sure the backend is running.`,
+      { kind: "network", details: error },
+    );
+  } finally {
+    clearTimeout(timer);
+    external?.removeEventListener("abort", forwardAbort);
+  }
+
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      const text = await res.text();
+      body = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      /* non-JSON error body — fall back to the status message */
+    }
+    const message =
+      extractMessage(body) ??
+      STATUS_FALLBACK[res.status] ??
+      `Request failed: ${res.status} ${res.statusText}`;
+    throw new ApiError(message, { kind: "http", status: res.status, details: body });
+  }
+
+  return res.blob();
+}
+
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>(path, { method: "GET" }, options),
   /** Raw `text/plain` GET — response returned verbatim (Intake M2). */
   getText: (path: string, options?: RequestOptions) => requestText(path, options),
+  /** Raw bytes GET — response returned as a Blob (Sprint-3 M3 preview). */
+  getBlob: (path: string, options?: RequestOptions) => requestBlob(path, options),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(
       path,

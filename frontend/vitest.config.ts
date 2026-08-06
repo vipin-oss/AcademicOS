@@ -15,6 +15,10 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
   },
+  esbuild: {
+    // The app uses the React automatic JSX runtime (no `import React`).
+    jsx: "automatic",
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
