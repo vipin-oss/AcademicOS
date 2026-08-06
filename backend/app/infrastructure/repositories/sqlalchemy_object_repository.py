@@ -28,7 +28,9 @@ from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from app.application.services.outbox import to_outbox_row
 from app.domain.entities.object import UniversalObject
+from app.domain.events import ObjectDeleted
 from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
@@ -80,6 +82,32 @@ def _is_lock_contention(exc: OperationalError) -> bool:
     return any(token in message for token in _LOCK_MESSAGE_TOKENS)
 
 
+def commit_with_retry(session: Session, write: Callable[[], None]) -> None:
+    """Write + commit with bounded protection against lock contention.
+
+    The single shared retry boundary for every persistence writer (the
+    object repository's save/delete and the search index applier). A
+    transient "database is locked" is inherent to a single-writer DB whose
+    readers (live progress polls) overlap the writers' commits; without a
+    retry it escapes and can wedge a flow in a non-terminal state. The
+    write must be idempotent (same snapshot merged again, same upsert,
+    same WHERE-guarded mark), so a fixed backoff and re-issue is honest.
+    Non-lock errors raise on first failure; lock errors raise after the
+    bound is spent.
+    """
+
+    for attempt in range(_LOCK_RETRY_ATTEMPTS):
+        try:
+            write()
+            session.commit()
+            return
+        except OperationalError as exc:
+            session.rollback()
+            if not _is_lock_contention(exc) or attempt == _LOCK_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_LOCK_RETRY_BACKOFF_SECONDS[attempt])
+
+
 class SQLAlchemyObjectRepository(ObjectRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -87,25 +115,12 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def _commit_with_retry(self, write: Callable[[], None]) -> None:
         """Write + commit with bounded protection against lock contention.
 
-        A transient "database is locked" is inherent to a single-writer DB
-        whose readers (live progress polls) overlap the drain's per-item
-        commits; without a retry it escapes mid-drain — past the runner's
-        own failure handlers — and can wedge a job in a non-terminal state.
-        The write is idempotent (the same snapshot merged again), so a fixed
-        backoff and re-issue is honest. Non-lock errors raise on first
-        failure; lock errors raise after the bound is spent.
+        Shared with the search index applier via the module-level
+        ``commit_with_retry`` — the single retry boundary for persistence
+        writers.
         """
 
-        for attempt in range(_LOCK_RETRY_ATTEMPTS):
-            try:
-                write()
-                self._session.commit()
-                return
-            except OperationalError as exc:
-                self._session.rollback()
-                if not _is_lock_contention(exc) or attempt == _LOCK_RETRY_ATTEMPTS - 1:
-                    raise
-                time.sleep(_LOCK_RETRY_BACKOFF_SECONDS[attempt])
+        commit_with_retry(self._session, write)
 
     # --- internal mapping (Snapshot <-> Model, via SnapshotMapper) ---
     @staticmethod
@@ -308,6 +323,17 @@ class SQLAlchemyObjectRepository(ObjectRepository):
                     )
                 )
                 self._session.delete(model)
+                # Sprint-5 M1: a durable, replayable deletion marker rides
+                # the SAME transaction, so index consumers (search) remove
+                # the projection when the event is drained. The repository
+                # is the single delete path — every deletion is covered
+                # here, no caller changes needed.
+                event = ObjectDeleted(
+                    aggregate_id=id,
+                    object_type=model.object_type,
+                    title=model.title,
+                )
+                self._session.add(OutboxEventModel(**to_outbox_row(event)))
 
             self._commit_with_retry(write)
 
