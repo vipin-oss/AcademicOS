@@ -113,3 +113,54 @@ def test_cap_keeps_question_and_retrieval_head_drops_history_first():
     assert "obj:document:0079" not in prompt.user
     assert prompt.user.endswith("QUESTION:\nfind quantum")
     assert len(prompt.user) <= 12000
+
+
+# ---------------------------------------------------------------- citations
+
+
+def _citation(number: int, object_id: str, title: str):
+    from app.application.dtos.assistant import AssistantCitation
+
+    return AssistantCitation(
+        number=number, object_id=object_id, object_type="document",
+        title=title, sources=("search",), version=1, score=0.1,
+    )
+
+
+def test_retrieval_lines_carry_bracket_markers():
+    builder = AssistantPromptBuilder()
+    citations = (
+        _citation(1, "obj:document:A", "Quantum Paper"),
+        _citation(2, "obj:document:B", "Optics Notes"),
+    )
+    prompt = builder.build(
+        "find quantum",
+        _context(retrieved=(_item("obj:document:A", "Quantum Paper"), _item("obj:document:B", "Optics Notes"))),
+        citations=citations,
+    )
+    assert "- [1] [document] Quantum Paper" in prompt.user
+    assert "- [2] [document] Optics Notes" in prompt.user
+
+
+def test_citations_exposed_separately_on_the_prompt():
+    citations = (_citation(1, "obj:document:A", "Quantum Paper"),)
+    prompt = AssistantPromptBuilder().build(
+        "find quantum", _context(retrieved=(_item("obj:document:A", "Quantum Paper"),)),
+        citations=citations,
+    )
+    assert prompt.citations == citations
+
+
+def test_no_citations_no_markers():
+    prompt = AssistantPromptBuilder().build(
+        "find quantum", _context(retrieved=(_item("obj:document:A", "Quantum Paper"),))
+    )
+    assert "[1]" not in prompt.user
+    assert prompt.citations == ()
+
+
+def test_system_instructions_mandate_evidence_citations():
+    from app.application.assistant.prompt_builder import SYSTEM_INSTRUCTIONS
+
+    assert "Never invent citations" in SYSTEM_INSTRUCTIONS
+    assert "[1]" in SYSTEM_INSTRUCTIONS  # the bracketed-number citation doctrine

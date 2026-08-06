@@ -23,6 +23,7 @@ Failure doctrine:
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
 
 import httpx
 
@@ -98,6 +99,10 @@ class LlmAssistantProvider:
                 {"role": "user", "content": prompt.user},
             ],
             "temperature": 0,
+            # S6 M3: the numbered evidence travels with the request so the
+            # provider (and any logging/eval layer) can bind citations to
+            # the answer — the model may never invent its own.
+            "citations": [asdict(citation) for citation in prompt.citations],
         }
         url = f"{self._base_url}/chat/completions"
         last_error: Exception | None = None

@@ -358,6 +358,7 @@ class AssistantPrompt:
 
     system: str
     user: str
+    citations: tuple[AssistantCitation, ...] = ()  # S6 M3: evidence exposed separately
 
 
 @dataclass(frozen=True)

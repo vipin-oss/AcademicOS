@@ -62,6 +62,7 @@ def test_request_construction_is_deterministic():
         {"role": "system", "content": _prompt().system},
         {"role": "user", "content": _prompt().user},
     ]
+    assert body["citations"] == []  # no evidence -> no citations on the wire
     assert out.summary == "Quantum mechanics studies nature at small scales."
     assert out.intent == "llm"
     assert out.sources == ["llm"]
