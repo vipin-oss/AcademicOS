@@ -23,6 +23,7 @@ from app.api.routes.productivity import router as productivity_router
 from app.api.routes.publications import router as publications_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.research import router as research_router
+from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, prefix=settings.api_v1_prefix)
     app.include_router(assistant_router, prefix=settings.api_v1_prefix)
     app.include_router(intake_router, prefix=settings.api_v1_prefix)
+    app.include_router(search_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     return app
 
