@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers.settings_mapper import (
     output_dict,
     to_import_input,
@@ -59,7 +60,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/settings", tags=["Settings"])
+router = APIRouter(prefix="/settings", tags=["Settings"], dependencies=[Depends(get_current_user)])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:

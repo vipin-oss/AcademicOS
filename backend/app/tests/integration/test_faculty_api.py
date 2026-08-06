@@ -7,6 +7,9 @@ disk state, or network. The cross-module graph (projects, grants, students,
 classes, publications) is built through the FROZEN modules' own APIs.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.api.dependencies.auth import get_current_user
 
 import pytest
 
@@ -41,6 +44,13 @@ def client(tmp_path):
         yield session
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[faculty_get_storage] = lambda: LocalFileStorage(str(tmp_path))
     with TestClient(app) as c:
         yield c

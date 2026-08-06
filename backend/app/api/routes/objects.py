@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers.object_mapper import to_create_input, to_response, to_update_input
 from app.application.commands.create_object import CreateObjectCommand
 from app.application.commands.delete_object import DeleteObjectCommand
@@ -38,7 +39,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/objects", tags=["objects"])
+router = APIRouter(prefix="/objects", tags=["objects"], dependencies=[Depends(get_current_user)])
 
 
 class MetadataField(BaseModel):

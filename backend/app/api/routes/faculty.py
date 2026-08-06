@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers.faculty_mapper import (
     faculty_response,
     to_create_faculty_input,
@@ -58,7 +59,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/faculty", tags=["faculty"])
+router = APIRouter(prefix="/faculty", tags=["faculty"], dependencies=[Depends(get_current_user)])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:

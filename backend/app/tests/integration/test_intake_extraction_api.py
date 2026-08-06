@@ -12,6 +12,9 @@ per-item isolation, job controls under real engine load, full cleanup, and
 the cold boundary: extraction never creates anything outside Intake.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.api.dependencies.auth import get_current_user
 
 import time
 from pathlib import Path
@@ -114,6 +117,13 @@ def harness(tmp_path: Path):
     jobs = IntakeJobManager(repo_factory, storage, build_document_parsers())
 
     app.dependency_overrides[get_db] = override_get_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_job_manager] = lambda: jobs
 

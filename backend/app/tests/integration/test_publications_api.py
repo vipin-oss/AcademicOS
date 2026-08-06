@@ -8,6 +8,9 @@ provider (Crossref) is replaced with a fake via dependency override, so no
 HTTP leaves the test process.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.api.dependencies.auth import get_current_user
 
 import pytest
 
@@ -66,6 +69,13 @@ def client(tmp_path):
         return FakeMetadataLookup()
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     app.dependency_overrides[get_metadata_lookup] = _override_lookup
     with TestClient(app) as c:

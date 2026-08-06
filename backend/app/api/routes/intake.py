@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers.intake_mapper import (
     IntakeProgressResponseModel,
     IntakeSessionCreateRequest,
@@ -71,7 +72,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/intake", tags=["Intake"])
+router = APIRouter(prefix="/intake", tags=["Intake"], dependencies=[Depends(get_current_user)])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:

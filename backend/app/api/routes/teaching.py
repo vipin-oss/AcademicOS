@@ -64,6 +64,7 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers import teaching_mapper as m
 from app.application.commands.attach_assignment_file import AttachAssignmentFileCommand
 from app.application.commands.create_assignment import CreateAssignmentCommand
@@ -149,7 +150,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/teaching", tags=["teaching"])
+router = APIRouter(prefix="/teaching", tags=["teaching"], dependencies=[Depends(get_current_user)])
 
 
 # --------------------------------------------------------------------------

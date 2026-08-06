@@ -146,18 +146,27 @@ def test_register_validation(client):
 
 def test_password_hash_never_exposed_via_generic_objects_api(client):
     """A registered user's credential must not leak through the generic
-    object endpoints (the projection excludes L1_SYSTEM metadata)."""
+    object endpoints — not even to an authenticated caller (the projection
+    excludes L1_SYSTEM metadata)."""
     reg = _register(client, username="hash.victim", password="super-secret-pw")
     uid = reg.json()["id"]
+    access = _login(client, username="hash.victim", password="super-secret-pw").json()[
+        "access_token"
+    ]
+    auth_headers = {"Authorization": f"Bearer {access}"}
 
-    detail = client.get(f"/api/v1/objects/{uid}")
+    detail = client.get(f"/api/v1/objects/{uid}", headers=auth_headers)
     assert detail.status_code == 200
     assert "auth.password_hash" not in detail.json().get("metadata", {})
 
-    listing = client.get("/api/v1/objects?object_type=user")
+    listing = client.get("/api/v1/objects?object_type=user", headers=auth_headers)
     assert listing.status_code == 200
     for item in listing.json().get("items", []):
         assert "auth.password_hash" not in item.get("metadata", {})
+
+    # Unauthenticated callers are rejected outright now that the objects
+    # API requires a valid access token.
+    assert client.get(f"/api/v1/objects/{uid}").status_code == 401
 
 
 def test_token_without_sub_claim_is_401_not_500(client):

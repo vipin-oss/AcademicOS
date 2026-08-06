@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.api.mappers.committee_mapper import (
     action_item_response,
     committee_response,
@@ -75,7 +76,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/committees", tags=["committees"])
+router = APIRouter(prefix="/committees", tags=["committees"], dependencies=[Depends(get_current_user)])
 
 
 # ---------------------------------------------------------------------------
