@@ -10,6 +10,7 @@ from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.entities.object import UniversalObject
 from app.api.dependencies.auth import get_current_user
 
+import json
 import time
 from pathlib import Path
 
@@ -22,7 +23,6 @@ from app.api.routes.documents import get_storage
 from app.api.routes.intake import get_job_manager
 from app.application.intake.jobs import IntakeJobManager
 from app.application.use_cases.intake.helpers import set_system_metadata
-from app.domain.value_objects.enums import ObjectType
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.session import get_db
@@ -33,6 +33,9 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 from app.infrastructure.storage.local import LocalFileStorage
 from app.main import app
 from app.tests.unit.extraction_fixtures import make_docx_bytes, make_pdf_bytes
+from app.application.dtos.intake import IntakeItemStatus, IntakeSessionStatus
+from app.domain.value_objects.metadata import Metadata, MetadataEntry, MetadataLayer
+from app.domain.value_objects.enums import Provenance
 
 API = "/api/v1/intake"
 
@@ -445,3 +448,106 @@ class TestReconcile:
         final = wait_terminal(client, sid)
         assert final["status"] == "completed"
         assert final["total_items"] == 4
+
+
+# ------------------------------------------------- Sprint-3 M1.3 — commit API
+
+
+def _seed_commit_item(session, storage, *, status="awaiting_review"):
+    """A COMPLETED session + one item in the given status with a staged blob."""
+    repo = SQLAlchemyObjectRepository(session)
+    session_obj = UniversalObject.create(
+        ObjectType.INTAKE_SESSION,
+        "seed",
+        created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(
+            entries=(
+                MetadataEntry(
+                    "intake.status", IntakeSessionStatus.COMPLETED.value,
+                    MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+                ),
+            )
+        ),
+    )
+    repo.save(session_obj)
+    item = UniversalObject.create(
+        ObjectType.INTAKE_ITEM,
+        "seed.pdf",
+        created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(
+            entries=(
+                MetadataEntry("intake.status", status, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.session_id", str(session_obj.id), MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.extension", "pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.mime_type", "application/pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.size_bytes", "1024", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.sha256", "feedface", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.staged_key", "seed/staged.pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry(
+                    "intake.extraction",
+                    json.dumps({"status": "extracted", "format": "pdf", "char_count": 5}),
+                    MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+                ),
+            )
+        ),
+    )
+    repo.save(item)
+    storage.save("seed/staged.pdf", b"%PDF-1.7 seeded")
+    return item
+
+
+def test_commit_success_then_double_submit_409(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    # Preview: no side effects.
+    preview = client.get(f"{API}/items/{item.id}/commit-preview")
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["item_id"] == str(item.id)
+    assert body["document_id"] == ""
+    repo = SQLAlchemyObjectRepository(request_session)
+    assert len(repo.find_by_type(ObjectType.DOCUMENT)) == 0
+    assert (
+        repo.get_by_id(item.id).metadata.get_value("intake.status")
+        == IntakeItemStatus.AWAITING_REVIEW.value
+    )
+
+    # Commit succeeds.
+    commit = client.post(f"{API}/items/{item.id}/commit")
+    assert commit.status_code == 200, commit.text
+    out = commit.json()
+    assert out["document_id"].startswith("obj:document:")
+    assert out["document_title"] == "seed.pdf"
+
+    # Double submit -> 409 with the existing document id.
+    again = client.post(f"{API}/items/{item.id}/commit")
+    assert again.status_code == 409
+    assert out["document_id"] in again.json()["detail"]
+
+    # Exactly one document.
+    assert len(repo.find_by_type(ObjectType.DOCUMENT)) == 1
+
+
+def test_commit_ineligible_item_422(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage, status=IntakeItemStatus.STAGED.value)
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 422
+    assert client.get(f"{API}/items/{item.id}/commit-preview").status_code == 422
+
+
+def test_commit_missing_item_404(harness):
+    client, *_ = harness
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.post(f"{API}/items/{ghost}/commit").status_code == 404
+    assert client.get(f"{API}/items/{ghost}/commit-preview").status_code == 404
+
+
+def test_commit_requires_authentication(harness):
+    client, *_ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.post(f"{API}/items/{ghost}/commit").status_code == 401
+    assert client.get(f"{API}/items/{ghost}/commit-preview").status_code == 401

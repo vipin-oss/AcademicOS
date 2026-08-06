@@ -28,11 +28,13 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
 from app.api.mappers.intake_mapper import (
+    CommitItemResponseModel,
     IntakeProgressResponseModel,
     IntakeSessionCreateRequest,
     IntakeSessionResponseModel,
     ListIntakeItemsResponseModel,
     ListIntakeSessionsResponseModel,
+    commit_item_response,
     item_response,
     progress_response,
     session_response,
@@ -44,7 +46,12 @@ from app.api.routes.documents import get_storage
 from app.application.commands.control_intake_session import ControlIntakeSessionCommand
 from app.application.commands.create_intake_session import CreateIntakeSessionCommand
 from app.application.commands.delete_intake_session import DeleteIntakeSessionCommand
-from app.application.exceptions import ObjectNotFoundError, ValidationError
+from app.application.exceptions import (
+    ObjectAlreadyExistsError,
+    ObjectNotFoundError,
+    ValidationError,
+)
+from app.application.intake.commit_engine import CommitEngineService
 from app.application.intake.jobs import IntakeJobManager
 from app.application.queries.get_intake_extracted_text import GetIntakeExtractedTextQuery
 from app.application.queries.get_intake_progress import GetIntakeProgressQuery
@@ -314,3 +321,46 @@ def delete_intake_session(
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.get("/items/{item_id}/commit-preview", response_model=CommitItemResponseModel)
+def commit_item_preview(
+    item_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    storage: LocalFileStorage = Depends(get_storage),
+) -> CommitItemResponseModel:
+    """Preview a commit: runs the same eligibility checks as the commit
+    itself without creating or mutating anything. One source of truth —
+    CommitEngineService.commit_item(dry_run=True)."""
+    try:
+        out = CommitEngineService(repo, storage).commit_item(
+            item_id=item_id, actor="preview", dry_run=True
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    return commit_item_response(out)
+
+
+@router.post("/items/{item_id}/commit", response_model=CommitItemResponseModel)
+def commit_item(
+    item_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+) -> CommitItemResponseModel:
+    """Commit one processed intake item into a Document (idempotent).
+
+    409 with the existing document id on a double submit; 422 for any
+    ineligible item (same checks as the preview)."""
+    try:
+        out = CommitEngineService(repo, storage).commit_item(
+            item_id=item_id, actor=str(user.id)
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    except ObjectAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return commit_item_response(out)

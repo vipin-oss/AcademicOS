@@ -118,6 +118,15 @@ class CommitItemUseCase:
                 f"Staged blob {staged_key!r} is missing; re-run the session."
             ) from None
 
+        if command.dry_run:
+            # Preview: eligibility already passed; report what a real commit
+            # would create without creating or mutating anything.
+            return CommitItemOutput(
+                item_id=str(item.id),
+                document_id="",
+                document_title="",
+            )
+
         # --- reuse CreateDocumentUseCase (the sanctioned document path) -----
         extension = item.metadata.get_value(KEY_EXTENSION) or ""
         document_type = extension if extension in DOCUMENT_TYPES else "unknown"

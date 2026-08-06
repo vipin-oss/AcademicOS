@@ -14,3 +14,4 @@ class CommitIntakeItemCommand:
 
     item_id: str
     actor: str
+    dry_run: bool = False

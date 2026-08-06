@@ -119,3 +119,22 @@ def progress_response(out: IntakeProgressOutput) -> IntakeProgressResponseModel:
 
 def item_response(out: IntakeItemOutput) -> IntakeItemResponseModel:
     return IntakeItemResponseModel(**out.__dict__)
+
+class CommitItemResponseModel(BaseModel):
+    """Response for the commit endpoints (Sprint-3 M1.3).
+
+    ``document_id`` is empty on a preview (nothing was created); it is
+    always set on a successful commit.
+    """
+
+    item_id: str
+    document_id: str = ""
+    document_title: str = ""
+
+
+def commit_item_response(out) -> CommitItemResponseModel:
+    return CommitItemResponseModel(
+        item_id=out.item_id,
+        document_id=out.document_id,
+        document_title=out.document_title,
+    )

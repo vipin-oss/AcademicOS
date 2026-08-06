@@ -23,8 +23,12 @@ class CommitEngineService:
         self._document_creator = CreateDocumentUseCase(repository, storage)
         self._commit_item = CommitItemUseCase(repository, storage, self._document_creator)
 
-    def commit_item(self, item_id: str, actor: str) -> CommitItemOutput:
-        """Commit one processed intake item to a Document (idempotent)."""
+    def commit_item(self, item_id: str, actor: str, dry_run: bool = False) -> CommitItemOutput:
+        """Commit one processed intake item to a Document (idempotent).
+
+        ``dry_run=True`` runs the same eligibility checks without creating
+        anything — the preview endpoint's single source of truth.
+        """
         return self._commit_item.execute(
-            CommitIntakeItemCommand(item_id=item_id, actor=actor)
+            CommitIntakeItemCommand(item_id=item_id, actor=actor, dry_run=dry_run)
         )
