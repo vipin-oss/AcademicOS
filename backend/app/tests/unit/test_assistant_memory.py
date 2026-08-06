@@ -10,7 +10,6 @@ passthrough on the retrieval service.
 """
 from __future__ import annotations
 
-import httpx
 import pytest
 from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
@@ -30,7 +29,6 @@ from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
 from app.application.services.graph_runtime import GraphRuntimeService
-from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.assistant.helpers import (
     append_message,
     create_conversation_object,
