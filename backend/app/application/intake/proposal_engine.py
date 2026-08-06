@@ -109,3 +109,60 @@ class ProposalEngineService:
         if not isinstance(data, dict):
             raise ValidationError("Item has no proposal; generate one first.")
         return ItemProposal(**{k: data[k] for k in ("title", "document_type", "description", "confidence")})
+
+
+class ProposalReviewService:
+    """Human review of a generated proposal (Sprint-3 M2 P4).
+
+    Updates are validated against the same document-type vocabulary the
+    commit path uses, so a reviewed proposal always commits cleanly.
+    """
+
+    def __init__(self, repository: ObjectRepository) -> None:
+        self._repository = repository
+        self._generator = ProposalEngineService(repository)
+
+    def update(self, item_id: str, *, title: str, document_type: str, description: str, actor: str) -> ItemProposal:
+        item = self._repository.get_by_id(ObjectId(item_id))
+        if item is None or item.object_type is not ObjectType.INTAKE_ITEM:
+            raise ObjectNotFoundError(f"Intake item not found: {item_id}")
+        if not item.metadata.get_value(KEY_PROPOSAL):
+            raise ValidationError("Item has no proposal; generate one first.")
+
+        if not title.strip():
+            raise ValidationError("Proposal title must not be empty.")
+        if document_type not in DOCUMENT_TYPES:
+            raise ValidationError(
+                f"document_type must be one of: {', '.join(DOCUMENT_TYPES)}."
+            )
+
+        proposal = ItemProposal(
+            title=title.strip(),
+            document_type=document_type,
+            description=description.strip(),
+            confidence=1.0,  # human-confirmed
+        )
+        item.set_metadata(
+            MetadataEntry(
+                KEY_PROPOSAL,
+                json.dumps(proposal.__dict__),
+                MetadataLayer.L1_SYSTEM,
+                Provenance.SYSTEM,
+            ),
+            actor=actor,
+        )
+        self._repository.save(item)
+        return proposal
+
+    def regenerate(self, item_id: str, actor: str) -> ItemProposal:
+        """Discard human edits and regenerate from the item's facts."""
+        item = self._repository.get_by_id(ObjectId(item_id))
+        if item is None or item.object_type is not ObjectType.INTAKE_ITEM:
+            raise ObjectNotFoundError(f"Intake item not found: {item_id}")
+        # Drop the stored proposal so generate() rebuilds it fresh.
+        item.set_metadata(
+            MetadataEntry(KEY_PROPOSAL, "", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            actor=actor,
+        )
+        self._repository.save(item)
+        return self._generator.generate(item_id)

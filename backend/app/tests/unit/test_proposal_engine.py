@@ -16,6 +16,7 @@ from app.application.dtos.intake import (
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.intake.proposal_engine import (
     ProposalEngineService,
+    ProposalReviewService,
     proposal_from_item,
 )
 from app.domain.entities.object import UniversalObject
@@ -172,3 +173,60 @@ def test_get_without_proposal_raises():
     item = _item(repo)
     with pytest.raises(ValidationError, match="no proposal"):
         ProposalEngineService(repo).get(str(item.id))
+
+
+def test_review_update_validates_and_persists():
+    repo = InMemoryRepo()
+    item = _item(repo)
+    ProposalEngineService(repo).generate(str(item.id))
+
+    updated = ProposalReviewService(repo).update(
+        str(item.id),
+        title="Reviewed Title",
+        document_type="txt",
+        description="Human description",
+        actor="faculty:1",
+    )
+    assert updated.title == "Reviewed Title"
+    assert updated.document_type == "txt"
+    assert updated.confidence == 1.0  # human-confirmed
+
+    fetched = ProposalEngineService(repo).get(str(item.id))
+    assert fetched.title == "Reviewed Title"
+
+
+def test_review_update_rejects_invalid_type_and_empty_title():
+    repo = InMemoryRepo()
+    item = _item(repo)
+    ProposalEngineService(repo).generate(str(item.id))
+    review = ProposalReviewService(repo)
+
+    with pytest.raises(ValidationError, match="document_type"):
+        review.update(str(item.id), title="x", document_type="not-a-type",
+                      description="d", actor="f:1")
+    with pytest.raises(ValidationError, match="empty"):
+        review.update(str(item.id), title="  ", document_type="pdf",
+                      description="d", actor="f:1")
+
+
+def test_review_update_requires_existing_proposal():
+    repo = InMemoryRepo()
+    item = _item(repo)
+    with pytest.raises(ValidationError, match="no proposal"):
+        ProposalReviewService(repo).update(
+            str(item.id), title="x", document_type="pdf", description="d", actor="f:1"
+        )
+
+
+def test_regenerate_discards_edits():
+    repo = InMemoryRepo()
+    item = _item(repo)
+    engine = ProposalEngineService(repo)
+    engine.generate(str(item.id))
+    review = ProposalReviewService(repo)
+    review.update(str(item.id), title="Edited", document_type="txt",
+                  description="edited", actor="f:1")
+
+    regenerated = review.regenerate(str(item.id), actor="f:1")
+    assert regenerated.title == "paper.pdf"  # back to the original facts
+    assert regenerated.document_type == "pdf"
