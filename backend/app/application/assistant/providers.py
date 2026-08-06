@@ -125,6 +125,21 @@ def _href_for(object_type: str, object_id: str) -> str:
     return pattern.format(id=object_id)
 
 
+def _card_from_retrieved(item) -> dto.AssistantCardOutput:
+    """Present a retrieval item as an answer card (S6 M1).
+
+    The retrieval envelope carries the same identity/type/title fields the
+    card needs; href reuses the module's single href table.
+    """
+    return dto.AssistantCardOutput(
+        object_id=item.object_id,
+        object_type=item.object_type,
+        title=item.title,
+        subtitle=item.object_type.replace("_", " "),
+        href=_href_for(item.object_type, item.object_id),
+    )
+
+
 def _card(obj: UniversalObject, subtitle: str | None = None, badge: str | None = None,
           stats: dict[str, str] | None = None, href: str | None = None) -> dto.AssistantCardOutput:
     object_id = str(obj.id)
@@ -171,10 +186,21 @@ class RuleBasedAssistantProvider:
         return PROVIDER_NAME
 
     # ------------------------------------------------------------------ entry
-    def answer(self, question: str, asked_by: str = DEFAULT_ASKER) -> dto.AssistantAnswerOutput:
+    def answer(
+        self,
+        question: str,
+        asked_by: str = DEFAULT_ASKER,
+        *,
+        context: dto.AssistantContext | None = None,
+    ) -> dto.AssistantAnswerOutput:
         parsed = parse_question(question)
-        builder = getattr(self, f"_answer_{parsed.intent}", None) or self._answer_knowledge_search
-        answer = builder(parsed, question, asked_by)
+        if parsed.intent == dto.INTENT_KNOWLEDGE_SEARCH:
+            # The retrieval intent consumes the grounded context envelope;
+            # every other builder is deterministic over module data alone.
+            answer = self._answer_knowledge_search(parsed, question, asked_by, context=context)
+        else:
+            builder = getattr(self, f"_answer_{parsed.intent}", None) or self._answer_knowledge_search
+            answer = builder(parsed, question, asked_by)
         if not answer.actions:
             answer.actions = self._default_actions(answer.intent)
         return answer
@@ -915,9 +941,30 @@ class RuleBasedAssistantProvider:
         return metrics
 
     # ------------------------------------------------------------- search/meta
-    def _answer_knowledge_search(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
+    def _answer_knowledge_search(
+        self, parsed, question, asked_by,
+        *, context: dto.AssistantContext | None = None,
+    ) -> dto.AssistantAnswerOutput:
         query = str(parsed.params.get("query") or parsed.query or question).strip()
         skip_types = {ObjectType.SETTINGS, ObjectType.AI_CONVERSATION}
+
+        if context is not None and context.retrieved:
+            # Sprint-6 M1: answer from the grounded, permission-filtered
+            # retrieval envelope (hybrid search + graph) when available.
+            hits = [item for item in context.retrieved if item.object_type not in skip_types]
+            cards = [
+                _card_from_retrieved(item)
+                for item in _cap(hits)
+            ]
+            summary = (
+                f"{len(hits)} record(s) match “{query}” — retrieved via hybrid "
+                f"search and the knowledge graph."
+            )
+            return self._base(parsed, question, summary,
+                              ["hybrid_search", "knowledge_graph"],
+                              metrics={"Matches": str(len(hits))}, cards=cards,
+                              actions=[dto.AssistantActionOutput("Open Objects", "/objects", "module")])
+
         hits: list[UniversalObject] = []
         for obj in self._repository.list():
             if obj.object_type in skip_types:

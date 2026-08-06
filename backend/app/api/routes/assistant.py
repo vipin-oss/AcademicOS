@@ -37,6 +37,7 @@ from app.api.mappers.assistant_mapper import (
     to_delete_input,
     to_update_input,
 )
+from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.providers import RuleBasedAssistantProvider
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.commands.create_conversation import CreateConversationCommand
@@ -48,6 +49,8 @@ from app.application.ports.assistant_provider import AssistantProvider
 from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
+from app.application.services.assistant_retrieval import AssistantRetrievalService
+from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.create_conversation import CreateConversationUseCase
 from app.application.use_cases.assistant.delete_conversation import DeleteConversationUseCase
@@ -55,10 +58,15 @@ from app.application.use_cases.assistant.get_conversation import GetConversation
 from app.application.use_cases.assistant.get_home import GetAssistantHomeUseCase
 from app.application.use_cases.assistant.list_conversations import ListConversationsUseCase
 from app.application.use_cases.assistant.update_conversation import UpdateConversationUseCase
+from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
+)
+from app.infrastructure.repositories.sqlalchemy_search_repository import (
+    SQLAlchemySearchRepository,
 )
 
 router = APIRouter(prefix="/assistant", tags=["Assistant"], dependencies=[Depends(get_current_user)])
@@ -74,6 +82,26 @@ def get_assistant_provider(
     """Composition seam: V1 = local rules; future sanctioned LLM adapters plug
     in HERE (integration tests already override this dependency)."""
     return RuleBasedAssistantProvider(repo)
+
+
+def get_assistant_retrieval(
+    db: Session = Depends(get_db),
+) -> AssistantRetrievalService:
+    """Composition seam for the S6 M1 retrieval pipeline: hybrid search +
+    graph runtime, both gated by the shared R4 evaluator. The semantic leg
+    reuses the search route's overrideable dependencies and degrades to
+    lexical when unavailable."""
+    from app.api.routes.search import get_embedder, get_vector_repository
+
+    search = SearchObjectsUseCase(
+        search_repository=SQLAlchemySearchRepository(db),
+        object_repository=SQLAlchemyObjectRepository(db),
+        permission_evaluator=ObjectPermissionEvaluator(),
+        vector_repository=get_vector_repository(),
+        embedder=get_embedder(),
+    )
+    graph = GraphRuntimeService(SQLAlchemyObjectRepository(db), ObjectPermissionEvaluator())
+    return AssistantRetrievalService(search, graph)
 
 
 def _not_found(exc: ObjectNotFoundError) -> HTTPException:
@@ -130,10 +158,16 @@ def ask_question(
     body: AskBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     provider: AssistantProvider = Depends(get_assistant_provider),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
     user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = AskQuestionUseCase(repo, provider).execute(
+        out = AskQuestionUseCase(
+            repo,
+            provider,
+            retrieval=retrieval,
+            context_builder=AssistantContextBuilder(),
+        ).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
