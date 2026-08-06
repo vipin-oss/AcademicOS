@@ -294,3 +294,51 @@ class AskOutput:
     user_message: AssistantMessageOutput
     assistant_message: AssistantMessageOutput
     answer: AssistantAnswerOutput
+
+
+# ---------------------------------------------------------------------------
+# Retrieval & context (Sprint-6 M1 — Assistant Retrieval Service)
+# ---------------------------------------------------------------------------
+
+# Deterministic budget for the assistant context envelope (characters).
+# No tokenizer dependency: a stable, CI-safe approximation of the
+# token budget; trimming always drops the OLDEST content first.
+CONTEXT_CHAR_BUDGET = 6000
+CONTEXT_HISTORY_CHAR_BUDGET = 2000
+
+
+@dataclass(frozen=True)
+class RetrievedItem:
+    """One merged retrieval result (search and/or graph provenance)."""
+
+    object_id: str
+    object_type: str
+    title: str
+    version: int
+    sources: tuple[str, ...]  # ("search",) | ("graph",) | ("search", "graph")
+    score: float  # deterministic RRF score (0.0 for graph-only items)
+
+
+@dataclass(frozen=True)
+class AssistantRetrievalResult:
+    """Merged, deduplicated, deterministically ordered retrieval."""
+
+    items: tuple[RetrievedItem, ...]
+    search_count: int
+    graph_count: int
+
+
+@dataclass(frozen=True)
+class AssistantContext:
+    """Provider-agnostic assistant context envelope (Sprint-6 M1).
+
+    ``history`` is the conversation thread trimmed oldest-first to the
+    history budget; ``retrieved`` is the merged retrieval (search + graph)
+    trimmed to the remaining context budget. ``truncated`` reports whether
+    any trimming occurred. Pure data — the provider renders it.
+    """
+
+    question: str
+    history: tuple[tuple[str, str], ...]  # (role, content) pairs, oldest first
+    retrieved: tuple[RetrievedItem, ...]
+    truncated: bool
