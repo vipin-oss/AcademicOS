@@ -1,4 +1,4 @@
-"""Evaluation foundation (Sprint-7 M1).
+"""Evaluation foundation (Sprint-7 M1) + benchmark history (Sprint-7 M3).
 
 Reproducible assistant evaluations: an ``EvalCase`` describes one expected
 behavior (the question, text that MUST appear in the answer, and whether
@@ -12,8 +12,14 @@ uses a deterministic fake transport, never a live model); the checks are
 pure predicates over the produced answer. Running the same case against
 the same pipeline always yields the same result.
 
-No benchmark claims, no metrics collection, no telemetry — this is the
-correctness/evaluation foundation only.
+Sprint-7 M3 — evaluation persistence: ``run_eval_suite_across_models``
+records every model's run through ``EvaluationHistory`` (model id +
+deployed model name, prompt id + version from the ``PromptRegistry``,
+per-case results, timestamp) into the durable ``eval_runs`` store.
+``RunComparison`` / ``compare_latest`` provide benchmark comparison and
+historical regression detection over the append-only history. The runner
+is the only evaluation logic; the registries remain the single sources
+of truth for model and prompt identity.
 """
 from __future__ import annotations
 
@@ -94,6 +100,8 @@ class EvalRun:
             raise ValueError(
                 "EvalRun results must contain exactly one entry per case."
             )
+        if len({r.name for r in self.results}) != len(self.results):
+            raise ValueError("EvalRun case names must be unique.")
         if self.passed != sum(1 for r in self.results if r.passed):
             raise ValueError("EvalRun passed must match the recorded results.")
         if not self.created_at:

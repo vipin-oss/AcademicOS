@@ -186,6 +186,13 @@ def test_run_record_validates_invariants(db, store):
             prompt_id="assistant.default", prompt_version=1,
             passed=1, total=2, results=results[:1], created_at="2026-08-06T00:00:00+00:00",
         )
+    with pytest.raises(ValueError, match="names must be unique"):
+        EvalRun(
+            run_id="x", model_id="main", model_version="main-model",
+            prompt_id="assistant.default", prompt_version=1,
+            passed=2, total=2,
+            results=_results("a", "a"), created_at="2026-08-06T00:00:00+00:00",
+        )
     with pytest.raises(ValueError, match="match the recorded results"):
         EvalRun(
             run_id="x", model_id="main", model_version="main-model",

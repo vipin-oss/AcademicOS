@@ -12,18 +12,12 @@ reconstructed into ``EvalResult`` objects on read.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.ports.eval_run_store import EvalRunStore
 from app.application.services.assistant_eval import EvalResult, EvalRun
 from app.infrastructure.db.models.eval_run_model import EvalRunModel
-
-
-def _utcnow_iso() -> str:
-    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def _results_to_json(results: tuple[EvalResult, ...]) -> list[dict]:
