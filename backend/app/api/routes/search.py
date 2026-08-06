@@ -18,6 +18,7 @@ authorized against the authoritative object before it is returned.
 from __future__ import annotations
 
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -77,6 +78,16 @@ def get_embedder() -> Embedder:
     return HashingEmbedder()
 
 
+# The semantic stack is a process-lifetime lazy singleton: one client, one
+# ensured collection, shared by every request. For the in-process Qdrant
+# emulator (``:memory:``) this is REQUIRED — its state lives in the client
+# instance; for a real server it removes per-request provisioning RPCs.
+# Failures are not cached, so a later request retries the build.
+_semantic_lock = threading.Lock()
+_semantic_repository: VectorRepository | None = None
+_semantic_repository_ready = False
+
+
 def get_vector_repository() -> VectorRepository | None:
     """The semantic index adapter, or ``None`` when unavailable.
 
@@ -84,16 +95,25 @@ def get_vector_repository() -> VectorRepository | None:
     misconfigured) yields ``None`` and the search stack falls back to the
     M1 lexical contract. Overridable in tests via dependency_overrides.
     """
-    try:
-        client = get_qdrant_client()
-        embedder = HashingEmbedder()
-        collection = VectorCollectionManager(
-            client, dimensions=embedder.dimensions
-        ).ensure()
-        return QdrantVectorRepository(client, collection)
-    except Exception:  # noqa: BLE001 — semantic must never break search
-        _log.warning("Semantic search unavailable; lexical-only fallback.", exc_info=True)
-        return None
+    global _semantic_repository, _semantic_repository_ready
+    if _semantic_repository_ready:
+        return _semantic_repository
+    with _semantic_lock:
+        if _semantic_repository_ready:
+            return _semantic_repository
+        try:
+            client = get_qdrant_client()
+            embedder = HashingEmbedder()
+            collection = VectorCollectionManager(
+                client, dimensions=embedder.dimensions
+            ).ensure()
+            _semantic_repository = QdrantVectorRepository(client, collection)
+            _semantic_repository_ready = True
+        except Exception:  # noqa: BLE001 — semantic must never break search
+            _log.warning(
+                "Semantic search unavailable; lexical-only fallback.", exc_info=True
+            )
+    return _semantic_repository
 
 
 def _search_use_case(

@@ -52,6 +52,13 @@ index stays reproducible, swappable and never authoritative.
 - Version guard: a stale `VectorDocument` (older `version`) never
   overwrites a newer stored projection (enforced by both the reference
   implementation and the Qdrant adapter).
+- Float32 contract: Qdrant stores vectors as float32, so stored values are
+  quantized relative to the embedder's float64 output. The reference
+  implementation is float64-exact; rebuild == replay equality is asserted
+  exactly against the reference and within float32 rounding against
+  Qdrant (the local emulator's internal numpy arithmetic may round
+  ±1 ULP of float32 across insert sequences — a client-local artifact,
+  not present on the real server).
 
 ## 6. Verification
 
