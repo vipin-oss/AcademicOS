@@ -36,6 +36,7 @@ from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos import assistant as dto
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.services.assistant_retrieval import AssistantRetrievalService
+from app.application.services.assistant_review import AssistantReviewQueue
 from app.application.use_cases.assistant.helpers import (
     append_message,
     auto_title_if_needed,
@@ -62,6 +63,7 @@ class AskQuestionUseCase:
         prompt_builder: AssistantPromptBuilder | None = None,
         citation_builder: CitationBuilder | None = None,
         verifier: AnswerVerifier | None = None,
+        review_queue: AssistantReviewQueue | None = None,
     ) -> None:
         self._repository = repository
         self._provider = provider
@@ -70,6 +72,7 @@ class AskQuestionUseCase:
         self._prompt_builder = prompt_builder
         self._citation_builder = citation_builder
         self._verifier = verifier
+        self._review_queue = review_queue
 
     def execute(self, command: AskQuestionCommand) -> dto.AskOutput:
         """Normal mode — the synchronous pipeline (Sprint-6 M1-M3), unchanged."""
@@ -156,6 +159,11 @@ class AskQuestionUseCase:
             obj, "assistant", answer.summary, answer
         )
         self._repository.save(obj)
+        if self._review_queue is not None:
+            # Human review gate (S6 M5): the freshly produced answer is
+            # stored but not visible until approved. Sync and stream share
+            # this single finalize path.
+            self._review_queue.enqueue(str(obj.id))
         return dto.AskOutput(
             conversation=conversation_output(obj),
             user_message=message_output(user_seq, user_payload),

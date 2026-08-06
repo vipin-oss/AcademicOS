@@ -378,3 +378,16 @@ class AssistantCitation:
     sources: tuple[str, ...]
     version: int
     score: float
+
+
+# ---------------------------------------------------------------------------
+# Review workflow (Sprint-6 M5)
+# ---------------------------------------------------------------------------
+# Human review before publication: the conversation carries its review state
+# as L1/SYSTEM metadata; the LAST assistant answer is visible only after
+# approval. Three states, nothing more.
+KEY_REVIEW_STATUS = "assistant.review_status"
+
+REVIEW_PENDING = "pending"
+REVIEW_APPROVED = "approved"
+REVIEW_REJECTED = "rejected"
