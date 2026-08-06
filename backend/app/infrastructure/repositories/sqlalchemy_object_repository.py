@@ -221,6 +221,12 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         ``object_versions`` row holding the frozen ``ObjectSnapshot`` is
         appended in the SAME transaction. A save that does not change the
         version writes no version row.
+
+        Sprint-5 M1 — events still pending on the aggregate (``domain_events``)
+        are additionally persisted as durable outbox rows in the same
+        transaction, so every save path feeds the relay. The explicit
+        ``outbox_events`` rows and the aggregate's pending events are
+        disjoint by construction (callers pop before passing rows).
         """
         snap = SnapshotMapper.to_snapshot(entity)
         edge_models = self._edge_models_from_snapshot(snap)
@@ -276,6 +282,14 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             # object never loses its events.
             for row in outbox_events:
                 self._session.add(OutboxEventModel(**row))
+            # Sprint-5 M1 — every write path is durable: events still
+            # pending on the aggregate (use cases that do not pop them
+            # before saving) ride the same transaction, so the relay can
+            # index any object lifecycle, not just the document path.
+            # Read-only: popped aggregates add nothing, and the in-memory
+            # projection (pop_domain_events) is left untouched.
+            for event in entity.domain_events:
+                self._session.add(OutboxEventModel(**to_outbox_row(event)))
             # Immutable version record: the frozen snapshot rides the SAME
             # transaction (and retry) as the aggregate write, so a committed
             # save always leaves a complete version history behind it. A
