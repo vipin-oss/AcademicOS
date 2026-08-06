@@ -41,3 +41,7 @@ class EvalRunStore(abc.ABC):
     @abc.abstractmethod
     def recent_by_model(self, model_id: str, limit: int) -> list[EvalRun]:
         """The ``limit`` most recent runs of ``model_id``, newest first."""
+
+    @abc.abstractmethod
+    def recent(self, limit: int) -> list[EvalRun]:
+        """The ``limit`` most recent runs across ALL models, newest first."""

@@ -187,6 +187,11 @@ class EvaluationHistory:
     def recent(self, model_id: str, limit: int = 20) -> list[EvalRun]:
         return self._store.recent_by_model(model_id, limit)
 
+    def recent_all(self, limit: int = 20) -> list[EvalRun]:
+        """The ``limit`` most recent recorded runs across ALL models, newest
+        first (Sprint-7 M4 — the history-dashboard list query)."""
+        return self._store.recent(limit)
+
     # --------------------------------------------------------- comparison
     def compare(self, base: EvalRun, candidate: EvalRun) -> RunComparison:
         """Classify every case of ``base`` by its change in ``candidate``.

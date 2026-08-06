@@ -102,6 +102,20 @@ class SQLEvalRunStore(EvalRunStore):
         )
         return [self._from_row(row) for row in rows]
 
+    def recent(self, limit: int) -> list[EvalRun]:
+        """The ``limit`` most recent recorded runs across ALL models, newest
+        first (Sprint-7 M4 — the history-dashboard list query)."""
+        rows = (
+            self._session.execute(
+                select(EvalRunModel)
+                .order_by(EvalRunModel.created_at.desc(), EvalRunModel.id.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return [self._from_row(row) for row in rows]
+
     # ------------------------------------------------------------- mapping
     @staticmethod
     def _from_row(row: EvalRunModel) -> EvalRun:

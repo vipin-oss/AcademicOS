@@ -172,6 +172,18 @@ def test_history_is_isolated_per_model(db, store):
     assert store.recent_by_model("main", 10) == [store.get("r1")]
 
 
+def test_history_lists_runs_across_all_models_newest_first(db, store, history):
+    store.add(_run(run_id="a1", model_id="main", created_at="2026-08-06T09:00:00+00:00"))
+    store.add(_run(run_id="b1", model_id="alt", created_at="2026-08-06T10:00:00+00:00"))
+    store.add(_run(run_id="a2", model_id="main", created_at="2026-08-06T11:00:00+00:00"))
+
+    assert [r.run_id for r in store.recent(10)] == ["a2", "b1", "a1"]
+    assert [r.run_id for r in store.recent(2)] == ["a2", "b1"]
+    # The service exposes the same list query.
+    assert [r.run_id for r in history.recent_all(10)] == ["a2", "b1", "a1"]
+    assert history.recent_all(0) == []
+
+
 def test_run_record_validates_invariants(db, store):
     results = _results("a", "b")
     with pytest.raises(ValueError, match="passed"):
