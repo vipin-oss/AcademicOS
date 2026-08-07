@@ -1,12 +1,10 @@
-"""Architecture guardrail: singular transport ownership (Sprint M11.2 — ADR-001).
+"""Architecture guardrail: singular transport ownership (ADR-001).
 
-Enforces that generative-LLM transport is owned in exactly one place —
-``infrastructure/ai/llm/openai.py`` (the real ``LanguageModelGateway``
-adapter) — and that the retired transport home (``infrastructure/llm/``) no
-longer touches the wire. This is the structural vaccine against the
-duplicate-transport regression that ADR-001 exists to resolve: the
-assistant's LLM module must remain a thin translator over a
-``LanguageModelGateway`` and may never re-acquire its own httpx transport.
+Enforces that generative-LLM transport (httpx) is owned in exactly one place
+— ``infrastructure/ai/llm/openai.py`` — and that NO feature module (the AI
+Core catalogue modules, the assistant, the application layer, or the API
+layer) imports httpx. This is the structural vaccine against the duplicate-
+transport regression ADR-001 exists to resolve.
 
 A failure here means the codebase is regressing toward two transport owners.
 """
@@ -16,7 +14,21 @@ import ast
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
-LLM_ROOT = BACKEND_ROOT / "app" / "infrastructure" / "llm"
+APP_ROOT = BACKEND_ROOT / "app"
+
+#: The one module permitted to import httpx (the single transport owner).
+TRANSPORT_OWNER = Path("app/infrastructure/ai/llm/openai.py")
+
+#: Feature layers that must NEVER own transport. (Other infrastructure modules
+#: such as ``infrastructure/external`` may use httpx for non-AI purposes and
+#: are intentionally out of scope.)
+FEATURE_SCOPES = (
+    APP_ROOT / "infrastructure" / "ai",
+    APP_ROOT / "infrastructure" / "llm",
+    APP_ROOT / "infrastructure" / "assistant",
+    APP_ROOT / "application",
+    APP_ROOT / "api",
+)
 
 
 def _imports_httpx(path: Path) -> bool:
@@ -31,22 +43,24 @@ def _imports_httpx(path: Path) -> bool:
     return False
 
 
-def test_assistant_llm_module_owns_no_transport():
-    """``infrastructure/llm`` must not import httpx.
+def _rel(path: Path) -> str:
+    return str(path.relative_to(BACKEND_ROOT)).replace("\\", "/")
 
-    Transport moved to the AI gateway (``infrastructure/ai/llm/openai.py``)
-    in M11.2 (ADR-001). ``LlmAssistantProvider`` is a pure translator over a
-    ``LanguageModelGateway``; if it re-imports httpx the duplicate-transport
-    regression has returned.
-    """
-    assert LLM_ROOT.exists()
-    offenders = [
-        p.name
-        for p in sorted(LLM_ROOT.glob("*.py"))
-        if p.name != "__init__.py" and _imports_httpx(p)
-    ]
+
+def test_no_feature_module_owns_transport():
+    """No feature module imports httpx — transport belongs to the AI gateway
+    (``infrastructure/ai/llm/openai.py``) alone (ADR-001)."""
+    offenders: list[str] = []
+    for scope in FEATURE_SCOPES:
+        if not scope.exists():
+            continue
+        for path in sorted(scope.rglob("*.py")):
+            if _rel(path) == TRANSPORT_OWNER.as_posix():
+                continue
+            if _imports_httpx(path):
+                offenders.append(_rel(path))
     assert not offenders, (
-        "infrastructure/llm must not own httpx transport (ADR-001). "
-        "Transport belongs to infrastructure/ai/llm/openai.py. "
-        "Offending module(s): " + ", ".join(offenders)
+        "Feature modules must not import httpx (ADR-001) — transport is owned "
+        "only by infrastructure/ai/llm/openai.py. Offending module(s): "
+        + ", ".join(offenders)
     )

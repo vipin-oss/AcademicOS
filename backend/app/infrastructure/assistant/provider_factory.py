@@ -25,7 +25,7 @@ from app.application.dtos.ai import ProviderConfig
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.services.model_registry import ModelSpec
 from app.domain.repositories.object_repository import ObjectRepository
-from app.infrastructure.ai.llm.openai import OpenAIProvider
+from app.infrastructure.ai.provider_factory import build_gateway
 from app.infrastructure.llm.llm_provider import LlmAssistantProvider
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 
@@ -37,13 +37,17 @@ def build_provider(
     ai_core=None,
     fallback: AssistantProvider | None = None,
 ) -> AssistantProvider:
-    """The single provider factory.
+    """The assistant provider factory.
 
-    No route or use case ever builds a provider itself — provider
-    construction is centralized here and driven by the model registry. The
-    LLM transport is the AI Core's gateway adapter (M11.2); it is always
-    wrapped in the deterministic-rules fallback chain (the S6 M2 degradation
-    doctrine, unchanged). The rules kind returns the rules provider directly.
+    No route or use case ever builds a provider itself. ADR-001 (M11.2.1):
+    this factory owns NO transport and constructs NO concrete provider. It
+    resolves the model spec to a ``ProviderConfig`` and obtains the gateway
+    from the AI Core (``ai_core.build_gateway``) — the single
+    transport-composition authority. The ``ai_core``-less path still routes
+    through the AI Core's :func:`build_gateway` constructor (test
+    compatibility), never naming a concrete class. The LLM gateway is always
+    wrapped in the deterministic rules fallback chain (unchanged); the rules
+    kind returns the rules provider directly.
     """
     rules = fallback or RuleBasedAssistantProvider(
         repository, permission_evaluator=ObjectPermissionEvaluator()
@@ -62,6 +66,9 @@ def build_provider(
         temperature=ai_cfg.temperature if ai_cfg is not None else 0.0,
         streaming_enabled=ai_cfg.streaming_enabled if ai_cfg is not None else True,
     )
-    gateway = OpenAIProvider(config)  # the single transport owner (ADR-001)
+    # The gateway comes from the AI Core — never constructed here.
+    gateway = (
+        ai_core.build_gateway(config) if ai_core is not None else build_gateway(config)
+    )
     primary = LlmAssistantProvider(gateway)  # thin translator, no transport
     return FallbackAssistantProvider(primary, rules)

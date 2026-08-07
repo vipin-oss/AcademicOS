@@ -123,10 +123,14 @@ def get_assistant_provider(
     return build_provider(registry.default(), repo, ai_core=ai_core)
 
 
-def get_assistant_provider_factory():
-    """The provider factory used for per-conversation model selection
-    (Sprint-7 M2). Overridable in tests to inject transports."""
-    return build_provider
+def get_assistant_provider_factory(ai_core=Depends(get_ai_core)):
+    """The provider factory for per-conversation model selection (Sprint-7
+    M2), bound to the AI Core so gateway creation always flows through the
+    AI Core's single constructor (ADR-001 - M11.2.1). Overridable in tests
+    to inject transports."""
+    def factory(spec, repository, *, fallback=None):
+        return build_provider(spec, repository, ai_core=ai_core, fallback=fallback)
+    return factory
 
 
 def get_assistant_retrieval(

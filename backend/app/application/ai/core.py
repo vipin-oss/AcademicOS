@@ -28,6 +28,7 @@ from app.application.dtos.ai import (
     AiHealthSummary,
     AiModelsSummary,
     ModelInfo,
+    ProviderConfig,
     ProviderRecord,
 )
 
@@ -77,6 +78,18 @@ class AiCore:
         if gateway is None:
             raise UnknownProviderError(target)
         return gateway
+
+    def build_gateway(self, config: ProviderConfig) -> LanguageModelGateway:
+        """Construct a gateway for an ad-hoc config (ADR-001 — M11.2.1).
+
+        THE seam a feature (the assistant) consumes to obtain a transport
+        gateway — a feature must NEVER import or instantiate a concrete
+        provider. Delegates to the registry, whose factories were registered
+        by the composition root (``build_gateway``), so this stays
+        application-pure (no concrete class is named here) while concrete
+        instantiation remains owned solely by the AI Core.
+        """
+        return self._registry.build(config)
 
     # ------------------------------------------------------- health surface
     def health_summary(self) -> AiHealthSummary:

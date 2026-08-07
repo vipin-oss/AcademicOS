@@ -1,3 +1,61 @@
+# AcademicOS — Sprint M11.2.1 Changelog (Architecture Hardening — ADR-001)
+
+Release: **M11.2.1** · Baseline `1c1d81f` (M11.2) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **architecture hardening only — no behaviour change, no new providers, no SDKs**
+
+An independent hostile audit of M11.2 found that ADR-001 was only partially
+implemented: the assistant still constructed the concrete `OpenAIProvider`
+directly (in `build_provider` and `LlmAssistantProvider`'s legacy constructor),
+so gateway creation was **not** owned by AI Core, there were effectively two
+composition roots, and the only guardrail checked httpx imports. M11.2.1 makes
+ADR-001 fully true and machine-enforced.
+
+## What changed
+
+| Audit finding | Fix |
+|---|---|
+| AI Core bypass (features construct concrete providers) | `build_gateway()` is now **the single gateway constructor** in `infrastructure/ai/provider_factory.py` — the only place a concrete provider is imported or instantiated. The assistant's `build_provider` and `LlmAssistantProvider` obtain gateways through `AiCore.build_gateway` / `build_gateway`; neither imports `OpenAIProvider` anymore. |
+| Duplicate transport composition (two roots) | One composition authority: the AI Core. `build_ai_core` builds the catalogue through `build_gateway`; features consume `AiCore.build_gateway`. |
+| Weak guardrails (httpx only) | `test_transport_ownership` now spans every feature layer; new `test_ai_composition_authority` forbids any feature from importing a concrete provider and asserts `build_gateway` is defined only in the composition root. |
+| DI direction | `get_assistant_provider_factory` is bound to `ai_core`, so per-conversation model selection also flows through the AI Core. `application/ai` still imports nothing from the assistant (existing AI purity guardrail). |
+
+## New surface
+
+- `AiCore.build_gateway(config) -> LanguageModelGateway` — the application-pure
+  seam a feature consumes to obtain a transport gateway. Delegates to the
+  registry (concrete instantiation stays in the composition root).
+
+## What did NOT change
+
+- **No behaviour change** — full suite green; transport, fallback, streaming,
+  citations, model selection, review gate all unchanged.
+- **`RuleBasedAssistantProvider` and `FallbackAssistantProvider`** untouched.
+- **No new providers / SDKs / functionality.** `AI_*` and `ASSISTANT_*` config
+  both remain (compat preserved); retiring `ASSISTANT_*` is still M11.3.
+- The `AssistantProvider` port and `ModelRegistry` remain as transient seams.
+
+## Files modified
+
+`backend/app/infrastructure/ai/provider_factory.py` (single constructor + re-exports) ·
+`backend/app/application/ai/core.py` (`build_gateway` seam) ·
+`backend/app/infrastructure/assistant/provider_factory.py` (consumes AI Core) ·
+`backend/app/infrastructure/llm/llm_provider.py` (consumes AI Core) ·
+`backend/app/api/routes/assistant.py` (factory bound to `ai_core`)
+
+## Files added / strengthened
+
+`backend/app/tests/architecture/test_ai_composition_authority.py` (new — 2 guardrails) ·
+`backend/app/tests/architecture/test_transport_ownership.py` (broadened to all feature layers)
+
+## Verification
+
+- Backend suite: **1354 passed, 2 skipped** (M11.2 baseline 1352 + 2 new composition guardrails; **zero regressions**)
+- Architecture guardrails: **14/14** (7 domain + 4 AI + 1 transport + 2 composition)
+- Hostile-audit re-check: **no feature imports a concrete provider**; **one module-level `build_gateway`**; **httpx only in `infrastructure/ai/llm/openai.py`**
+- `ruff check --select F401,I001` clean on changed files; app boots (264 routes)
+
+---
+
 # AcademicOS — Sprint M11.2 Changelog (Architecture Alignment — ADR-001)
 
 Release: **M11.2** · Baseline `1c0e82e` (M11.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

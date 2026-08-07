@@ -32,11 +32,11 @@ from app.application.dtos.assistant import (
     AssistantContext,
     AssistantPrompt,
 )
-from app.infrastructure.ai.llm.openai import (
+from app.infrastructure.ai.provider_factory import (
     RETRY_ATTEMPTS,
     RETRY_BACKOFF_SECONDS,
     LlmProviderError,
-    OpenAIProvider,
+    build_gateway,
 )
 
 __all__ = ["LlmAssistantProvider", "LlmProviderError", "PROVIDER_NAME"]
@@ -87,7 +87,10 @@ class LlmAssistantProvider:
                 model=model or "",
                 base_url=base_url or "",
             )
-            self._gateway = OpenAIProvider(
+            # Gateway construction is owned by the AI Core (ADR-001): obtain
+            # the gateway through the single constructor, never naming the
+            # concrete class here. The caller's client is injected for tests.
+            self._gateway = build_gateway(
                 config,
                 client=gateway_or_client,
                 retry_attempts=retry_attempts,
