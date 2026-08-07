@@ -2406,3 +2406,24 @@ export interface CreateIntakeSessionPayload {
   actor?: string;
   title?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Authentication (final release)
+// ---------------------------------------------------------------------------
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  created_at: string;
+  roles: string[];
+}
+
+export interface ForgotPasswordResult {
+  reset_token: string;
+  expires_in_seconds: number;
+}

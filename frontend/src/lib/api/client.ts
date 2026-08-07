@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "@/config/env";
-import { getToken } from "@/lib/auth/token";
+import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/lib/auth/token";
 
 /**
  * Thin fetch wrapper. No business logic — transport + error normalisation only.
@@ -216,6 +216,13 @@ async function request<T>(
     external?.removeEventListener("abort", forwardAbort);
   }
 
+  if (res.status === 401 && !path.startsWith("/auth/") && !authRetried.has(init)) {
+    // Session may have expired: try one silent refresh, then retry once.
+    authRetried.add(init);
+    const refreshed = await refreshSession();
+    if (refreshed) return request<T>(path, init, options);
+  }
+
   if (!res.ok) {
     let body: unknown = null;
     try {
@@ -330,9 +337,58 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
  * API access: every request rides the authenticated principal). No token,
  * no header — public endpoints keep working unauthenticated. */
 function attachAuthorization(headers: Record<string, string>): void {
-  const token = getToken();
+  const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 }
+
+// ---------------------------------------------------------------------------
+// Automatic session refresh (final release)
+//
+// A 401 on any authenticated endpoint triggers ONE refresh-token exchange
+// (single-flight: concurrent 401s share the same exchange) and retries the
+// original request once. When the refresh fails the session is cleared, so
+// the app behaves as signed-out. Auth endpoints (/auth/*) are excluded —
+// a wrong-password 401 must never start a refresh.
+// ---------------------------------------------------------------------------
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      clearTokens();
+      return false;
+    }
+    const body = (await res.json()) as AuthTokensLike;
+    setTokens(body.access_token, body.refresh_token);
+    return true;
+  } catch {
+    clearTokens();
+    return false;
+  }
+}
+
+interface AuthTokensLike {
+  access_token: string;
+  refresh_token: string;
+}
+
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+const authRetried = new WeakSet<RequestInit>();
 
 /**
  * Raw-bytes variant of {@link request} (Sprint-3 M3 — inline document

@@ -8,6 +8,7 @@
  */
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
 import { AssistantWorkspace } from "@/components/features/assistant/AssistantWorkspace";
+import { AssistantLabs } from "@/components/features/assistant/AssistantLabs";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 
@@ -32,6 +33,7 @@ export default function AssistantPage() {
             </p>
           </div>
           <AssistantWorkspace />
+          <AssistantLabs />
         </main>
       </div>
     </div>

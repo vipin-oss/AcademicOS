@@ -8,7 +8,7 @@
  * decoded (`obj:intake_session:AB12…`); colons are legal in path segments and
  * are never percent-encoded here.
  */
-import { api } from "@/lib/api/client";
+import { api, type RequestOptions } from "@/lib/api/client";
 import type {
   CreateIntakeSessionPayload,
   IntakeProgressUpdate,
@@ -95,4 +95,41 @@ export function cancelIntakeSession(sessionId: string): Promise<IntakeSession> {
 
 export function deleteIntakeSession(sessionId: string): Promise<void> {
   return api.delete<void>(`/intake/sessions/${sessionId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Item proposal & commit (final release — previously unwired routes)
+// ---------------------------------------------------------------------------
+
+/** `GET /intake/items/{id}/proposal` — the proposal for one item. */
+export function getItemProposal(
+  itemId: string,
+  options?: RequestOptions,
+): Promise<{ proposal: unknown }> {
+  return api.get<{ proposal: unknown }>(`/intake/items/${itemId}/proposal`, options);
+}
+
+/** `POST /intake/items/{id}/proposal/regenerate` — rebuild the proposal. */
+export function regenerateItemProposal(
+  itemId: string,
+  options?: RequestOptions,
+): Promise<{ proposal: unknown }> {
+  return api.post<{ proposal: unknown }>(
+    `/intake/items/${itemId}/proposal/regenerate`,
+    undefined,
+    options,
+  );
+}
+
+/** `POST /intake/items/{id}/commit` — commit the item into the graph. */
+export function commitIntakeItem(itemId: string, options?: RequestOptions): Promise<unknown> {
+  return api.post(`/intake/items/${itemId}/commit`, undefined, options);
+}
+
+/** `POST /intake/items/{id}/commit-preview` — dry-run commit. */
+export function previewCommitIntakeItem(
+  itemId: string,
+  options?: RequestOptions,
+): Promise<unknown> {
+  return api.post(`/intake/items/${itemId}/commit-preview`, undefined, options);
 }
