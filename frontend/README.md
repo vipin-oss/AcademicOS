@@ -1,33 +1,50 @@
-# Frontend — AcademicOS (Next.js)
+# Frontend — AcademicOS (Next.js 14, App Router)
 
-Folder skeleton only. No business logic or configuration yet.
+The AcademicOS web client. Connects to the FastAPI backend at
+`http://127.0.0.1:8000/api/v1` by default (override with
+`NEXT_PUBLIC_API_URL` in `.env.local` — see `.env.example`).
 
-## Screen / Module Map
+## Quickstart
 
-Each screen from the UI Specification maps to a folder under
-`src/app/(main)/` (route) and `src/components/features/<screen>/` (components):
+```powershell
+npm install
+npm run dev        # http://127.0.0.1:3000
+```
 
-| Folder | UI Spec screen |
+Register an account on `/register`, then sign in. Protected routes are
+guarded by middleware (session cookie) and the client-side session
+provider; expired access tokens are refreshed automatically once via the
+refresh token, then the session signs out.
+
+## Modules
+
+| Route | Module |
 |---|---|
-| `dashboard` | Dashboard (AI Briefing) |
-| `documents` | Document Library / Viewer |
-| `teaching` | Teaching |
-| `research` | Research |
-| `publications` | Publications |
-| `projects` | Projects |
-| `administration` | Administration |
-| `students` | Students |
-| `calendar` | Calendar |
-| `ai-chat` | AI Chat (Screen 9) |
-| `settings` | Settings |
-| `notifications` | Notifications |
-| `search` | Search (Screen 12) |
-| `auth` | Auth (sign-in / sign-up) |
+| `/` | Dashboard |
+| `/assistant` | AI Assistant (chat + memory/review/eval Labs) |
+| `/objects` `/objects/[id]` | Objects (incl. Relationships graph + ACL panel) |
+| `/documents` | Documents |
+| `/intake` | Intake |
+| `/publications` | Publications |
+| `/students` | Students |
+| `/teaching` | Teaching |
+| `/research` | Research |
+| `/faculty` | Faculty |
+| `/committees` | Committees |
+| `/finance` | Finance |
+| `/events` | Events |
+| `/productivity` | Productivity (tasks, reminders, calendar, notifications) |
+| `/reports` | Reports |
+| `/search` | Global search |
+| `/settings` | Settings |
+| `/login` `/register` `/forgot-password` `/reset-password` | Authentication |
 
-## Conventions (to be enforced when code is added)
+## Conventions
 
-- **ShadCN** primitives live in `src/components/ui/` (added by the ShadCN CLI).
-- **State** is kept in `src/stores/`; server state goes through `src/lib/api/`.
-- **Auth** tokens (JWT) are managed in `src/lib/auth/` and attached via the API client.
-- **Storage adapters** (local / Google Drive / OneDrive) live in `src/lib/storage/`.
-- Every `features/<screen>` folder owns its components, hooks, and local types.
+- Feature components live in `src/components/features/<screen>/`; shared
+  layout in `src/components/layout/`; API clients in `src/lib/api/`.
+- Auth tokens are managed in `src/lib/auth/` (localStorage + session
+  cookie) and attached automatically by the API client.
+- Hooks in `src/hooks/`; shared types in `src/types/`.
+- Tests: `npx vitest run` (unit) and `frontend/tests/*.e2e.mjs`
+  (scripted manual/regression flows).
