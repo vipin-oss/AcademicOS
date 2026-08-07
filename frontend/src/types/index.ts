@@ -2486,3 +2486,53 @@ export interface ExtractedTextResponse {
   session_id: string;
   item_id: string;
 }
+
+// ---------------------------------------------------------------------------
+// AI Core (Sprint M11.1) — mirrors `backend/app/api/routes/ai.py`
+// ---------------------------------------------------------------------------
+
+/** Aggregate AI health (`GET /ai/health`). */
+export interface AiHealth {
+  status: "ok" | "not_configured" | "disabled" | "error";
+  ai_enabled: boolean;
+  default_provider: string;
+  default_model: string;
+  default_provider_valid: boolean;
+  providers_total: number;
+  providers_configured: number;
+  feature_flags: Record<string, boolean>;
+  checked_at: string;
+}
+
+/** One model in the aggregated catalogue (`GET /ai/models`). */
+export interface AiModelInfo {
+  provider_id: string;
+  model_id: string;
+  display_name: string;
+  context_window: number | null;
+  capabilities: string[];
+  configured: boolean;
+}
+
+/** `GET /ai/models` response. */
+export interface AiModelsResponse {
+  default_provider: string;
+  default_model: string;
+  models: AiModelInfo[];
+}
+
+/** One provider row (`GET /ai/providers`). */
+export interface AiProviderInfo {
+  provider_id: string;
+  display_name: string;
+  kind: string;
+  status: "configured" | "not_configured" | "error";
+  configured: boolean;
+  models: AiModelInfo[];
+  detail: string;
+}
+
+/** `GET /ai/providers` response. */
+export interface ListAiProvidersResponse {
+  items: AiProviderInfo[];
+}

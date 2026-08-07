@@ -1,3 +1,69 @@
+# AcademicOS — Sprint M11.1 Changelog (AI Foundation)
+
+Release: **M11.1** · Baseline `4d3c4cd` (M10 RC1, frozen) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **infrastructure only — no chat, no RAG, no memory, no agents, no embeddings, no LLM calls**
+
+Sprint M11.1 builds the AI Core every future AI capability plugs into.
+The system's behavior is unchanged: no generation happens anywhere; the
+five provider adapters are honest placeholders that report
+"Not Configured".
+
+## What was built
+
+| Layer | Deliverable |
+|---|---|
+| AI application layer | `app/application/ai/` — pure ports + services: `LanguageModelGateway` protocol (health / list_models / generate / stream / structured_generate / count_tokens / estimate_cost), AI DTOs with strict validation + serialization helpers, `ProviderRegistry` (kind → factory discovery), `AI_PROVIDERS_JSON` parsing, `AiConfigView` (defaults, generation knobs, feature flags), `AiCore` facade (health / providers / models aggregation + gateway lookup), domain errors (`AiNotConfiguredError` 503-mapped, `UnknownProviderError`) |
+| Use cases | `app/application/use_cases/ai/` — `GetAiHealthUseCase`, `ListAiProvidersUseCase`, `ListAiModelsUseCase` (thin, testable, HTTP-free) |
+| Provider placeholders | `app/infrastructure/ai/llm/placeholders.py` — OpenAI, Anthropic, Google, Ollama, Local. All report `not_configured`; generation raises `AiNotConfiguredError` (no fake AI); token/cost estimates are deterministic and real |
+| Composition + DI | `app/infrastructure/ai/provider_factory.py` (`build_ai_core`, the single factory) + `app/api/dependencies/ai.py` (`get_ai_core`, test-overridable seam) |
+| Health API | `GET /api/v1/ai/health` (public, JSON), `GET /api/v1/ai/providers` + `GET /api/v1/ai/models` (authenticated, JSON) |
+| Configuration | `AI_ENABLED`, `AI_DEFAULT_PROVIDER`, `AI_DEFAULT_MODEL`, `AI_TEMPERATURE`, `AI_MAX_TOKENS`, `AI_TIMEOUT_SECONDS`, `AI_STREAMING_ENABLED`, feature flags (`AI_CHAT_ENABLED`, `AI_RAG_ENABLED`, `AI_MEMORY_ENABLED`, `AI_AGENTS_ENABLED`, `AI_DOCUMENT_UNDERSTANDING_ENABLED` — all OFF), `AI_PROVIDERS_JSON` |
+| Frontend | `/settings/ai` page (sidebar "AI Settings"): health banner, default provider / current model, capability flags, provider catalogue, model list — read-only, no chat UI |
+| Guardrails | 4 new architecture tests: AI application purity, adapter independence, single composition seam, clean imports (7 domain + 4 AI = 11) |
+| Docs | `AI_DEVELOPER_GUIDE.md` (how to add a provider), README AI section, this changelog, AI Architecture v1.0 appendix |
+
+## Files added
+
+`backend/app/application/ai/{__init__,errors,config,core}.py` ·
+`backend/app/application/ai/llm/{__init__,ports,estimates}.py` ·
+`backend/app/application/ai/providers/{__init__,config,registry}.py` ·
+`backend/app/application/use_cases/ai/{__init__,get_ai_health,list_ai_providers,list_ai_models}.py` ·
+`backend/app/application/dtos/ai.py` ·
+`backend/app/infrastructure/ai/{__init__,provider_factory}.py` ·
+`backend/app/infrastructure/ai/llm/{__init__,placeholders}.py` ·
+`backend/app/api/dependencies/ai.py` · `backend/app/api/routes/ai.py` ·
+`backend/app/tests/unit/test_ai_{dtos,estimates,provider_config,registry,config_view,core,placeholders}.py` ·
+`backend/app/tests/integration/test_ai_health_api.py` ·
+`backend/app/tests/architecture/test_ai_guardrails.py` ·
+`frontend/src/lib/api/ai.ts` ·
+`frontend/src/components/features/settings/{AiSettingsView,AiSettingsView.test}.tsx` ·
+`frontend/src/app/(main)/settings/ai/page.tsx` · `AI_DEVELOPER_GUIDE.md`
+
+## Files modified
+
+`backend/app/core/config.py` (AI settings) · `backend/.env.example` ·
+`backend/app/main.py` (AI router) · `frontend/src/types/index.ts` ·
+`frontend/src/components/layout/Sidebar.tsx` · `README.md` ·
+`CHANGELOG.md` · `AcademicOS_AI_Architecture.md` (appendix) ·
+`PATCH_MANIFEST.md` (M11.1 manifest)
+
+## Tests
+
+- Backend: **+109 tests** (unit: DTOs, estimates, config parsing, registry,
+  config view, core aggregation, use cases, placeholders; integration:
+  full DI-chain API tests for health/providers/models incl. auth gates and
+  regression; architecture: 4 new AI guardrails). Full suite green.
+- Frontend: **+5 tests** (AI Settings view) — 70 total, tsc clean.
+
+## Verification
+
+- Backend suite: **1351 passed, 2 skipped** (1242 baseline + 109 new AI tests)
+- Guardrails: **11/11** (7 domain + 4 AI)
+- `tsc --noEmit` clean · `next build` clean
+- Manual API: `/ai/health` 200 public · `/ai/providers` + `/ai/models`
+  401 without JWT / 200 with · `/health` regression 200
+
+---
 # AcademicOS — M10 Release Candidate 1 (RC1) Changelog
 
 Release: **M10 RC1** · Baseline `f891383` (audited M10 HEAD) · Date: 2026-08-07

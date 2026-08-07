@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.routes.ai import router as ai_router
 from app.api.routes.assistant import router as assistant_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.committees import router as committees_router
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(health_router, prefix=settings.api_v1_prefix)
+    app.include_router(ai_router, prefix=settings.api_v1_prefix)
     app.include_router(objects_router, prefix=settings.api_v1_prefix)
     app.include_router(documents_router, prefix=settings.api_v1_prefix)
     app.include_router(document_viewer_router, prefix=settings.api_v1_prefix)

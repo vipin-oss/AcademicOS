@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, LayoutDashboard, Boxes, FileText, FolderInput, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Wallet, Search, Calendar, Settings, BarChart3, CalendarCheck, Sparkles } from "lucide-react";
+import { GraduationCap, LayoutDashboard, Boxes, FileText, FolderInput, BookOpen, Users, Presentation, FlaskConical, Briefcase, UsersRound, Wallet, Search, Calendar, Settings, BarChart3, CalendarCheck, Sparkles, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -23,6 +23,7 @@ const NAV = [
   { label: "Events", icon: Calendar, href: "/events" },
   { label: "Reports", icon: BarChart3, href: "/reports" },
   { label: "Settings", icon: Settings, href: "/settings" },
+  { label: "AI Settings", icon: Cpu, href: "/settings/ai" },
 ] as const;
 
 export function Sidebar() {

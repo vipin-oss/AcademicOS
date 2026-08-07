@@ -45,6 +45,26 @@ and `backend/.env.example`.
 | Vector DB | Qdrant (optional — search degrades to lexical-only) |
 | Auth | JWT (access + refresh), bcrypt, role-based access |
 | Storage | Local filesystem adapter (Google Drive / OneDrive slots reserved) |
+| AI Core (M11.1) | Provider-independent `LanguageModelGateway` port · provider registry (OpenAI / Anthropic / Google / Ollama / Local placeholders) · health API · no LLM calls yet |
+
+## AI Foundation (Sprint M11.1)
+
+AcademicOS's AI Core is in place as **infrastructure only**: a
+provider-independent gateway port, a provider registry with five honest
+"Not Configured" placeholders, central AI configuration, and a JSON
+health surface.
+
+- `GET /api/v1/ai/health` — aggregate AI health (public)
+- `GET /api/v1/ai/providers` — provider catalogue (authenticated)
+- `GET /api/v1/ai/models` — model catalogue (authenticated)
+- UI: **Settings → AI Settings** (`/settings/ai`)
+
+No generation, chat, RAG, memory, agents or embeddings exist yet — every
+capability flag is OFF and no LLM is called. Future sprints add providers
+by implementing only an adapter (see `AI_DEVELOPER_GUIDE.md`).
+
+Configuration lives in `backend/.env.example` under the `AI_*` keys
+(`AI_PROVIDERS_JSON`, `AI_DEFAULT_PROVIDER`, feature flags, …).
 
 ## Repository Layout
 
@@ -53,12 +73,14 @@ academicos/
 ├── backend/        # FastAPI service (Clean Architecture)
 │   ├── alembic/    # Migrations 0001..0008
 │   ├── app/        # api / application / domain / infrastructure
+│   │   └── application/ai + infrastructure/ai   # AI Core (M11.1)
 │   ├── scripts/    # init_db.py (SQLite quickstart), seed_regression.py
-│   └── tests/      # unit + integration + architecture guardrails (1200+)
+│   └── tests/      # unit + integration + architecture guardrails (1300+)
 ├── frontend/       # Next.js client (App Router, src/)
-│   ├── src/app/    # (auth)/ + (main)/ route groups
+│   ├── src/app/    # (auth)/ + (main)/ route groups (incl. /settings/ai)
 │   ├── src/lib/    # api clients, auth session, constants
 │   └── tests/      # vitest unit tests + scripted e2e flows
+└── AI_DEVELOPER_GUIDE.md  # how to add an AI provider / capability
 ├── docker-compose.yml   # PostgreSQL + Qdrant for the full stack
 ├── INSTALL.md      # Windows/Linux/macOS installation guide
 └── *.md            # Product/architecture specifications

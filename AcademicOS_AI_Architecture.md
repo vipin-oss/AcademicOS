@@ -2533,3 +2533,27 @@ Review-Queue accept/reject (A9), "not relevant" on search/related (F13/F16), and
 ---
 
 *— End of AcademicOS AI Architecture Specification —*
+
+---
+
+## APPENDIX G — Sprint M11.1 Implementation Status (AI Foundation)
+
+*Addendum dated 2026-08-07 (branch `feature/m11-ai-workspace`).*
+
+M11.1 delivered the AI Core as **infrastructure only** — the base of the
+layered view in §A2 and the port/routing seams of §A4. What exists now:
+
+| v1.0 element | M11.1 status |
+|---|---|
+| Capability-port layer | `application/ai` (pure) + `infrastructure/ai` (adapters); `LanguageModelGateway` port with health / list-models / generate / stream / structured-generate / count-tokens / estimate-cost |
+| Provider portfolio (A4) | Catalogue of the five kinds (OpenAI / Anthropic / Google / Ollama / Local) with honest `not_configured` placeholders — no adapters, no SDKs, no network, no credentials |
+| Registry & routing | `ProviderRegistry` (kind → factory), config-driven `AI_PROVIDERS_JSON`, `AiConfigView` (defaults, knobs, feature flags); routing cascade (P3) arrives with real adapters |
+| Health/observability | `GET /api/v1/ai/health` (public), `/ai/providers`, `/ai/models` (auth); deterministic token/cost estimates ready for the §A12 accounting layer |
+| Composition | Single factory `build_ai_core` + test-overridable DI seam; four new architecture guardrails enforce the layering |
+| Degradation (P9) | Generation on unconfigured providers raises `AiNotConfiguredError` (503-mapped) — no fake AI, ever |
+| Frontend | `/settings/ai` read-only status page (health, providers, models, flags) |
+
+**Deliberately not implemented in M11.1:** generation endpoints, RAG,
+memory, agents, embeddings, prompt layer, cost budgets, caching, rate
+limits — each is scheduled in M11.2+ and plugs into these seams without
+changing them. See `AI_DEVELOPER_GUIDE.md` for the adapter contract.

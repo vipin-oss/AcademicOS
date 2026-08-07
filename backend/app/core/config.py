@@ -72,6 +72,35 @@ class Settings(BaseSettings):
     assistant_models_json: str = ""
     assistant_default_model: str = "default"
 
+    # ---- AI Core (Sprint M11.1 — AI Foundation) ---------------------------
+    # Master switch for the AI surface (/ai/health reports "disabled" when
+    # off). No M1–M10 behavior depends on it.
+    ai_enabled: bool = True
+    # The catalogue provider used when no explicit provider is requested.
+    # M11.1 has no wired adapters — the value selects the default row in
+    # the settings surface and the target for future gateway() calls.
+    ai_default_provider: str = "local"
+    # Default model id; empty means "the provider's own default".
+    ai_default_model: str = ""
+    # Generation defaults (used by future adapters; placeholders ignore).
+    ai_temperature: float = 0.0
+    ai_max_tokens: int = 2048
+    ai_timeout_seconds: float = 30.0
+    ai_streaming_enabled: bool = True
+    # Feature flags for future M11 sprints. All default OFF: the AI Core
+    # surface (health/providers/models) is the only M11.1 capability.
+    ai_chat_enabled: bool = False
+    ai_rag_enabled: bool = False
+    ai_memory_enabled: bool = False
+    ai_agents_enabled: bool = False
+    ai_document_understanding_enabled: bool = False
+    # Provider configuration: JSON list of entries, e.g.
+    #   [{"provider_id": "openai", "kind": "openai", "model": "gpt-4o-mini",
+    #     "base_url": "", "timeout_seconds": 30, "max_tokens": 2048,
+    #     "temperature": 0.0, "streaming_enabled": true}]
+    # No credentials are stored or read anywhere in M11.1.
+    ai_providers_json: str = ""
+
     @model_validator(mode="after")
     def _reject_insecure_default_secret(self) -> Settings:
         # Sprint-1 auth foundation: the default JWT secret must never run in
