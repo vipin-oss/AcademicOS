@@ -1,3 +1,67 @@
+# AcademicOS — Sprint M11.2 Changelog (Architecture Alignment — ADR-001)
+
+Release: **M11.2** · Baseline `1c0e82e` (M11.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **architecture alignment only — no behaviour change, no new providers, no SDKs, no new user-facing functionality**
+
+Sprint M11.2 implements ADR-001: it collapses the duplicate LLM transport
+into a single owner. The OpenAI-compatible transport that lived in
+`infrastructure/llm/LlmAssistantProvider` is relocated to the AI Core's
+`LanguageModelGateway` adapter (`infrastructure/ai/llm/openai.py::OpenAIProvider`),
+which becomes the **single** owner of generative-LLM transport. The assistant
+now consumes a `LanguageModelGateway` instead of owning transport. The
+deterministic rules engine and the fallback chain are untouched.
+
+## What changed
+
+| Concern | Change |
+|---|---|
+| Singular transport ownership | New `OpenAIProvider` (`infrastructure/ai/llm/openai.py`) owns the OpenAI-compatible httpx transport (relocated verbatim — bounded retries, non-retryable status set, SSE parsing, `LlmProviderError`). It is the only module under `infrastructure/ai` / `infrastructure/llm` that imports httpx. |
+| `LanguageModelGateway` = the provider abstraction | `OpenAIProvider` implements the gateway port (generate/stream/structured_generate/health/list_models/count_tokens/estimate_cost). Honest "not configured" surface when no `base_url` is set (parity with the placeholder); real chat-completions when configured. |
+| Assistant consumes AiCore | `LlmAssistantProvider` is now a thin translator over a `LanguageModelGateway` (no transport). `build_provider` constructs the `OpenAIProvider` gateway from the model spec and wraps it; the assistant route injects `get_ai_core` for generation defaults. |
+| Credential seam (ADR-001 Q7.5) | `ProviderConfig.api_key` — the single secret an adapter may read (inside the adapter only, never logged). `AI_PROVIDERS_JSON` parsing reads it. |
+| Provider-independent extension | `GenerationPrompt.extra_body` — an optional dict of extra request fields the gateway merges into its wire body. The assistant attaches its numbered evidence this way, preserving the exact prior wire format without leaking an assistant concept into the gateway. |
+| Transport-ownership guardrail | New `tests/architecture/test_transport_ownership.py` fails CI if `infrastructure/llm` ever re-imports httpx — the structural vaccine against the duplicate-transport regression. |
+
+## What did NOT change (the sprint constraints)
+
+- **No behaviour change.** Every transport, pipeline and assistant test
+  (unit + integration, including the citations-on-wire contract) passes
+  unchanged. The fallback chain, streaming, model selection, review gate
+  and the deterministic rules provider are byte-for-byte identical.
+- **`RuleBasedAssistantProvider` and `FallbackAssistantProvider`** are
+  untouched (the system's P9 "degrade, never disappear" guarantee).
+- **No new providers, no SDKs.** `OpenAIProvider` is the *relocated*
+  pre-existing transport (it was already `LlmAssistantProvider`), not a new
+  integration. httpx was already a dependency. The other four providers
+  remain honest placeholders.
+- **`AssistantProvider` port and `ModelRegistry`** are intentionally retained
+  as transient seams (ADR-001 retires them in M11.3 with config consolidation).
+
+## Files added
+
+`backend/app/infrastructure/ai/llm/openai.py` (real gateway) ·
+`backend/app/tests/architecture/test_transport_ownership.py` (guardrail)
+
+## Files modified
+
+`backend/app/application/dtos/ai.py` (`ProviderConfig.api_key`, `GenerationPrompt.extra_body`) ·
+`backend/app/application/ai/providers/config.py` (parse `api_key`) ·
+`backend/app/infrastructure/ai/llm/placeholders.py` (`OpenAIProvider` moved out; the 4 honest placeholders remain) ·
+`backend/app/infrastructure/ai/provider_factory.py` (registers the real `OpenAIProvider`) ·
+`backend/app/infrastructure/llm/llm_provider.py` (`LlmAssistantProvider` → thin translator; `LlmProviderError` re-exported) ·
+`backend/app/infrastructure/assistant/provider_factory.py` (`build_provider` builds the gateway) ·
+`backend/app/api/routes/assistant.py` (`get_assistant_provider` consumes `get_ai_core`) ·
+`backend/app/tests/unit/test_ai_placeholders.py` (import `OpenAIProvider` from its new home)
+
+## Verification
+
+- Backend suite: **1352 passed, 2 skipped** (baseline 1351 + 1 new transport-ownership guardrail; **zero regressions**)
+- Architecture guardrails: **12/12** (7 domain + 4 AI + 1 transport-ownership)
+- `ruff check --select F401,I001` clean on every changed file
+- App boots; 264 routes registered; `/api/v1/ai/health` and `/api/v1/assistant/*` unchanged
+
+---
+
 # AcademicOS — Sprint M11.1 Changelog (AI Foundation)
 
 Release: **M11.1** · Baseline `4d3c4cd` (M10 RC1, frozen) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

@@ -1,74 +1,106 @@
-"""Production LLM provider adapter (Sprint-6 M2).
+"""LLM assistant provider — a thin translator over a LanguageModelGateway
+(Sprint M11.2 — ADR-001).
 
-Pure transport behind the existing ``AssistantProvider`` port: maps a
-pre-built ``AssistantPrompt`` onto an OpenAI-compatible ``/chat/completions``
-request, calls it over httpx (the repository's established HTTP convention
-— see ``infrastructure/external/crossref.py``), and parses the reply into
-the shared ``AssistantAnswerOutput``. NO business logic, NO retrieval, NO
-prompt construction — the Prompt Builder owns that.
+ARCHITECTURE CHANGE (ADR-001): this module NO LONGER OWNS TRANSPORT. It maps
+the assistant's feature-level contracts (``AssistantPrompt`` →
+``AssistantAnswerOutput``) onto the provider-independent
+:class:`LanguageModelGateway` (the single transport abstraction in
+AcademicOS, realised by :mod:`app.infrastructure.ai.llm.openai`) and back.
+httpx, retries, wire-format construction and SSE parsing live **exclusively**
+in the gateway; this adapter only translates DTOs. One transport, one
+abstraction (goals 1 & 2); the assistant consumes the AI Core's gateway
+instead of owning transport (goal 3).
 
-Failure doctrine:
+No product behaviour changes (goal 6): the public surface
+(``answer``/``stream``/``name``/``PROVIDER_NAME``/``LlmProviderError`` and the
+legacy ``(client, model, base_url, ...)`` constructor) is preserved. The
+legacy constructor builds the gateway adapter internally and delegates, so
+existing call sites and tests keep working unchanged.
 
-- Deterministic request construction: fixed JSON body (``model``,
-  ``messages``, ``temperature: 0``), no sampling randomness.
-- Timeout: configurable, applied to every attempt.
-- Retries: bounded with FIXED backoff (the repository's lock-retry
-  convention), ONLY for transient failures — transport errors (connect /
-  timeout) and HTTP 5xx. 4xx (bad request / auth) and malformed responses
-  raise immediately.
-- After the retry bound is spent the adapter raises ``LlmProviderError``;
-  the composition layer (``FallbackAssistantProvider``) converts that into
-  the deterministic rules fallback — the assistant never crashes.
+``LlmProviderError`` is re-exported from the gateway for backwards
+compatibility — tests and the ``FallbackAssistantProvider`` boundary import
+it from here.
 """
 from __future__ import annotations
 
-import json
-import time
+from collections.abc import Iterator
 from dataclasses import asdict
 
-import httpx
-
+from app.application.dtos.ai import GenerationPrompt, ProviderConfig
 from app.application.dtos.assistant import (
     AssistantAnswerOutput,
     AssistantContext,
     AssistantPrompt,
 )
+from app.infrastructure.ai.llm.openai import (
+    RETRY_ATTEMPTS,
+    RETRY_BACKOFF_SECONDS,
+    LlmProviderError,
+    OpenAIProvider,
+)
+
+__all__ = ["LlmAssistantProvider", "LlmProviderError", "PROVIDER_NAME"]
 
 PROVIDER_NAME = "llm-v1"
 
-# Bounded, fixed backoff — deterministic by contract (the repository's
-# lock-retry doctrine applied to the external call).
-_RETRY_ATTEMPTS = 3
-_RETRY_BACKOFF_SECONDS = 0.5
-# Non-retryable client errors (bad request, auth, not found, ...).
-_NO_RETRY_STATUS = frozenset({400, 401, 403, 404, 422, 429})
-
-
-class LlmProviderError(RuntimeError):
-    """The LLM endpoint could not produce an answer (after retries)."""
-
 
 class LlmAssistantProvider:
-    """OpenAI-compatible chat-completions transport adapter."""
+    """Assistant-facing answering strategy backed by a ``LanguageModelGateway``.
+
+    Transport is delegated — this class owns no httpx, no retries, no wire
+    format. It exists to bridge the assistant's prompt/answer contracts and
+    the gateway's generation contracts.
+
+    Two construction modes:
+
+    - **Gateway mode (production, M11.2):** ``LlmAssistantProvider(gateway)``
+      where ``gateway`` implements :class:`LanguageModelGateway` (today the
+      :class:`OpenAIProvider` built by the AI Core catalogue or by the
+      assistant factory). The assistant consumes the gateway abstraction.
+    - **Legacy mode (backwards compatibility):**
+      ``LlmAssistantProvider(client, model=..., base_url=..., ...)``
+      accepting an ``httpx.Client`` — builds the gateway adapter internally
+      (injecting the caller's client) and delegates. Existing call sites and
+      tests that inject a ``MockTransport`` keep working unchanged.
+    """
 
     def __init__(
         self,
-        client: httpx.Client,
+        gateway_or_client,
         *,
-        model: str,
-        base_url: str,
-        retry_attempts: int = _RETRY_ATTEMPTS,
-        retry_backoff_seconds: float = _RETRY_BACKOFF_SECONDS,
+        model: str | None = None,
+        base_url: str | None = None,
+        retry_attempts: int = RETRY_ATTEMPTS,
+        retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
     ) -> None:
-        self._client = client
-        self._model = model
-        self._base_url = (base_url or "").rstrip("/")
-        self._retry_attempts = retry_attempts
-        self._retry_backoff_seconds = retry_backoff_seconds
+        # Duck-typed detection keeps this module free of an httpx import —
+        # transport ownership belongs to the gateway alone. A gateway speaks
+        # ``generate``/``stream``; an httpx client does not.
+        if hasattr(gateway_or_client, "generate") and hasattr(
+            gateway_or_client, "stream"
+        ):
+            self._gateway = gateway_or_client
+        else:
+            config = ProviderConfig(
+                provider_id="openai",
+                kind="openai",
+                model=model or "",
+                base_url=base_url or "",
+            )
+            self._gateway = OpenAIProvider(
+                config,
+                client=gateway_or_client,
+                retry_attempts=retry_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+            )
 
     @property
     def name(self) -> str:
         return PROVIDER_NAME
+
+    @property
+    def model(self) -> str:
+        return getattr(self._gateway, "model", "") or ""
 
     def answer(
         self,
@@ -81,67 +113,16 @@ class LlmAssistantProvider:
         del context, asked_by  # transport only: the prompt is the input
         if prompt is None:
             raise LlmProviderError("No prompt supplied to the LLM provider.")
-        content = self._complete(prompt)
+        result = self._gateway.generate(self._to_generation_prompt(prompt))
         return AssistantAnswerOutput(
             intent="llm",
             intent_label="Assistant",
             question=question.strip(),
-            summary=content,
+            summary=result.text,
             sources=["llm"],
-            metrics={"provider": PROVIDER_NAME, "model": self._model},
+            metrics={"provider": PROVIDER_NAME, "model": result.model or self.model},
         )
 
-    # ------------------------------------------------------------- transport
-    def _request_body(self, prompt: AssistantPrompt, *, stream: bool) -> dict:
-        """The deterministic request body — ONE construction site for the
-        sync and streaming paths (S6 M4). The numbered evidence travels
-        with the request so the provider can never invent citations."""
-        return {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": prompt.system},
-                {"role": "user", "content": prompt.user},
-            ],
-            "temperature": 0,
-            "stream": stream,
-            "citations": [asdict(citation) for citation in prompt.citations],
-        }
-
-    def _complete(self, prompt: AssistantPrompt) -> str:
-        body = self._request_body(prompt, stream=False)
-        url = f"{self._base_url}/chat/completions"
-        last_error: Exception | None = None
-        for attempt in range(self._retry_attempts):
-            try:
-                response = self._client.post(url, json=body)
-            except httpx.HTTPError as exc:
-                last_error = exc
-                if attempt == self._retry_attempts - 1:
-                    raise LlmProviderError(
-                        f"LLM endpoint unreachable after {self._retry_attempts} attempts: {exc}"
-                    ) from exc
-                time.sleep(self._retry_backoff_seconds)
-                continue
-            if response.status_code in _NO_RETRY_STATUS:
-                raise LlmProviderError(
-                    f"LLM endpoint rejected the request (HTTP {response.status_code})."
-                )
-            if response.status_code >= 500:
-                last_error = LlmProviderError(
-                    f"LLM endpoint error (HTTP {response.status_code})."
-                )
-                if attempt == self._retry_attempts - 1:
-                    raise last_error
-                time.sleep(self._retry_backoff_seconds)
-                continue
-            if response.status_code != 200:
-                raise LlmProviderError(
-                    f"LLM endpoint returned HTTP {response.status_code}."
-                )
-            return self._parse(response)
-        raise LlmProviderError(f"LLM request failed: {last_error}")  # pragma: no cover
-
-    # ------------------------------------------------------------- streaming
     def stream(
         self,
         question: str,
@@ -149,97 +130,67 @@ class LlmAssistantProvider:
         *,
         context: AssistantContext | None = None,
         prompt: AssistantPrompt | None = None,
-    ):
-        """Stream partial tokens, then one completion (Sprint-6 M4).
+    ) -> Iterator[dict]:
+        """Stream partial tokens, then one completion.
 
-        Synchronous iterator over the same deterministic request the sync
-        path sends. Retries are bounded and apply ONLY before the first
-        token (transport errors + 5xx) — once streaming has started a
-        failure raises immediately. 4xx and malformed chunks raise
-        immediately (parity with the sync path). The completion carries
-        the full answer assembled from the streamed text.
+        Synchronous iterator over the gateway's event stream, translated back
+        into the assistant's wire-event shapes (``{"type": "token", ...}`` /
+        ``{"type": "complete", "answer": ...}``). Gateway failures propagate
+        as :class:`LlmProviderError` — the composition layer
+        (``FallbackAssistantProvider.stream``) converts that into a
+        deterministic single completion. ``GeneratorExit`` (client disconnect)
+        propagates without being caught.
         """
         del context, asked_by  # transport only: the prompt is the input
         if prompt is None:
             raise LlmProviderError("No prompt supplied to the LLM provider.")
-        body = self._request_body(prompt, stream=True)
-        url = f"{self._base_url}/chat/completions"
+        gen_prompt = self._to_generation_prompt(prompt)
         chunks: list[str] = []
-        started = False
-        last_error: Exception | None = None
-        for attempt in range(self._retry_attempts):
-            try:
-                with self._client.stream("POST", url, json=body) as response:
-                    if response.status_code in _NO_RETRY_STATUS:
-                        raise LlmProviderError(
-                            f"LLM endpoint rejected the request (HTTP {response.status_code})."
-                        )
-                    if response.status_code != 200:
-                        last_error = LlmProviderError(
-                            f"LLM endpoint error (HTTP {response.status_code})."
-                        )
-                        if attempt < self._retry_attempts - 1:
-                            time.sleep(self._retry_backoff_seconds)
-                            continue
-                        raise last_error
-                    started = True  # past the status gate: no more retries
-                    for line in response.iter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        payload = line[len("data:"):].strip()
-                        if payload == "[DONE]":
-                            break
-                        delta = self._extract_delta(payload)
-                        if delta:
-                            chunks.append(delta)
-                            yield {"type": "token", "delta": delta}
-                    if not chunks:
-                        raise LlmProviderError("LLM stream contained no text.")
-                    yield {
-                        "type": "complete",
-                        "answer": self._build_answer(question, chunks),
-                    }
-                    return
-            except httpx.HTTPError as exc:
-                last_error = exc
-                if started or attempt == self._retry_attempts - 1:
-                    raise LlmProviderError(
-                        f"LLM endpoint unreachable after {self._retry_attempts} attempts: {exc}"
-                    ) from exc
-                time.sleep(self._retry_backoff_seconds)
-        raise LlmProviderError(f"LLM stream failed: {last_error}")  # pragma: no cover
+        for event in self._gateway.stream(gen_prompt):
+            if event.kind == "token":
+                chunks.append(event.delta)
+                yield {"type": "token", "delta": event.delta}
+            elif event.kind == "complete":
+                yield {
+                    "type": "complete",
+                    "answer": self._build_answer(question, event.result, chunks),
+                }
+                return
+            elif event.kind == "error":
+                raise LlmProviderError(event.message or "LLM stream reported an error.")
+        raise LlmProviderError("LLM stream ended without a completion event.")
 
-    @staticmethod
-    def _extract_delta(payload: str) -> str:
-        """The text of one SSE data chunk (OpenAI delta or message form)."""
-        try:
-            data = json.loads(payload)
-            choice = data["choices"][0]
-            delta = choice.get("delta") or choice.get("message") or {}
-            content = delta.get("content")
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise LlmProviderError("LLM stream had an unexpected shape.") from exc
-        return str(content) if content else ""
+    # ------------------------------------------------------------- mapping
+    def _to_generation_prompt(self, prompt: AssistantPrompt) -> GenerationPrompt:
+        """AssistantPrompt -> GenerationPrompt.
 
-    def _build_answer(self, question: str, chunks: list[str]) -> AssistantAnswerOutput:
+        The numbered evidence (``prompt.citations``) is attached as
+        provider-agnostic ``extra_body`` request metadata, preserving the
+        exact prior wire format (the gateway merges it into the request
+        body) without leaking an assistant-specific concept into the clean
+        gateway contract.
+        """
+        return GenerationPrompt(
+            system=prompt.system,
+            user=prompt.user,
+            extra_body={"citations": [asdict(citation) for citation in prompt.citations]},
+        )
+
+    def _build_answer(
+        self,
+        question: str,
+        result,
+        chunks: list[str],
+    ) -> AssistantAnswerOutput:
         """Assemble the full answer from the streamed text (same shape the
         sync path produces)."""
+        text = "".join(chunks).strip()
+        model = (result.model if result is not None else "") or self.model
         return AssistantAnswerOutput(
             intent="llm",
             intent_label="Assistant",
             question=question.strip(),
-            summary="".join(chunks).strip(),
+            summary=text,
             sources=["llm"],
-            metrics={"provider": PROVIDER_NAME, "model": self._model},
+            metrics={"provider": PROVIDER_NAME, "model": model},
         )
-
-    @staticmethod
-    def _parse(response: httpx.Response) -> str:
-        try:
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise LlmProviderError("LLM response had an unexpected shape.") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise LlmProviderError("LLM response contained no text.")
-        return content.strip()

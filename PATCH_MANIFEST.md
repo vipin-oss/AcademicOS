@@ -1,19 +1,23 @@
-# AcademicOS M11.1 — Incremental Patch Manifest (AI Foundation)
+# AcademicOS M11.2 — Incremental Patch Manifest (Architecture Alignment — ADR-001)
 
-**Milestone:** M11.1 (AI Core — infrastructure only)
-**Baseline:** `4d3c4cd` (M10 Release Candidate 1 — frozen)
+**Milestone:** M11.2 (Architecture alignment — unify LLM transport behind `LanguageModelGateway`)
+**Baseline:** `1c0e82e` (M11.1 — AI Foundation)
 **Branch:** `feature/m11-ai-workspace`
-**Patch commits:** `abfbb92` (AI application layer) · `7a6a986` (placeholders + DI + health API) · `194c8fa` (AI guardrails) · `04248aa` (AI Settings page) · `80083fc` (docs) · manifest on top
+**Patch commit:** `1755df2` (code + tests) · docs/manifest on top
 **Date:** 2026-08-07
 
-**Scope:** AI infrastructure only. No chat, no RAG, no memory, no agents,
-no embeddings, no LLM calls, no API keys, no network requests. The system
-behavior is unchanged — every provider reports "Not Configured" until a
-real adapter lands in a later M11 sprint.
+**Scope:** Architecture alignment ONLY. No behaviour change, no new providers,
+no SDKs, no new user-facing functionality. The OpenAI-compatible transport is
+relocated from `infrastructure/llm` to the AI Core's `LanguageModelGateway`
+adapter (`infrastructure/ai/llm/openai.py`), which becomes the single owner of
+generative-LLM transport. The assistant consumes the gateway instead of owning
+transport. The deterministic rules provider and the fallback chain are
+untouched.
 
-Apply over any M10 RC1 installation. Fully backward compatible: additive
-packages, new routes, new settings (all with defaults that preserve
-existing behavior), zero changes to existing contracts.
+Apply over any M11.1 installation. Fully backward compatible: no schema
+change, no new dependencies, no new routes, no new settings required for
+existing behaviour. `LlmAssistantProvider`'s public surface is preserved, so
+every existing call site and test passes unchanged.
 
 ---
 
@@ -21,55 +25,21 @@ existing behavior), zero changes to existing contracts.
 
 | Path | Purpose |
 |---|---|
-| `backend/app/application/ai/__init__.py` | AI Core package |
-| `backend/app/application/ai/errors.py` | `AiError` / `AiNotConfiguredError` / `UnknownProviderError` (application-layer, framework-free) |
-| `backend/app/application/ai/config.py` | `AiConfigView` — AI settings projection + feature flags |
-| `backend/app/application/ai/core.py` | `AiCore` facade — health/providers/models aggregation + gateway lookup |
-| `backend/app/application/ai/llm/__init__.py` | LLM capability package |
-| `backend/app/application/ai/llm/ports.py` | `LanguageModelGateway` protocol (6 operations) |
-| `backend/app/application/ai/llm/estimates.py` | Deterministic token/cost estimation |
-| `backend/app/application/ai/providers/__init__.py` | Providers package |
-| `backend/app/application/ai/providers/config.py` | `AI_PROVIDERS_JSON` parsing (`parse_provider_configs`, `configs_by_kind`) |
-| `backend/app/application/ai/providers/registry.py` | `ProviderRegistry` — kind→factory discovery |
-| `backend/app/application/use_cases/ai/__init__.py` | AI use-case package |
-| `backend/app/application/use_cases/ai/get_ai_health.py` | `GetAiHealthUseCase` |
-| `backend/app/application/use_cases/ai/list_ai_providers.py` | `ListAiProvidersUseCase` |
-| `backend/app/application/use_cases/ai/list_ai_models.py` | `ListAiModelsUseCase` |
-| `backend/app/application/dtos/ai.py` | AI DTOs + validation + serialization helpers |
-| `backend/app/infrastructure/ai/__init__.py` | AI adapters package |
-| `backend/app/infrastructure/ai/provider_factory.py` | `build_ai_core` — the single composition root |
-| `backend/app/infrastructure/ai/llm/__init__.py` | LLM adapters package |
-| `backend/app/infrastructure/ai/llm/placeholders.py` | OpenAI / Anthropic / Google / Ollama / Local placeholders |
-| `backend/app/api/dependencies/ai.py` | `get_ai_core` — test-overridable DI seam |
-| `backend/app/api/routes/ai.py` | `GET /ai/health` (public) · `GET /ai/providers` · `GET /ai/models` (auth) |
-| `backend/app/tests/unit/test_ai_dtos.py` | DTO validation tests |
-| `backend/app/tests/unit/test_ai_estimates.py` | Estimate tests |
-| `backend/app/tests/unit/test_ai_provider_config.py` | Config parsing tests |
-| `backend/app/tests/unit/test_ai_registry.py` | Registry tests |
-| `backend/app/tests/unit/test_ai_config_view.py` | Config view tests |
-| `backend/app/tests/unit/test_ai_core.py` | Core aggregation + use-case tests |
-| `backend/app/tests/unit/test_ai_placeholders.py` | Placeholder behavior tests |
-| `backend/app/tests/integration/test_ai_health_api.py` | Full DI-chain API tests |
-| `backend/app/tests/architecture/test_ai_guardrails.py` | 4 AI layering guardrails |
-| `frontend/src/lib/api/ai.ts` | Typed AI health client |
-| `frontend/src/components/features/settings/AiSettingsView.tsx` | AI Settings view |
-| `frontend/src/components/features/settings/AiSettingsView.test.tsx` | 5 view tests |
-| `frontend/src/app/(main)/settings/ai/page.tsx` | `/settings/ai` page |
-| `AI_DEVELOPER_GUIDE.md` | Provider-adapter extension contract |
+| `backend/app/infrastructure/ai/llm/openai.py` | Real `OpenAIProvider` — implements `LanguageModelGateway`; the SINGLE owner of the OpenAI-compatible httpx transport (relocated verbatim from the former `LlmAssistantProvider` transport). Honest "not configured" surface when no `base_url`; real chat-completions when configured. Defines `LlmProviderError`. |
+| `backend/app/tests/architecture/test_transport_ownership.py` | Guardrail: `infrastructure/llm` must not import httpx. Fails CI if the duplicate-transport regression returns. |
 
 ## Files Modified
 
 | Path | Change |
 |---|---|
-| `backend/app/core/config.py` | AI settings: `AI_ENABLED`, `AI_DEFAULT_PROVIDER`, `AI_DEFAULT_MODEL`, `AI_TEMPERATURE`, `AI_MAX_TOKENS`, `AI_TIMEOUT_SECONDS`, `AI_STREAMING_ENABLED`, capability flags (all OFF), `AI_PROVIDERS_JSON` |
-| `backend/app/main.py` | AI router mounted at `/api/v1/ai/*` (existing routers untouched) |
-| `backend/.env.example` | AI configuration block with docs |
-| `frontend/src/types/index.ts` | `AiHealth` / `AiModelInfo` / `AiProviderInfo` / response types |
-| `frontend/src/components/layout/Sidebar.tsx` | "AI Settings" nav entry (`/settings/ai`) |
-| `README.md` | AI Foundation section + layout tree |
-| `CHANGELOG.md` | M11.1 entry |
-| `AcademicOS_AI_Architecture.md` | Appendix G — M11.1 implementation status |
-| `PATCH_MANIFEST.md` | This manifest |
+| `backend/app/application/dtos/ai.py` | `ProviderConfig.api_key` (credential seam — ADR-001 Q7.5); `GenerationPrompt.extra_body` (provider-agnostic extra request fields). Both additive, defaults preserve existing behaviour. |
+| `backend/app/application/ai/providers/config.py` | `parse_provider_configs` reads the `api_key` field. |
+| `backend/app/infrastructure/ai/llm/placeholders.py` | `OpenAIProvider` removed (moved to `openai.py`); the four honest placeholders (Anthropic / Google / Ollama / Local) remain. Unused `PROVIDER_KIND_OPENAI` import dropped. |
+| `backend/app/infrastructure/ai/provider_factory.py` | `build_ai_core` registers the REAL `OpenAIProvider` for the `openai` kind (was the placeholder). |
+| `backend/app/infrastructure/llm/llm_provider.py` | `LlmAssistantProvider` is now a thin translator over a `LanguageModelGateway` — no httpx, no retries, no wire format. Public surface preserved: `answer`/`stream`/`name`/`PROVIDER_NAME`/`LlmProviderError` (re-exported) and the legacy `(client, model, base_url, ...)` constructor (builds the gateway internally). |
+| `backend/app/infrastructure/assistant/provider_factory.py` | `build_provider` constructs the `OpenAIProvider` gateway from the model spec (was: built an httpx client + transport directly) and wraps it; reads the AI Core's generation defaults via the optional `ai_core`. No longer imports httpx. |
+| `backend/app/api/routes/assistant.py` | `get_assistant_provider` injects `get_ai_core` (the assistant consumes the AI Core seam). |
+| `backend/app/tests/unit/test_ai_placeholders.py` | Imports `OpenAIProvider` from its new home (`openai.py`). |
 
 ## Files Deleted
 
@@ -77,45 +47,29 @@ existing behavior), zero changes to existing contracts.
 
 ## Database Migrations
 
-*(none)* — M11.1 is schema-free.
+*(none)* — M11.2 is schema-free.
 
 ## New Dependencies
 
-*(none)* — no SDKs, no new packages. (The `psycopg2`-excluded install
-procedure is unchanged.)
+*(none)* — no SDKs, no new packages. httpx was already a dependency.
 
 ## Environment Variable Changes
 
-New (all optional, defaults preserve existing behavior):
-
-```
-AI_ENABLED=true
-AI_DEFAULT_PROVIDER=local
-AI_DEFAULT_MODEL=
-AI_TEMPERATURE=0.0
-AI_MAX_TOKENS=2048
-AI_TIMEOUT_SECONDS=30.0
-AI_STREAMING_ENABLED=true
-AI_CHAT_ENABLED=false
-AI_RAG_ENABLED=false
-AI_MEMORY_ENABLED=false
-AI_AGENTS_ENABLED=false
-AI_DOCUMENT_UNDERSTANDING_ENABLED=false
-AI_PROVIDERS_JSON=
-```
+*(none required for existing behaviour.)* `AI_PROVIDERS_JSON` entries MAY now
+include an optional `"api_key"` field (read only inside the gateway adapter,
+never logged). The legacy `ASSISTANT_*` settings continue to drive the
+assistant's model registry unchanged (config consolidation is M11.3).
 
 ## Post-Apply Commands
 
 ```powershell
 # No schema or dependency steps. Restart the backend:
 cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
-# Frontend (if not already running):
-cd frontend && npm run dev
 ```
 
 ## Verification (this patch)
 
-- Backend suite: **1351 passed, 2 skipped (1242 baseline + 109 new AI tests)**
-- Architecture guardrails: **11/11** (7 domain + 4 AI)
-- Frontend: **70 passed (15 files)** (was 65) · `tsc --noEmit` clean · `next build` clean
-- Manual API: `/api/v1/ai/health` 200 public · `/api/v1/ai/providers` + `/api/v1/ai/models` 401 without JWT / 200 with · `/api/v1/health` regression 200
+- Backend suite: **1352 passed, 2 skipped** (baseline 1351 + 1 new transport-ownership guardrail; **zero regressions**)
+- Architecture guardrails: **12/12** (7 domain + 4 AI + 1 transport-ownership)
+- `ruff check --select F401,I001` clean on every changed file (B008 = FastAPI `Depends()` idiom, consistent with baseline)
+- App boots; 264 routes registered; `/api/v1/ai/health` 200 (public) · `/api/v1/assistant/*` unchanged

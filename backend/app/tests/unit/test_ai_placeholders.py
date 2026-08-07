@@ -14,12 +14,12 @@ from app.application.dtos.ai import (
     ProviderConfig,
     StructuredGenerationPrompt,
 )
+from app.infrastructure.ai.llm.openai import OpenAIProvider
 from app.infrastructure.ai.llm.placeholders import (
     AnthropicProvider,
     GoogleProvider,
     LocalProvider,
     OllamaProvider,
-    OpenAIProvider,
 )
 
 ALL_PROVIDERS = (OpenAIProvider, AnthropicProvider, GoogleProvider, OllamaProvider, LocalProvider)

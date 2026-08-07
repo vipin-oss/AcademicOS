@@ -33,6 +33,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
 from app.api.mappers.assistant_mapper import (
     output_dict,
@@ -107,14 +108,19 @@ def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
 
 def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    ai_core=Depends(get_ai_core),
 ) -> AssistantProvider:
-    """Composition seam (Sprint-7 M1): the MODEL REGISTRY is the single
-    source of truth — the default registered model is looked up and the
-    provider is built by the shared factory (``build_provider``). No
-    provider construction lives in the route. Integration tests override
-    this dependency to inject stubs/transports."""
+    """Composition seam (Sprint-7 M1, revised Sprint M11.2 — ADR-001).
+
+    The MODEL REGISTRY is still the single source of truth for which model an
+    ask uses (retiring it is M11.3); the provider is built by the shared
+    factory. The M11.2 change: the factory now builds the AI Core's
+    ``LanguageModelGateway`` for transport (the assistant consumes the AI
+    Core instead of owning an httpx transport), and it reads the AI Core's
+    configured generation defaults through the injected ``ai_core``.
+    Integration tests override this dependency to inject stubs/transports."""
     registry = registry_from_settings(settings)
-    return build_provider(registry.default(), repo)
+    return build_provider(registry.default(), repo, ai_core=ai_core)
 
 
 def get_assistant_provider_factory():

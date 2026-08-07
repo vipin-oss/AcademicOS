@@ -77,15 +77,17 @@ NOT_CONFIGURED_DETAIL = (
 class ProviderConfig:
     """One configured provider entry (from ``AI_PROVIDERS_JSON``).
 
-    Configuration data only — never credentials (M11.1 stores no API keys
-    anywhere). Fields are consumed by future adapters; placeholders only
-    report them.
+    Configuration + the single credential seam (M11.2, ADR-001 Q7.5):
+    ``api_key`` is the only secret a provider adapter may read, and it is
+    read ONLY inside the adapter (never logged, never serialized to the
+    API). Empty by default — an unconfigured provider has no key.
     """
 
     provider_id: str
     kind: str
     model: str = ""
     base_url: str = ""
+    api_key: str = ""
     timeout_seconds: float = 30.0
     max_tokens: int = 2048
     temperature: float = 0.0
@@ -151,13 +153,23 @@ class TokenUsage:
 
 @dataclass(frozen=True)
 class GenerationPrompt:
-    """The provider-independent generation request (system + user)."""
+    """The provider-independent generation request (system + user).
+
+    ``extra_body`` (M11.2) is a provider-agnostic escape hatch: an optional
+    dict of additional request fields the caller asks the gateway to merge
+    into its wire body. It keeps the gateway contract provider-independent
+    (no first-class assistant concepts leak in) while letting a composed
+    feature attach structured request metadata — e.g. the assistant attaches
+    its numbered evidence as ``extra_body={"citations": [...]}``. Adapters
+    are free to ignore it.
+    """
 
     user: str
     system: str = ""
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    extra_body: dict | None = None
 
     def __post_init__(self) -> None:
         if not self.user:

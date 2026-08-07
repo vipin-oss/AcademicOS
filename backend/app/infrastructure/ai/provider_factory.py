@@ -17,18 +17,21 @@ from app.application.ai.core import AiCore
 from app.application.ai.providers.config import configs_by_kind, parse_provider_configs
 from app.application.ai.providers.registry import ProviderRegistry
 from app.application.dtos.ai import PROVIDER_KINDS
+from app.infrastructure.ai.llm.openai import OpenAIProvider
 from app.infrastructure.ai.llm.placeholders import (
     AnthropicProvider,
     GoogleProvider,
     LocalProvider,
-    NotConfiguredGateway,
     OllamaProvider,
-    OpenAIProvider,
 )
 
-#: The M11.1 catalogue: kind -> placeholder class. Real adapters replace
-#: entries here (or add new kinds) — the registry/core/routes never change.
-_PLACEHOLDERS: dict[str, type[NotConfiguredGateway]] = {
+#: Kind -> provider class. The ``openai`` kind is the REAL adapter
+#: (Sprint M11.2 — ADR-001): it owns the generative transport and is the
+#: single such owner in the codebase. The other four remain honest
+#: "Not Configured" placeholders until their sprints. Registering a real
+#: adapter here — and only here — is the entire change the rest of the
+#: system sees.
+_PROVIDER_CLASSES: dict[str, type] = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
     "google": GoogleProvider,
@@ -50,8 +53,10 @@ def build_ai_core(settings) -> AiCore:
 
     registry = ProviderRegistry()
     for kind in PROVIDER_KINDS:
-        placeholder_cls = _PLACEHOLDERS[kind]
-        registry.register_factory(kind, lambda config, cls=placeholder_cls: cls(config))
+        provider_cls = _PROVIDER_CLASSES[kind]
+        registry.register_factory(
+            kind, lambda config, cls=provider_cls: cls(config)
+        )
 
     gateways = registry.build_catalogue(PROVIDER_KINDS, by_kind)
     return AiCore(

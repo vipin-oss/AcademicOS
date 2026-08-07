@@ -42,6 +42,7 @@ def parse_provider_configs(raw: str) -> tuple[ProviderConfig, ...]:
             kind=kind,
             model=str(entry.get("model") or ""),
             base_url=str(entry.get("base_url") or ""),
+            api_key=str(entry.get("api_key") or ""),
             timeout_seconds=float(entry.get("timeout_seconds") or 30.0),
             max_tokens=int(entry.get("max_tokens") or 2048),
             temperature=float(entry.get("temperature") or 0.0),

@@ -46,6 +46,11 @@ by adapters.
 
 ## 3. How to add a real provider (the "implement only an adapter" path)
 
+> **M11.2 status:** the OpenAI adapter described below is **already real** —
+> `infrastructure/ai/llm/openai.py::OpenAIProvider` is the reference
+> `LanguageModelGateway` implementation and the single owner of generative
+> transport. Use it as the template for the next provider.
+
 Say you want to wire **OpenAI** for real:
 
 1. **Implement the adapter.** Create

@@ -23,7 +23,6 @@ from app.application.dtos.ai import (
     PROVIDER_KIND_GOOGLE,
     PROVIDER_KIND_LOCAL,
     PROVIDER_KIND_OLLAMA,
-    PROVIDER_KIND_OPENAI,
     STATUS_NOT_CONFIGURED,
     GenerationEvent,
     GenerationPrompt,
@@ -123,13 +122,6 @@ class NotConfiguredGateway:
         )
 
 
-class OpenAIProvider(NotConfiguredGateway):
-    provider_id = PROVIDER_KIND_OPENAI
-    display_name = "OpenAI"
-    kind = PROVIDER_KIND_OPENAI
-    capabilities = KIND_CAPABILITIES[PROVIDER_KIND_OPENAI]
-
-
 class AnthropicProvider(NotConfiguredGateway):
     provider_id = PROVIDER_KIND_ANTHROPIC
     display_name = "Anthropic"
@@ -164,5 +156,4 @@ __all__ = [
     "LocalProvider",
     "NotConfiguredGateway",
     "OllamaProvider",
-    "OpenAIProvider",
 ]
