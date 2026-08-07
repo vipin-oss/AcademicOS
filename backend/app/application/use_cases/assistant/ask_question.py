@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from app.application.ai.core import AiCore
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.prompt_builder import AssistantPromptBuilder
@@ -43,7 +44,6 @@ from app.application.ports.assistant_memory import AssistantMemoryRetriever
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.assistant_review import AssistantReviewQueue
-from app.application.services.model_registry import ModelRegistry, resolve_model
 from app.application.use_cases.assistant.helpers import (
     append_message,
     auto_title_if_needed,
@@ -71,7 +71,7 @@ class AskQuestionUseCase:
         citation_builder: CitationBuilder | None = None,
         verifier: AnswerVerifier | None = None,
         review_queue: AssistantReviewQueue | None = None,
-        registry: ModelRegistry | None = None,
+        ai_core: AiCore | None = None,
         provider_factory=None,
         memory: AssistantMemoryRetriever | None = None,
     ) -> None:
@@ -83,7 +83,7 @@ class AskQuestionUseCase:
         self._citation_builder = citation_builder
         self._verifier = verifier
         self._review_queue = review_queue
-        self._registry = registry
+        self._ai_core = ai_core
         self._provider_factory = provider_factory
         self._memory = memory
 
@@ -140,27 +140,23 @@ class AskQuestionUseCase:
             obj = create_conversation_object(
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
-        if self._registry is not None and command.input.model_id is not None:
+        if self._ai_core is not None and command.input.model_id is not None:
             # An explicit override re-pins the conversation.
-            self._bind_model(obj, command.input.model_id)
+            self._bind_provider(obj, command.input.model_id)
         return obj, command.input.question.strip(), command.input.asked_by
 
-    def _bind_model(self, obj: UniversalObject, requested_model_id: str | None) -> None:
-        """Pin the resolved model on the conversation (S7 M2).
-
-        The resolved model (override or registry default) becomes the
-        conversation's model, stored as L1/SYSTEM metadata, persisting
-        across follow-ups. An explicit override always wins and re-pins.
-        """
+    def _bind_provider(self, obj: UniversalObject, requested: str | None) -> None:
+        """Pin the resolved provider id on the conversation (ADR-001 — AI Core
+        owns selection). The resolved provider (override > pin > default)
+        becomes the conversation's provider, stored as L1/SYSTEM metadata,
+        persisting across follow-ups. An explicit override always re-pins."""
         current = obj.metadata.get_value(dto.KEY_MODEL_ID)
-        if current and not requested_model_id:
+        if current and not requested:
             return  # already pinned; no override requested
-        spec = resolve_model(
-            self._registry,  # type: ignore[arg-type]
-            conversation_model_id=current or None,
-            requested_model_id=requested_model_id,
+        provider_id = self._ai_core.select_provider(  # type: ignore[union-attr]
+            requested=requested, pinned=current or None
         )
-        if current == spec.id:
+        if current == provider_id:
             return
         from app.domain.value_objects.metadata import (
             MetadataEntry,
@@ -170,37 +166,32 @@ class AskQuestionUseCase:
 
         obj.set_metadata(
             MetadataEntry(
-                dto.KEY_MODEL_ID, spec.id, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
+                dto.KEY_MODEL_ID, provider_id, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
             ),
             actor="system",
         )
 
-    def _select_provider(self, obj: UniversalObject, requested_model_id: str | None):
-        """The provider for THIS ask (S7 M2).
+    def _select_provider(self, obj: UniversalObject, requested: str | None):
+        """The provider for THIS ask (ADR-001 — AI Core owns selection).
 
-        Registry-driven: resolve the model (override > pin > default) and
-        build the provider via the shared factory. Without a registry the
-        injected default provider is used (backward compatible). Sync and
-        streaming both call this — identical selection.
+        AI-Core-driven: resolve the provider id (override > pin > default)
+        and build the assistant provider through the factory. Without an AI
+        Core the injected default provider is used (backward compatible).
+        Sync and streaming both call this - identical selection.
         """
-        if self._registry is None or self._provider_factory is None:
+        if self._ai_core is None or self._provider_factory is None:
             return self._provider
         pinned = obj.metadata.get_value(dto.KEY_MODEL_ID)
-        if not requested_model_id and not pinned and self._provider is not None:
-            # No pin, no override: the injected provider (the route's
-            # default) is authoritative — this preserves the pre-M2 path
-            # exactly, including test overrides. With no injected provider
-            # (registry-only wiring) the registry default drives selection.
+        if not requested and not pinned and self._provider is not None:
+            # No pin, no override: the injected default provider (the route's
+            # default) is authoritative; this preserves test overrides. With
+            # no injected provider the AI Core default drives selection.
             return self._provider
-        model_id = requested_model_id or pinned
-        spec = resolve_model(
-            self._registry, conversation_model_id=model_id, requested_model_id=requested_model_id
-        )
-        provider = self._provider_factory(spec, self._repository)
-        # The registry drove selection: record the pin so follow-ups reuse
-        # the same model (S7 M2).
+        provider_id = self._ai_core.select_provider(requested=requested, pinned=pinned)
+        provider = self._provider_factory(provider_id, self._repository)
+        # Selection drove the choice: record the pin so follow-ups reuse it.
         if not pinned:
-            self._bind_model(obj, spec.id)
+            self._bind_provider(obj, provider_id)
         return provider
 
     def _call_kwargs(

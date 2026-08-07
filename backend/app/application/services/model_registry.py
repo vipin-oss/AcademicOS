@@ -1,20 +1,21 @@
-"""Model registry — the single source of truth for assistant models (Sprint-7 M1).
+"""Model registry — DEPRECATED (Sprint M11.3 — ADR-001).
 
-Models are DEPLOYMENT CONFIGURATION (endpoint, model name, credentials),
-not runtime data, so the registry is config-driven rather than persisted:
+.. deprecated:: M11.3
+   The AI Core is now the single authority for provider/model/config/
+   credential/selection (``application/ai``). This legacy registry is NOT on
+   the production path: the assistant resolves providers through
+   ``AiCore.select_provider`` / ``AiCore.gateway``, and ``build_ai_core``
+   synthesizes AI Core providers from the legacy ``ASSISTANT_*`` settings for
+   backward compatibility. This module is retained in isolation for its unit
+   tests only and will be removed once deployments migrate to
+   ``AI_PROVIDERS_JSON``.
 
-- ``ModelSpec`` — one registered model (id, endpoint, model name, api key,
-  timeout, provider kind). Nothing about prompts or evaluation lives here.
-- ``ModelRegistry`` — register / lookup / default selection. Duplicate ids
-  are rejected; unknown lookups raise ``KeyError``.
-- ``build_provider`` — the ONE provider factory: turns a ``ModelSpec`` into
-  the existing ``AssistantProvider`` adapter (LLM transport or rules).
-  Provider construction previously lived inline in the route — centralizing
-  it here removes duplicated provider logic and keeps routes orchestration-free.
-
-Backward compatibility: an empty registry synthesizes a single ``default``
-spec from the legacy ``assistant_llm_*`` settings, so existing deployments
-keep working with zero configuration change.
+Originally (Sprint-7 M1) the single source of truth for assistant models:
+``ModelSpec`` (id, endpoint, model name, api key, timeout, provider kind),
+``ModelRegistry`` (register/lookup/default), and ``resolve_model``
+(override > pin > default selection). The legacy ``build_provider`` factory
+was removed in M11.3 (it constructed a ``ProviderConfig`` outside the AI
+Core, violating config authority).
 """
 from __future__ import annotations
 

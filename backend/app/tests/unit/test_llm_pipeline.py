@@ -27,11 +27,6 @@ from app.application.commands.ask_question import AskQuestionCommand
 from app.application.dtos.assistant import AskQuestionInput
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
-from app.application.services.model_registry import (
-    PROVIDER_KIND_RULES,
-    ModelRegistry,
-    ModelSpec,
-)
 from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.helpers import read_messages
@@ -615,30 +610,47 @@ def test_stream_follow_up_on_existing_conversation(db, repo):
 # ----------------------------------------------------- model selection (M2)
 
 
-def _registry_for_tests() -> ModelRegistry:
-    registry = ModelRegistry(default_id="main")
-    registry.register(ModelSpec(id="main", base_url="http://a/v1", model="model-main"))
-    registry.register(ModelSpec(id="alt", base_url="http://b/v1", model="model-alt"))
-    registry.register(
-        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
+def _ai_core_for_tests(client):
+    """An AI Core with two OpenAI-compatible providers (main/alt) sharing a
+    MockTransport client - the AI-Core authority for selection tests."""
+    from app.application.ai.config import AiConfigView
+    from app.application.ai.core import AiCore
+    from app.application.ai.providers.registry import ProviderRegistry
+    from app.application.dtos.ai import ProviderConfig
+    from app.infrastructure.ai.llm.openai import OpenAIProvider
+
+    def _gw(pid, model, base):
+        return OpenAIProvider(
+            ProviderConfig(provider_id=pid, kind="openai", model=model, base_url=base),
+            client=client, retry_attempts=2, retry_backoff_seconds=0,
+        )
+
+    gateways = {
+        "main": _gw("main", "model-main", "http://a/v1"),
+        "alt": _gw("alt", "model-alt", "http://b/v1"),
+    }
+    ai_cfg = AiConfigView(
+        enabled=True, default_provider="main", default_model="",
+        temperature=0.0, max_tokens=2048, timeout_seconds=30.0, streaming_enabled=True,
+        feature_flags={"chat": False, "rag": False, "memory": False, "agents": False,
+                       "document_understanding": False, "streaming": True},
     )
-    return registry
+    return AiCore(
+        registry=ProviderRegistry(), gateways=gateways, config=ai_cfg, default_provider="main"
+    )
 
 
-def _wired_with_registry(db, repo, vectors, handler, registry=None):
-    """The full pipeline wired with the model registry + factory."""
+def _wired_with_registry(db, repo, vectors, handler):
+    """The full pipeline wired with AI-Core provider selection (ADR-001)."""
+    from app.infrastructure.assistant.provider_factory import build_assistant_provider
+
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    registry = registry or _registry_for_tests()
+    ai_core = _ai_core_for_tests(client)
 
-    def factory(spec: ModelSpec, repository) -> FallbackAssistantProvider:
-        primary = LlmAssistantProvider(
-            client, model=spec.model, base_url=spec.base_url,
-            retry_attempts=2, retry_backoff_seconds=0,
+    def factory(provider_id, repository, *, fallback=None):
+        return build_assistant_provider(
+            ai_core.gateway(provider_id), repository, fallback=fallback
         )
-        fallback = RuleBasedAssistantProvider(
-            repository, permission_evaluator=ObjectPermissionEvaluator()
-        )
-        return FallbackAssistantProvider(primary, fallback)
 
     search = SearchObjectsUseCase(
         SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
@@ -648,13 +660,13 @@ def _wired_with_registry(db, repo, vectors, handler, registry=None):
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
         repo,
-        None,  # unused when the registry path is active
+        None,  # unused when the AI Core selection path is active
         retrieval=retrieval,
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(),
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        registry=registry,
+        ai_core=ai_core,
         provider_factory=factory,
     )
 
@@ -747,5 +759,7 @@ def test_invalid_model_id_is_rejected(db, repo):
         return httpx.Response(200, json={"choices": [{"message": {"content": "a"}}]})
 
     use_case = _wired_with_registry(db, repo, vectors, handler)
-    with pytest.raises(KeyError, match="Unknown model"):
+    from app.application.ai.errors import UnknownProviderError
+
+    with pytest.raises(UnknownProviderError):
         _ask_with_model(use_case, "find quantum", model_id="ghost")

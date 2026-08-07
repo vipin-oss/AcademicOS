@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import asdict
 
-from app.application.dtos.ai import GenerationPrompt, ProviderConfig
+from app.application.dtos.ai import GenerationPrompt
 from app.application.dtos.assistant import (
     AssistantAnswerOutput,
     AssistantContext,
@@ -36,7 +36,7 @@ from app.infrastructure.ai.provider_factory import (
     RETRY_ATTEMPTS,
     RETRY_BACKOFF_SECONDS,
     LlmProviderError,
-    build_gateway,
+    build_gateway_from_params,
 )
 
 __all__ = ["LlmAssistantProvider", "LlmProviderError", "PROVIDER_NAME"]
@@ -73,25 +73,20 @@ class LlmAssistantProvider:
         retry_attempts: int = RETRY_ATTEMPTS,
         retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
     ) -> None:
-        # Duck-typed detection keeps this module free of an httpx import —
-        # transport ownership belongs to the gateway alone. A gateway speaks
-        # ``generate``/``stream``; an httpx client does not.
+        # Duck-typed detection keeps this module free of an httpx import.
         if hasattr(gateway_or_client, "generate") and hasattr(
             gateway_or_client, "stream"
         ):
+            # Gateway mode (production): the gateway comes from the AI Core.
             self._gateway = gateway_or_client
         else:
-            config = ProviderConfig(
-                provider_id="openai",
-                kind="openai",
+            # Legacy test-injection mode: an httpx.Client + model + base_url.
+            # The AI Core owns configuration, so config construction is
+            # delegated to ``build_gateway_from_params`` (this module creates
+            # no ``ProviderConfig`` and names no concrete provider).
+            self._gateway = build_gateway_from_params(
                 model=model or "",
                 base_url=base_url or "",
-            )
-            # Gateway construction is owned by the AI Core (ADR-001): obtain
-            # the gateway through the single constructor, never naming the
-            # concrete class here. The caller's client is injected for tests.
-            self._gateway = build_gateway(
-                config,
                 client=gateway_or_client,
                 retry_attempts=retry_attempts,
                 retry_backoff_seconds=retry_backoff_seconds,

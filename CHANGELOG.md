@@ -1,3 +1,53 @@
+# AcademicOS — Sprint M11.3 Changelog (AI Core Configuration Authority & OpenAI Hardening)
+
+Release: **M11.3** · Baseline `01a9f04` (M11.2.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **AI Core is the single production authority; OpenAI adapter production-ready. No RAG/embeddings/memory/agents/chat-UI.**
+
+After M11.3 there is exactly one production authority for provider, model,
+credentials and runtime execution: the AI Core. The assistant no longer
+constructs a `ProviderConfig` anywhere, and the OpenAI transport is
+production-grade.
+
+## Configuration & selection authority (items 1, 2, 5)
+
+| Change | Detail |
+|---|---|
+| Provider-id-keyed catalogue | `AiCore` holds providers by id (multiple per kind), with `select_provider(requested, pinned)` (override > pin > default) and `gateway(provider_id)`. The health surface still projects the 5 discovery kinds - the `/ai/*` API shape is unchanged. |
+| Authoritative config | `build_ai_core` builds the catalogue from `AI_PROVIDERS_JSON`. When empty, it DEPRECATED-synthesizes providers from legacy `ASSISTANT_*` settings, so existing deployments keep working unchanged. |
+| Assistant consumes AI Core | The ask use case resolves providers through `AiCore` (no `ProviderConfig`, no provider construction). `build_assistant_provider` composes the translator over an AI-Core gateway + rules fallback. |
+| Legacy retired from production | `ModelRegistry` / `registry_from_settings` are deprecated + isolated (kept for their unit tests). The legacy `build_provider` (which built `ProviderConfig` outside the AI Core) is removed. |
+| Config-authority guardrail | New `test_ai_config_authority`: `ProviderConfig(...)` may be constructed ONLY inside the AI Core. |
+
+## OpenAI adapter hardening (item 3)
+
+| Concern | Fix |
+|---|---|
+| Client lifecycle / reuse | One owned `httpx.Client` per adapter (lazy, cached, reused); `close()` releases it; injected clients are not closed. |
+| Generation policy | `max_tokens` + `temperature` honoured from `ProviderConfig` (per-prompt overrides); defaults preserve determinism (T=0). |
+| Honest accounting | `finish_reason` and token `usage` parsed when the endpoint reports them (`estimated=False`); deterministic estimate otherwise; `latency_ms` measured; streaming requests `stream_options.include_usage`. |
+| Structured output | `structured_generate` implemented (JSON-object mode) - a REAL capability. Capabilities report only what is implemented (`chat`, `stream`, `structured_output`); the unimplemented `tools` is no longer claimed. |
+
+## Health reporting (item 4)
+
+Per-provider `configured` status is `base_url`-based: a declared model without
+a `base_url` reports `not_configured` (no misleading "healthy" state).
+
+## What did NOT change
+
+- **`RuleBasedAssistantProvider` / `FallbackAssistantProvider`** untouched (P9).
+- **API surface**: `/ai/health`, `/ai/providers`, `/ai/models`, `/assistant/*` shapes unchanged.
+- **No new dependencies / SDKs / migrations / settings required.**
+- Not implemented (out of scope): RAG, embeddings, memory, agents, chat UI.
+
+## Verification
+
+- Backend: **1366 passed, 2 skipped** (zero regressions)
+- Frontend: **70 vitest passed (15 files)** · `tsc --noEmit` clean
+- Architecture guardrails: **15/15**
+- `ruff check --select F401,I001` clean on changed files; app boots (264 routes)
+
+---
+
 # AcademicOS — Sprint M11.2.1 Changelog (Architecture Hardening — ADR-001)
 
 Release: **M11.2.1** · Baseline `1c1d81f` (M11.2) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

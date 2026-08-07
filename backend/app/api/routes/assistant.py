@@ -44,6 +44,7 @@ from app.api.mappers.assistant_mapper import (
 )
 from app.api.routes.eval_history import get_eval_history
 from app.api.routes.search import get_embedder, get_vector_repository
+from app.application.ai.errors import UnknownProviderError
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.context_builder import AssistantContextBuilder
 from app.application.assistant.prompt_builder import (
@@ -73,7 +74,6 @@ from app.application.services.assistant_review import (
 )
 from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.services.memory_consolidation import MemoryConsolidationService
-from app.application.services.model_registry import registry_from_settings
 from app.application.services.prompt_registry import DEFAULT_PROMPT_ID, PromptAsset, PromptRegistry
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.create_conversation import CreateConversationUseCase
@@ -86,7 +86,7 @@ from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
-from app.infrastructure.assistant.provider_factory import build_provider
+from app.infrastructure.assistant.provider_factory import build_assistant_provider
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.review_decision_store import (
@@ -110,27 +110,60 @@ def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     ai_core=Depends(get_ai_core),
 ) -> AssistantProvider:
-    """Composition seam (Sprint-7 M1, revised Sprint M11.2 — ADR-001).
+    """The DEFAULT assistant provider, resolved through the AI Core (ADR-001).
 
-    The MODEL REGISTRY is still the single source of truth for which model an
-    ask uses (retiring it is M11.3); the provider is built by the shared
-    factory. The M11.2 change: the factory now builds the AI Core's
-    ``LanguageModelGateway`` for transport (the assistant consumes the AI
-    Core instead of owning an httpx transport), and it reads the AI Core's
-    configured generation defaults through the injected ``ai_core``.
-    Integration tests override this dependency to inject stubs/transports."""
-    registry = registry_from_settings(settings)
-    return build_provider(registry.default(), repo, ai_core=ai_core)
+    AI Core owns provider/model/config/credentials/policy. The assistant only
+    composes the translator over the AI Core's gateway with the deterministic
+    rules fallback. With no configured provider (or no usable default), the
+    rules provider answers (degrade, never disappear). Integration tests
+    override this dependency to inject stubs/transports."""
+    if not ai_core.provider_ids:
+        return build_assistant_provider(_NULL_GATEWAY, repo)
+    try:
+        gateway = ai_core.gateway()
+    except UnknownProviderError:
+        return build_assistant_provider(_NULL_GATEWAY, repo)
+    return build_assistant_provider(gateway, repo)
 
 
 def get_assistant_provider_factory(ai_core=Depends(get_ai_core)):
-    """The provider factory for per-conversation model selection (Sprint-7
-    M2), bound to the AI Core so gateway creation always flows through the
-    AI Core's single constructor (ADR-001 - M11.2.1). Overridable in tests
-    to inject transports."""
-    def factory(spec, repository, *, fallback=None):
-        return build_provider(spec, repository, ai_core=ai_core, fallback=fallback)
+    """Per-conversation provider factory bound to the AI Core (ADR-001):
+    builds a provider for a resolved provider id. Overridable in tests."""
+    def factory(provider_id, repository, *, fallback=None):
+        return build_assistant_provider(
+            ai_core.gateway(provider_id), repository, fallback=fallback
+        )
     return factory
+
+
+class _NullGateway:
+    """A never-configured gateway so the rules fallback is selected when no
+    AI Core provider is available (the assistant degrades, never disappears)."""
+    provider_id = "rules"
+    display_name = "Rules fallback"
+    kind = "local"
+
+    def health(self):
+        import datetime as _dt
+
+        from app.application.dtos.ai import (
+            NOT_CONFIGURED_DETAIL,
+            STATUS_NOT_CONFIGURED,
+            ProviderHealth,
+        )
+        return ProviderHealth(
+            provider_id=self.provider_id,
+            display_name=self.display_name,
+            kind=self.kind,
+            status=STATUS_NOT_CONFIGURED,
+            configured=False,
+            models_configured=0,
+            detail=NOT_CONFIGURED_DETAIL.format(provider_id=self.provider_id, kind=self.kind),
+            checked_at=_dt.datetime.now(_dt.UTC).isoformat(),
+        )
+
+
+_NULL_GATEWAY = _NullGateway()
 
 
 def get_assistant_retrieval(
@@ -227,10 +260,11 @@ def ask_question(
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
     provider_factory=Depends(get_assistant_provider_factory),
     memory: AssistantMemoryService = Depends(get_assistant_memory),
+    ai_core=Depends(get_ai_core),
     user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = _ask_use_case(repo, provider, retrieval, provider_factory, memory).execute(
+        out = _ask_use_case(repo, provider, retrieval, provider_factory, memory, ai_core).execute(
             AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
@@ -239,6 +273,9 @@ def ask_question(
         raise _not_found(exc) from exc
     except KeyError as exc:
         # S7 M2: an unknown model override is a client error (422).
+        raise _unprocessable(exc) from exc
+    except UnknownProviderError as exc:
+        # ADR-001: an unknown provider/model override is a client error (422).
         raise _unprocessable(exc) from exc
     return output_dict(out)
 
@@ -249,6 +286,7 @@ def _ask_use_case(
     retrieval: AssistantRetrievalService,
     provider_factory=None,
     memory: AssistantMemoryService | None = None,
+    ai_core=None,
 ) -> AskQuestionUseCase:
     """One construction site for the ask pipeline (sync and stream modes)."""
     prompt_registry = _default_prompt_registry()
@@ -261,9 +299,9 @@ def _ask_use_case(
         # S8 M2: memory-augmented asks — prior conversations are recalled
         # before answering and become distinct prompt sections.
         memory=memory,
-        # S7 M2: the model registry drives per-conversation selection.
-        registry=registry_from_settings(settings),
-        provider_factory=provider_factory or build_provider,
+        # ADR-001 (M11.3): the AI Core owns provider/model selection.
+        ai_core=ai_core,
+        provider_factory=provider_factory,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         # Human review gate (S6 M5): when enabled, every fresh answer is
@@ -304,30 +342,27 @@ def ask_question_stream(
     retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
     provider_factory=Depends(get_assistant_provider_factory),
     memory: AssistantMemoryService = Depends(get_assistant_memory),
+    ai_core=Depends(get_ai_core),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Streaming ask (Sprint-6 M4): Server-Sent Events over the SAME
     pipeline as ``POST /ask``. Events: ``token`` (partial deltas),
     ``completion`` (verified answer + persisted conversation, mirroring
     the sync response shape) or ``error`` (nothing persisted). The client
-    can disconnect at any time — partial tokens are never stored."""
-    use_case = _ask_use_case(repo, provider, retrieval, provider_factory, memory)
+    can disconnect at any time - partial tokens are never stored."""
+    use_case = _ask_use_case(repo, provider, retrieval, provider_factory, memory, ai_core)
     command = AskQuestionCommand(
         input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
     )
-    from app.application.services.model_registry import resolve_model
     from app.application.validators.assistant import assert_valid_ask_input
 
     try:
         assert_valid_ask_input(command.input)
-        # Eager model validation (S7 M2): an unknown override fails fast
-        # with 422 instead of mid-stream. The registry is the single source
-        # of truth; conversation pinning happens inside the stream itself.
-        if command.input.model_id:
-            resolve_model(registry_from_settings(settings), requested_model_id=command.input.model_id)
+        # Eager provider validation (ADR-001): an unknown override fails fast
+        # with 422 instead of mid-stream. The AI Core is the single authority.
+        if command.input.model_id and not ai_core.has_provider(command.input.model_id):
+            raise _unprocessable(ValueError(f"Unknown model: {command.input.model_id}"))
     except ValidationError as exc:
-        raise _unprocessable(exc) from exc
-    except KeyError as exc:
         raise _unprocessable(exc) from exc
 
     def events():

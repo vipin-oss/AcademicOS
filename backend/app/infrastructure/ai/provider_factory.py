@@ -1,30 +1,30 @@
-"""AI Core composition root (Sprint M11.1; revised M11.2.1 — ADR-001).
+"""AI Core composition root (Sprint M11.3 — ADR-001 configuration authority).
 
-THE single transport-composition authority for AcademicOS. This module owns
-the only gateway constructor in the codebase — :func:`build_gateway` — and
-the only place a concrete provider class is imported or instantiated. Every
-gateway in the system, catalogue or feature, is created here:
+THE single authority for providers, models, credentials, base URLs, generation
+policy AND selection. ``AI_PROVIDERS_JSON`` is the authoritative provider
+configuration; when it is empty, providers are synthesized from the legacy
+``ASSISTANT_*`` settings (DEPRECATED compat — existing deployments keep
+working unchanged).
 
-- :func:`build_ai_core` builds the discovery catalogue (one gateway per
-  provider kind) from ``AI_PROVIDERS_JSON`` via :func:`build_gateway`.
-- :class:`AiCore.build_gateway` exposes the same constructor to features (the
-  assistant consumes the AI Core; it never imports a concrete provider).
+This module owns the only gateway constructor (:func:`build_gateway`) and
+:func:`build_ai_core`, which builds the provider-id-keyed catalogue (multiple
+providers per kind allowed). Features resolve providers through
+``AiCore.select_provider`` / ``AiCore.gateway`` and never construct a provider
+or a ``ProviderConfig``.
 
-No route, use case, service, or other feature module may import or construct a
-concrete provider — the architecture guardrails
-(``test_ai_composition_authority``) enforce this. Lives in the infrastructure
-layer because it composes infrastructure adapters.
-
-``LlmProviderError`` / retry constants are re-exported here so the assistant's
-translator depends on the composition root, not on a concrete provider module.
+Lives in the infrastructure layer (it composes infrastructure adapters).
+``LlmProviderError`` / retry constants are re-exported for the assistant
+translator, which depends on this composition root, not on a concrete provider.
 """
 from __future__ import annotations
+
+import json
 
 from app.application.ai.config import AiConfigView
 from app.application.ai.core import AiCore
 from app.application.ai.errors import UnknownProviderError
 from app.application.ai.llm.ports import LanguageModelGateway
-from app.application.ai.providers.config import configs_by_kind, parse_provider_configs
+from app.application.ai.providers.config import parse_provider_configs
 from app.application.ai.providers.registry import ProviderRegistry
 from app.application.dtos.ai import PROVIDER_KINDS, ProviderConfig
 from app.infrastructure.ai.llm.openai import (
@@ -40,10 +40,7 @@ from app.infrastructure.ai.llm.placeholders import (
     OllamaProvider,
 )
 
-#: Kind -> provider class. The ``openai`` kind is the REAL adapter
-#: (Sprint M11.2 — ADR-001): it owns the generative transport. The other
-#: four remain honest "Not Configured" placeholders until their sprints.
-#: This mapping — and ONLY this mapping — knows the concrete classes.
+#: Kind -> provider class. The ONLY place the concrete classes are known.
 _PROVIDER_CLASSES: dict[str, type] = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
@@ -61,27 +58,14 @@ def build_gateway(
     retry_attempts: int = RETRY_ATTEMPTS,
     retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
 ) -> LanguageModelGateway:
-    """THE single gateway constructor (ADR-001).
-
-    The only function in the codebase that instantiates a concrete provider.
-    All gateway creation flows through here:
-
-    - the AI Core catalogue (via :func:`build_ai_core`'s registry factories);
-    - features that need an ad-hoc gateway, through :meth:`AiCore.build_gateway`
-      (which delegates to the registry, whose factories call this function).
-
-    ``kind`` resolves the concrete class when ``config`` is ``None`` (an
-    unconfigured catalogue slot). ``client`` / ``retry_*`` are the test
-    transport-injection knobs (only the real OpenAI adapter honours them; the
-    honest placeholders ignore them via their simpler constructors, reached
-    only when ``client is None``).
-    """
+    """THE single gateway constructor (ADR-001). The only function that
+    instantiates a concrete provider. See ``AiCore.build_gateway`` for the
+    feature-facing seam; the catalogue is built here through this function."""
     resolved_kind = config.kind if config is not None else kind
     if resolved_kind is None or resolved_kind not in _PROVIDER_CLASSES:
         raise UnknownProviderError(resolved_kind or "")
     cls = _PROVIDER_CLASSES[resolved_kind]
     if client is not None:
-        # Transport injection (tests): only the real adapter accepts a client.
         return cls(
             config,
             client=client,
@@ -91,32 +75,135 @@ def build_gateway(
     return cls(config)
 
 
-def build_ai_core(settings) -> AiCore:
-    """Compose the AI Core from application settings.
 
-    Never raises for missing AI configuration — an empty
-    ``AI_PROVIDERS_JSON`` yields the honest not-configured catalogue.
-    Malformed configuration raises ``ValueError`` (a server fault, per
-    the ``registry_from_settings`` doctrine). Every catalogue gateway is
-    built through :func:`build_gateway` — there is no second constructor.
+def build_gateway_from_params(
+    *,
+    kind: str = "openai",
+    model: str = "",
+    base_url: str = "",
+    api_key: str = "",
+    client=None,
+    retry_attempts: int = RETRY_ATTEMPTS,
+    retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
+) -> LanguageModelGateway:
+    """Construct a gateway from raw parameters (AI Core owns the config).
+
+    The configuration-authority seam: ``ProviderConfig`` is constructed HERE
+    (inside the AI Core), never by a feature. Used by the assistant
+    translator's legacy test-injection constructor so it does not build a
+    ``ProviderConfig`` itself (ADR-001 - the config-authority guardrail).
+    """
+    config = ProviderConfig(
+        provider_id=kind, kind=kind, model=model,
+        base_url=base_url, api_key=api_key,
+    )
+    return build_gateway(
+        config, client=client,
+        retry_attempts=retry_attempts, retry_backoff_seconds=retry_backoff_seconds,
+    )
+
+def build_ai_core(settings) -> AiCore:
+    """Compose the AI Core — the single provider/model/config authority.
+
+    ``AI_PROVIDERS_JSON`` is authoritative. When empty, providers are
+    synthesized from the legacy ``ASSISTANT_*`` settings (DEPRECATED compat)
+    so existing deployments keep working. Malformed ``AI_PROVIDERS_JSON``
+    raises ``ValueError`` (a server fault); the legacy path is only reached
+    when ``AI_PROVIDERS_JSON`` is empty.
     """
     configs = parse_provider_configs(settings.ai_providers_json)
-    by_kind = configs_by_kind(configs)
+    if not configs:
+        configs = _legacy_provider_configs(settings)  # DEPRECATED compat
 
     registry = ProviderRegistry()
     for kind in PROVIDER_KINDS:
-        # The registry factories are thin closures over the SINGLE constructor.
         registry.register_factory(
             kind, lambda config, k=kind: build_gateway(config, kind=k)
         )
 
-    gateways = registry.build_catalogue(PROVIDER_KINDS, by_kind)
+    # Provider-id-keyed catalogue (multiple providers per kind allowed).
+    gateways: dict[str, LanguageModelGateway] = {}
+    for config in configs:
+        gateways[config.provider_id] = registry.build(config)
+
+    default_pid = _resolve_default_provider_id(settings, gateways)
     return AiCore(
         registry=registry,
         gateways=gateways,
         config=AiConfigView.from_settings(settings),
         provider_order=PROVIDER_KINDS,
+        default_provider=default_pid,
     )
+
+
+def _legacy_provider_configs(settings) -> tuple[ProviderConfig, ...]:
+    """DEPRECATED: synthesize AI Core providers from legacy ``ASSISTANT_*``
+    settings when ``AI_PROVIDERS_JSON`` is empty. Existing deployments keep
+    working; new deployments should use ``AI_PROVIDERS_JSON``. The rules
+    provider is intentionally NOT synthesized here — it is the assistant's
+    always-on deterministic fallback, not an AI Core provider."""
+    max_tokens = int(getattr(settings, "ai_max_tokens", 2048))
+    temperature = float(getattr(settings, "ai_temperature", 0.0))
+    streaming = bool(getattr(settings, "ai_streaming_enabled", True))
+    configs: list[ProviderConfig] = []
+    raw = (getattr(settings, "assistant_models_json", "") or "").strip()
+    if raw:
+        try:
+            entries = json.loads(raw)
+        except ValueError as exc:
+            raise ValueError(f"assistant_models_json is not valid JSON: {exc}") from exc
+        if not isinstance(entries, list):
+            raise ValueError("assistant_models_json must be a JSON list.")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("provider_kind") or "llm") != "llm":
+                continue  # rules/other -> not an AI Core provider
+            configs.append(
+                ProviderConfig(
+                    provider_id=str(entry.get("id") or ""),
+                    kind="openai",
+                    model=str(entry.get("model") or ""),
+                    base_url=str(entry.get("base_url") or ""),
+                    api_key=str(entry.get("api_key") or ""),
+                    timeout_seconds=float(entry.get("timeout_seconds") or 30.0),
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    streaming_enabled=streaming,
+                )
+            )
+    elif getattr(settings, "assistant_llm_base_url", None):
+        configs.append(
+            ProviderConfig(
+                provider_id="default",
+                kind="openai",
+                model=str(getattr(settings, "assistant_llm_model", "") or ""),
+                base_url=str(settings.assistant_llm_base_url),
+                api_key=str(getattr(settings, "assistant_llm_api_key", "") or ""),
+                timeout_seconds=float(getattr(settings, "assistant_llm_timeout_seconds", 30.0)),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                streaming_enabled=streaming,
+            )
+        )
+    return tuple(configs)
+
+
+def _resolve_default_provider_id(settings, gateways: dict) -> str:
+    """Resolve the default EXECUTION provider id: legacy assistant default
+    model > ``AI_DEFAULT_PROVIDER`` (a kind) > first configured provider."""
+    candidates = [str(getattr(settings, "assistant_default_model", "") or ""),
+                  str(getattr(settings, "ai_default_provider", "") or "")]
+    for candidate in candidates:
+        if candidate and candidate in gateways:
+            return candidate
+    for candidate in candidates:
+        if not candidate:
+            continue
+        for pid, gateway in gateways.items():
+            if getattr(gateway, "kind", None) == candidate:
+                return pid
+    return next(iter(gateways), "")
 
 
 __all__ = [
@@ -125,4 +212,5 @@ __all__ = [
     "LlmProviderError",
     "build_ai_core",
     "build_gateway",
+    "build_gateway_from_params",
 ]

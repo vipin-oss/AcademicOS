@@ -16,7 +16,6 @@ from app.application.services.model_registry import (
     registry_from_settings,
     resolve_model,
 )
-from app.infrastructure.assistant.provider_factory import build_provider
 
 
 class _Settings:
@@ -114,26 +113,6 @@ def test_registry_from_bad_json_raises():
     settings.assistant_models_json = "{not json"
     with pytest.raises(ValueError, match="valid JSON"):
         registry_from_settings(settings)
-
-
-def test_build_provider_rules_kind():
-    from app.application.assistant.providers import RuleBasedAssistantProvider
-
-    registry = ModelRegistry()
-    spec = registry.register(
-        ModelSpec(id="r", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
-    )
-    provider = build_provider(spec, repository=None)  # type: ignore[arg-type]
-    assert isinstance(provider, RuleBasedAssistantProvider)
-
-
-def test_build_provider_llm_kind_is_fallback_chain():
-    from app.application.assistant.providers import FallbackAssistantProvider
-
-    spec = ModelSpec(id="l", model="m", base_url="http://llm:8000/v1")
-    provider = build_provider(spec, repository=None)  # type: ignore[arg-type]
-    assert isinstance(provider, FallbackAssistantProvider)
-    assert provider.name == "llm-v1+rules-v1"
 
 
 def test_registry_from_settings_with_explicit_rules_entry():

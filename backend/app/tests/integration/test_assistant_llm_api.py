@@ -16,11 +16,10 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("pydantic_settings")
 
 import httpx
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from fastapi.testclient import TestClient
 
 from app.api.dependencies.auth import get_current_user
 from app.api.routes.assistant import get_assistant_provider
@@ -122,13 +121,13 @@ def _seed(harness, *objects) -> None:
     client, session, vectors, embedder = harness
     repo = SQLAlchemyObjectRepository(session)
     from app.application.services.outbox import to_outbox_row
+    from app.domain.value_objects.vector import VectorDocument
     from app.infrastructure.persistence.mapper import SnapshotMapper
     from app.infrastructure.persistence.search_mapping import (
         search_text,
         to_search_document,
     )
     from app.infrastructure.search.index_applier import SearchIndexApplier
-    from app.domain.value_objects.vector import VectorDocument
 
     for obj in objects:
         events = obj.pop_domain_events()
@@ -500,12 +499,37 @@ def test_review_duplicate_actions_and_unknown_404(harness):
         config_mod.settings.assistant_review_enabled = original
 
 
-def test_model_selection_over_http_pin_override_invalid(harness):
-    """The registry-driven selection over HTTP: default model used and
-    pinned; an override switches the model and re-pins; an unknown model
-    id returns 422 (sync and stream)."""
-    import app.core.config as config_mod
+def _selection_ai_core(client):
+    """An AI Core with two OpenAI-compatible providers (main/alt) sharing a
+    MockTransport client - the AI-Core authority for HTTP selection tests."""
+    from app.application.ai.config import AiConfigView
+    from app.application.ai.core import AiCore
+    from app.application.ai.providers.registry import ProviderRegistry
+    from app.application.dtos.ai import ProviderConfig
+    from app.infrastructure.ai.llm.openai import OpenAIProvider
 
+    def _gw(pid, model):
+        return OpenAIProvider(
+            ProviderConfig(provider_id=pid, kind="openai", model=model,
+                           base_url="http://llm.example/v1"),
+            client=client, retry_attempts=2, retry_backoff_seconds=0,
+        )
+
+    gateways = {"main": _gw("main", "model-main"), "alt": _gw("alt", "model-alt")}
+    ai_cfg = AiConfigView(
+        enabled=True, default_provider="main", default_model="",
+        temperature=0.0, max_tokens=2048, timeout_seconds=30.0, streaming_enabled=True,
+        feature_flags={"chat": False, "rag": False, "memory": False, "agents": False,
+                       "document_understanding": False, "streaming": True},
+    )
+    return AiCore(registry=ProviderRegistry(), gateways=gateways,
+                  config=ai_cfg, default_provider="main")
+
+
+def test_model_selection_over_http_pin_override_invalid(harness):
+    """AI-Core-driven selection over HTTP: the default provider is used and
+    pinned; an override switches the provider and re-pins; an unknown model
+    id returns 422 (sync and stream)."""
     client, session, _, _ = harness
     repo = SQLAlchemyObjectRepository(session)
     from app.domain.entities.object import UniversalObject as U
@@ -514,56 +538,31 @@ def test_model_selection_over_http_pin_override_invalid(harness):
     doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
     _seed(harness, doc)
 
-    # Configure a two-model registry.
-    original_json = config_mod.settings.assistant_models_json
-    original_default = config_mod.settings.assistant_default_model
-    config_mod.settings.assistant_models_json = (
-        '[{"id": "main", "base_url": "http://llm.example/v1", "model": "model-main"},'
-        ' {"id": "alt", "base_url": "http://llm.example/v1", "model": "model-alt"}]'
-    )
-    config_mod.settings.assistant_default_model = "main"
+    captured = {"models": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["models"].append(json.loads(request.content)["model"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    _client = httpx.Client(transport=httpx.MockTransport(handler))
+    from app.api.dependencies.ai import get_ai_core
+
+    ai_core = _selection_ai_core(_client)
+    app.dependency_overrides[get_ai_core] = lambda: ai_core
     try:
-        captured = {"models": []}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            captured["models"].append(json.loads(request.content)["model"])
-            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
-
-        _install_llm_chain(handler, repo)
-        # The registry-driven factory must use the same MockTransport.
-        from app.application.services.model_registry import ModelSpec as _MS
-        from app.application.assistant.providers import (
-            FallbackAssistantProvider as _FAP,
-            RuleBasedAssistantProvider as _RBAP,
-        )
-        from app.infrastructure.llm.llm_provider import LlmAssistantProvider as _LAP
-        from app.api.routes.assistant import get_assistant_provider_factory
-
-        _client = httpx.Client(transport=httpx.MockTransport(handler))
-
-        def _factory(spec: _MS, repository):
-            primary = _LAP(
-                _client, model=spec.model, base_url=spec.base_url or "http://x/v1",
-                retry_attempts=2, retry_backoff_seconds=0,
-            )
-            fallback = _RBAP(repository, permission_evaluator=ObjectPermissionEvaluator())
-            return _FAP(primary, fallback)
-
-        app.dependency_overrides[get_assistant_provider_factory] = lambda: _factory
-
-        # 1. An explicit override selects the model and pins the conversation.
+        # 1. An explicit override selects the provider and pins the conversation.
         out = _ask(client, "find quantum", model_id="main")
         conv_id = out["conversation"]["id"]
         assert captured["models"] == ["model-main"]
         stored = repo.get_by_id(ObjectId(conv_id))
         assert stored.metadata.get_value("assistant.model_id") == "main"
 
-        # 2. Follow-up reuses the pin (same model, no override needed).
+        # 2. Follow-up reuses the pin (same provider, no override needed).
         captured["models"].clear()
         _ask(client, "find quantum", conversation_id=conv_id)
         assert captured["models"] == ["model-main"]
 
-        # 3. Override switches the model and re-pins.
+        # 3. Override switches the provider and re-pins.
         captured["models"].clear()
         _ask(client, "find quantum", conversation_id=conv_id, model_id="alt")
         assert captured["models"] == ["model-alt"]
@@ -580,6 +579,4 @@ def test_model_selection_over_http_pin_override_invalid(harness):
         })
         assert res.status_code == 422
     finally:
-        app.dependency_overrides.pop(get_assistant_provider_factory, None)
-        config_mod.settings.assistant_models_json = original_json
-        config_mod.settings.assistant_default_model = original_default
+        app.dependency_overrides.pop(get_ai_core, None)
