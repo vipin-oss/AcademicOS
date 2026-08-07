@@ -2203,7 +2203,11 @@ export type IntakeItemStatus =
   /** M2.3: attempt 2..N running after a failure (retry budget: 3). */
   | "retrying"
   | "awaiting_review"
-  | "error";
+  | "error"
+  /** M9: rejected by a human reviewer — terminal, never committed. */
+  | "rejected"
+  /** M9: committed — promoted to a Document (see document_id). */
+  | "committed";
 export type IntakeStageName =
   | "enumerate"
   | "stage"
@@ -2381,6 +2385,10 @@ export interface IntakeItem {
   error: IntakeError | null;
   /** M2 extraction descriptor; `null` until the extract stage has run. */
   extraction: IntakeExtractionDescriptor | null;
+  /** M9: the human review decision (approved | rejected | null). */
+  review_decision: string | null;
+  /** M9: the committed Document id once the item is committed. */
+  document_id: string | null;
   created_at: string | null;
   updated_at: string | null;
 }

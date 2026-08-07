@@ -133,3 +133,52 @@ export function previewCommitIntakeItem(
 ): Promise<unknown> {
   return api.post(`/intake/items/${itemId}/commit-preview`, undefined, options);
 }
+
+// ---------------------------------------------------------------------------
+// M9 — review workflow (approve / reject / bulk)
+// ---------------------------------------------------------------------------
+
+export interface ReviewItemResult {
+  item_id: string;
+  status: string;
+  document_id: string | null;
+}
+
+export interface BulkReviewItemResult {
+  item_id: string;
+  status: string;
+  document_id: string | null;
+  error: string | null;
+}
+
+export interface BulkReviewResult {
+  items: BulkReviewItemResult[];
+  succeeded: number;
+}
+
+/** `POST /intake/items/{id}/review` — approve (commit) or reject one item. */
+export function reviewIntakeItem(
+  itemId: string,
+  decision: "approve" | "reject",
+  options?: RequestOptions,
+): Promise<ReviewItemResult> {
+  return api.post<ReviewItemResult>(
+    `/intake/items/${itemId}/review`,
+    { decision },
+    options,
+  );
+}
+
+/** `POST /intake/sessions/{id}/review` — bulk approve/reject. */
+export function bulkReviewIntakeItems(
+  sessionId: string,
+  decision: "approve" | "reject",
+  itemIds?: string[],
+  options?: RequestOptions,
+): Promise<BulkReviewResult> {
+  return api.post<BulkReviewResult>(
+    `/intake/sessions/${sessionId}/review`,
+    { decision, item_ids: itemIds ?? null },
+    options,
+  );
+}
