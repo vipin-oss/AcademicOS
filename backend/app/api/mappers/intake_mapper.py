@@ -93,6 +93,8 @@ class IntakeItemResponseModel(BaseModel):
     extraction: dict[str, Any] | None = None  # M2 descriptor (pre-EXTRACT: null)
     created_at: str | None
     updated_at: str | None
+    review_decision: str | None = None  # M9: approved | rejected | None
+    document_id: str | None = None  # M9: the committed document, once committed
 
 
 class ListIntakeSessionsResponseModel(BaseModel):

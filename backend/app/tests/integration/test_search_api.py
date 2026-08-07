@@ -204,12 +204,11 @@ def test_commit_to_searchable_and_delete_to_unsearchable(harness):
     assert commit.status_code == 200, commit.text
     doc_id = commit.json()["document_id"]
 
-    # Eventual consistency: not searchable until the outbox is drained.
-    assert _search(client, text="seed") == []
-    # 4 events: the document's ObjectCreated + RelationshipAdded, plus the
-    # item's two MetadataChanged marks (its commit transition is durable
-    # too — every write path feeds the relay).
-    assert _sync(client) == {"applied": 4}
+    # M9: the commit endpoint drains the outbox immediately, so the
+    # document is searchable right away (no manual sync needed).
+    hits = _search(client, text="seed")
+    assert any(h["object_id"] == doc_id for h in hits)
+    assert _sync(client) == {"applied": 0}
     # No duplicate persisted rows anywhere: event_id is the unique
     # idempotency key, and the document was created exactly once.
     rows = _outbox_rows(session)

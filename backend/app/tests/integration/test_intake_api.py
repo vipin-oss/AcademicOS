@@ -122,6 +122,12 @@ def harness(tmp_path: Path):
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     app.dependency_overrides[get_job_manager] = _override_manager
+    # Hermetic search deps: no live Qdrant in tests (lexical-only drain).
+    from app.api.routes.search import get_embedder, get_vector_repository
+    from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+
+    app.dependency_overrides[get_vector_repository] = lambda: None
+    app.dependency_overrides[get_embedder] = lambda: HashingEmbedder()
     with TestClient(app) as client:
         yield client, storage, manager, request_session
     app.dependency_overrides.clear()
@@ -453,10 +459,14 @@ class TestReconcile:
 # ------------------------------------------------- Sprint-3 M1.3 — commit API
 
 
-def _seed_commit_item(session, storage, *, status="awaiting_review"):
-    """A COMPLETED session + one item in the given status with a staged blob."""
+def _seed_commit_item(session, storage, *, status="awaiting_review", session_obj=None):
+    """A COMPLETED session + one item in the given status with a staged blob.
+
+    ``session_obj`` lets tests seed several items into the SAME session
+    (bulk review)."""
     repo = SQLAlchemyObjectRepository(session)
-    session_obj = UniversalObject.create(
+    if session_obj is None:
+        session_obj = UniversalObject.create(
         ObjectType.INTAKE_SESSION,
         "seed",
         created_by="intake",
@@ -470,6 +480,9 @@ def _seed_commit_item(session, storage, *, status="awaiting_review"):
             )
         ),
     )
+    else:
+        # Reuse the shared session object for the second (and later) items.
+        pass
     repo.save(session_obj)
     item = UniversalObject.create(
         ObjectType.INTAKE_ITEM,
@@ -699,3 +712,133 @@ def test_proposal_http_status_codes(harness):
     assert client.put(f"{API}/items/{ghost}/proposal",
                       json={"title": "x", "document_type": "pdf", "description": ""}).status_code == 401
     assert client.post(f"{API}/items/{ghost}/proposal/regenerate").status_code == 401
+
+
+# ----------------------------------------------------------- M9 — review API
+
+
+def test_review_approve_commits_and_returns_document_id(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["item_id"] == str(item.id)
+    assert body["status"] == "committed"
+    assert body["document_id"]
+
+    # The item list reflects the committed state + the decision.
+    listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+    row = next(x for x in listing if x["id"] == str(item.id))
+    assert row["status"] == "committed"
+    assert row["review_decision"] == "approved"
+    assert row["document_id"] == body["document_id"]
+
+
+def test_review_reject_marks_terminal(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "reject"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "rejected"
+
+    listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+    row = next(x for x in listing if x["id"] == str(item.id))
+    assert row["status"] == "rejected"
+    assert row["review_decision"] == "rejected"
+
+    # A rejected item cannot be committed.
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 422
+
+
+def test_review_approve_is_idempotent_guarded(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    first = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    assert first.status_code == 200
+    second = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    # The engine's idempotency guard surfaces as 422 (already committed).
+    assert second.status_code == 422
+
+
+def test_review_rejects_unknown_decision(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "maybe"})
+    assert r.status_code == 422
+
+
+def test_bulk_review_approve_all_commits_every_item(harness):
+    client, storage, _manager, request_session = harness
+    shared = None
+    first = _seed_commit_item(request_session, storage, session_obj=shared)
+    shared = _find_session(request_session, first)
+    second = _seed_commit_item(request_session, storage, session_obj=shared)
+
+    r = client.post(
+        f"{API}/sessions/{_session_of(first)}/review",
+        json={"decision": "approve"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["succeeded"] == 2
+    assert all(i["document_id"] for i in body["items"])
+
+    for item in (first, second):
+        listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+        row = next(x for x in listing if x["id"] == str(item.id))
+        assert row["status"] == "committed"
+
+
+def test_bulk_review_reject_all(harness):
+    client, storage, _manager, request_session = harness
+    shared = None
+    first = _seed_commit_item(request_session, storage, session_obj=shared)
+    shared = _find_session(request_session, first)
+    _seed_commit_item(request_session, storage, session_obj=shared)
+
+    r = client.post(
+        f"{API}/sessions/{_session_of(first)}/review",
+        json={"decision": "reject"},
+    )
+    assert r.status_code == 200
+    assert r.json()["succeeded"] == 2
+    listing = client.get(f"{API}/sessions/{_session_of(first)}/items").json()["items"]
+    assert all(x["status"] == "rejected" for x in listing)
+
+
+def test_review_endpoints_require_authentication(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+    app.dependency_overrides.pop(get_current_user, None)
+    try:
+        assert client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"}).status_code == 401
+        assert client.post(f"{API}/sessions/{_session_of(item)}/review", json={"decision": "approve"}).status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _fake_user()
+
+
+def _session_of(item) -> str:
+    return item.metadata.get_value("intake.session_id")
+
+
+def _find_session(session, item):
+    from app.domain.repositories.object_repository import ObjectRepository  # noqa: F401
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    return SQLAlchemyObjectRepository(session).get_by_id(ObjectId(_session_of(item)))
+
+
+def _fake_user():
+    from app.domain.entities.object import UniversalObject as UO
+
+    return UO.create(
+        object_type=ObjectType.USER, title="test.user", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:test-user-0001"),
+    )

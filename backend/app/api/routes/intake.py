@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
@@ -46,6 +47,7 @@ from app.api.mappers.intake_mapper import (
 
 # Deliberate reuse (do not duplicate the storage composition point):
 from app.api.routes.documents import get_storage
+from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.commands.control_intake_session import ControlIntakeSessionCommand
 from app.application.commands.create_intake_session import CreateIntakeSessionCommand
 from app.application.commands.delete_intake_session import DeleteIntakeSessionCommand
@@ -60,6 +62,7 @@ from app.application.intake.proposal_engine import (
     ProposalEngineService,
     ProposalReviewService,
 )
+from app.application.ports.embedder import Embedder
 from app.application.queries.get_intake_extracted_text import GetIntakeExtractedTextQuery
 from app.application.queries.get_intake_progress import GetIntakeProgressQuery
 from app.application.queries.get_intake_session import GetIntakeSessionQuery
@@ -78,13 +81,20 @@ from app.application.use_cases.intake.get_session import GetIntakeSessionUseCase
 from app.application.use_cases.intake.list_items import ListIntakeItemsUseCase
 from app.application.use_cases.intake.list_sessions import ListIntakeSessionsUseCase
 from app.application.use_cases.intake.retry_session import RetryIntakeSessionUseCase
+from app.application.use_cases.intake.review_item import (
+    REVIEW_APPROVED,
+    REVIEW_REJECTED,
+    ReviewItemUseCase,
+)
 from app.core.config import settings
 from app.domain.entities.object import UniversalObject
+from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.db.session import SessionLocal, get_db
 from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
+from app.infrastructure.search.index_applier import SearchIndexApplier
 from app.infrastructure.storage.local import LocalFileStorage
 
 router = APIRouter(prefix="/intake", tags=["Intake"], dependencies=[Depends(get_current_user)])
@@ -359,11 +369,16 @@ def commit_item(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
     user: UniversalObject = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
 ) -> CommitItemResponseModel:
     """Commit one processed intake item into a Document (idempotent).
 
     409 with the existing document id on a double submit; 422 for any
-    ineligible item (same checks as the preview)."""
+    ineligible item (same checks as the preview). After a successful
+    commit the search index is drained immediately, so the new document
+    is searchable right away (M9)."""
     try:
         out = CommitEngineService(repo, storage).commit_item(
             item_id=item_id, actor=str(user.id)
@@ -374,7 +389,156 @@ def commit_item(
         raise _unprocessable(exc) from exc
     except ObjectAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    _drain_search_index(db, vector_repository, embedder)
     return commit_item_response(out)
+
+
+# ---------------------------------------------------------------------------
+# M9 — review workflow (approve / reject / bulk)
+# ---------------------------------------------------------------------------
+class ReviewItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str
+
+
+class ReviewItemResponseModel(BaseModel):
+    item_id: str
+    status: str
+    document_id: str | None = None
+
+
+class BulkReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str
+    item_ids: list[str] | None = None
+
+
+class BulkReviewItemModel(BaseModel):
+    item_id: str
+    status: str
+    document_id: str | None = None
+    error: str | None = None
+
+
+class BulkReviewResponseModel(BaseModel):
+    items: list[BulkReviewItemModel]
+    succeeded: int
+
+
+def _review_service(
+    repo: SQLAlchemyObjectRepository,
+    storage: LocalFileStorage,
+) -> ReviewItemUseCase:
+    return ReviewItemUseCase(repo, storage)
+
+
+def _drain_search_index(
+    db: Session,
+    vector_repository: VectorRepository | None,
+    embedder: Embedder,
+) -> None:
+    """Drain the durable outbox into the lexical + semantic search index —
+    the M9 guarantee that committed documents are searchable immediately."""
+    SearchIndexApplier(
+        db, vector_repository=vector_repository, embedder=embedder
+    ).apply_pending()
+
+
+WIRE_DECISIONS = ("approve", "reject")
+
+
+def _map_decision(decision: str) -> str:
+    """Wire values (approve/reject) -> internal decision values."""
+    return {
+        "approve": REVIEW_APPROVED,
+        "reject": REVIEW_REJECTED,
+    }.get(decision, "")
+
+
+@router.post("/items/{item_id}/review", response_model=ReviewItemResponseModel)
+def review_item(
+    item_id: str,
+    body: ReviewItemRequest,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+) -> ReviewItemResponseModel:
+    """Review one awaiting item: ``approve`` commits it (and the search
+    index is drained immediately), ``reject`` marks it terminal-rejected.
+    The review decision is persisted as item metadata."""
+    decision = _map_decision(body.decision)
+    if not decision:
+        raise _unprocessable(
+            ValidationError("decision must be one of: approve, reject.")
+        )
+    service = _review_service(repo, storage)
+    try:
+        if decision == REVIEW_APPROVED:
+            out = service.approve(item_id, actor=str(user.id))
+            _drain_search_index(db, vector_repository, embedder)
+            return ReviewItemResponseModel(
+                item_id=item_id,
+                status="committed",
+                document_id=out.document_id or None,
+            )
+        service.reject(item_id, actor=str(user.id))
+        return ReviewItemResponseModel(item_id=item_id, status="rejected")
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except (ValidationError, ObjectAlreadyExistsError) as exc:
+        raise _unprocessable(exc) from exc
+
+
+@router.post("/sessions/{session_id}/review", response_model=BulkReviewResponseModel)
+def bulk_review_items(
+    session_id: str,
+    body: BulkReviewRequest,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+) -> BulkReviewResponseModel:
+    """Bulk review: apply one decision to every awaiting item of the
+    session (or the explicit ``item_ids`` subset). Each item's outcome is
+    reported; approvals commit and drain the search index."""
+    decision = _map_decision(body.decision)
+    if not decision:
+        raise _unprocessable(
+            ValidationError("decision must be one of: approve, reject.")
+        )
+    service = _review_service(repo, storage)
+    try:
+        result = service.bulk(
+            session_id,
+            decision,
+            actor=str(user.id),
+            item_ids=body.item_ids,
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+    if decision == REVIEW_APPROVED and result.succeeded:
+        _drain_search_index(db, vector_repository, embedder)
+    return BulkReviewResponseModel(
+        items=[
+            BulkReviewItemModel(
+                item_id=item.item_id,
+                status=item.status,
+                document_id=item.document_id,
+                error=item.error,
+            )
+            for item in result.items
+        ],
+        succeeded=result.succeeded,
+    )
 
 @router.get("/items/{item_id}/proposal", response_model=ProposalResponseModel)
 def get_item_proposal(

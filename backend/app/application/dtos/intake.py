@@ -59,6 +59,9 @@ class IntakeItemStatus(str, Enum):
     RETRYING = "retrying"
     AWAITING_REVIEW = "awaiting_review"
     ERROR = "error"
+    # M9 review workflow: the item was rejected by a human reviewer.
+    # Terminal — a rejected item can never be committed.
+    REJECTED = "rejected"
     # Sprint-3 M1 (commit engine): the item was promoted to a Document.
     # Terminal and idempotent — a committed item is never committed twice.
     COMMITTED = "committed"
@@ -104,7 +107,7 @@ DEFERRED_STAGE_MILESTONES: dict[IntakeStage, str] = {
 
 #: Terminal item statuses for M1 (commit arrives with the proposal engine).
 TERMINAL_ITEM_STATUSES: frozenset[IntakeItemStatus] = frozenset(
-    {IntakeItemStatus.AWAITING_REVIEW, IntakeItemStatus.ERROR}
+    {IntakeItemStatus.AWAITING_REVIEW, IntakeItemStatus.ERROR, IntakeItemStatus.REJECTED}
 )
 
 # Control transition guards — everything else is a 422 at the boundary.
@@ -189,6 +192,9 @@ KEY_EXTRACTED_KEY = "intake.extracted_key"
 # Sprint-3 M1: the Document Object id the item was committed to (set once,
 # read for idempotency).
 KEY_COMMITTED_DOCUMENT = "intake.committed_document"
+# M9: the human review decision for one item (approved | rejected), kept
+# as a durable audit fact next to the committed-document pointer.
+KEY_REVIEW_DECISION = "intake.review_decision"
 
 
 # Sprint-3 M2 (proposal engine): the generated reviewable proposal for an
@@ -292,7 +298,8 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         IntakeItemStatus.RETRYING.value: 0,
         IntakeItemStatus.AWAITING_REVIEW.value: 0,
         IntakeItemStatus.ERROR.value: 0,
-        IntakeItemStatus.COMMITTED.value: 0,
+        IntakeItemStatus.REJECTED.value: 0,  # M9 terminal
+        IntakeItemStatus.COMMITTED.value: 0,  # M9 terminal
     }
     hashed = 0
     staged = 0
@@ -304,7 +311,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
     by_extension: dict[str, int] = {}
     by_mime: dict[str, int] = {}
     for fact in facts:
-        counts[fact.status.value] += 1
+        counts[fact.status.value] = counts.get(fact.status.value, 0) + 1
         total_bytes += max(fact.size_bytes, 0)
         if fact.extension:
             by_extension[fact.extension] = by_extension.get(fact.extension, 0) + 1
@@ -440,6 +447,8 @@ class IntakeItemOutput:
     extraction: dict[str, Any] | None  # M2 descriptor (None until EXTRACT runs)
     created_at: str | None
     updated_at: str | None
+    review_decision: str | None = None  # M9: approved | rejected | None
+    document_id: str | None = None  # M9: the committed document, once committed
 
 
 @dataclass(frozen=True)
@@ -567,6 +576,8 @@ def intake_item_output(obj: UniversalObject) -> IntakeItemOutput:
         extraction=intake_item_extraction(obj),
         created_at=obj.audit.created_at.isoformat() if obj.audit else None,
         updated_at=obj.audit.updated_at.isoformat() if obj.audit and obj.audit.updated_at else None,
+        review_decision=obj.metadata.get_value(KEY_REVIEW_DECISION),
+        document_id=obj.metadata.get_value(KEY_COMMITTED_DOCUMENT),
     )
 
 
