@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 604800
+    # Password-reset tokens are short-lived by design (30 minutes).
+    password_reset_token_ttl_seconds: int = 1800
 
     # RBAC (Sprint-1 M3): username promoted to ADMIN at startup if it has
     # no roles yet (first-admin bootstrap; idempotent).
@@ -86,7 +88,17 @@ class Settings(BaseSettings):
 
     # Web
     # From .env, list values must use JSON form, e.g. CORS_ORIGINS=["http://localhost:3000"]
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # All three canonical local dev origins are allowed: browsers open the
+    # dev app at `localhost` OR `127.0.0.1` (and on Windows, `localhost`
+    # frequently resolves IPv6-first, yielding `[::1]`). A JSON POST (login
+    # included) is preflighted, and the preflight fails for any origin not
+    # in this list — a one-origin allowlist silently breaks authentication
+    # on fresh setups that open the app at 127.0.0.1.
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://[::1]:3000",
+    ]
 
     @field_validator("cors_origins", mode="before")
     @classmethod

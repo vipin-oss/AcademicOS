@@ -48,3 +48,20 @@ class UserOutput:
 class AssignRolesInput:
     user_id: str
     roles: list[str]
+
+
+@dataclass
+class ForgotPasswordInput:
+    username: str
+
+
+@dataclass
+class ResetPasswordInput:
+    reset_token: str
+    new_password: str
+
+
+@dataclass
+class ForgotPasswordOutput:
+    reset_token: str
+    expires_in_seconds: int

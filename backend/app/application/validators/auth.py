@@ -1,7 +1,13 @@
 """Auth input validation (Sprint-1 authentication foundation)."""
 from __future__ import annotations
 
-from app.application.dtos.auth import LoginInput, RefreshInput, RegisterUserInput
+from app.application.dtos.auth import (
+    ForgotPasswordInput,
+    LoginInput,
+    RefreshInput,
+    RegisterUserInput,
+    ResetPasswordInput,
+)
 from app.application.exceptions import ValidationError
 
 _USERNAME_MAX = 64
@@ -46,3 +52,18 @@ def assert_valid_login_input(dto: LoginInput) -> None:
 def assert_valid_refresh_input(dto: RefreshInput) -> None:
     if not dto.refresh_token.strip():
         raise ValidationError("refresh_token must not be empty.")
+
+
+def assert_valid_forgot_password_input(dto: ForgotPasswordInput) -> None:
+    errors = _validate_username(dto.username)
+    if errors:
+        raise ValidationError("; ".join(errors))
+
+
+def assert_valid_reset_password_input(dto: ResetPasswordInput) -> None:
+    errors: list[str] = []
+    if not dto.reset_token.strip():
+        errors.append("reset_token must not be empty.")
+    errors += _validate_password(dto.new_password)
+    if errors:
+        raise ValidationError("; ".join(errors))

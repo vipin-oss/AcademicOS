@@ -20,5 +20,9 @@ class TokenService(abc.ABC):
         """Issue a long-lived refresh token for ``subject``."""
 
     @abc.abstractmethod
+    def create_reset_token(self, subject: str) -> str:
+        """Issue a short-lived password-reset token for ``subject``."""
+
+    @abc.abstractmethod
     def decode_token(self, token: str) -> dict:
         """Verify and decode a token. Raises on invalid/expired tokens."""

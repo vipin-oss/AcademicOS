@@ -36,5 +36,16 @@ def create_refresh_token(subject: str) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
+def create_reset_token(subject: str) -> str:
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    payload = {
+        "sub": subject,
+        "type": "reset",
+        "iat": now,
+        "exp": now + datetime.timedelta(seconds=settings.password_reset_token_ttl_seconds),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
 def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])

@@ -405,3 +405,57 @@ def test_generic_object_api_cannot_grant_roles(client):
     assert resp.status_code == 422
     listing = client.get("/api/v1/objects?object_type=user", headers=H)
     assert all(u["title"] != "fake.admin" for u in listing.json().get("items", []))
+
+
+# ---------------------------------------------------------------------------
+# Password reset (final release)
+# ---------------------------------------------------------------------------
+def test_forgot_password_returns_a_reset_token_for_existing_user(client: TestClient):
+    r = client.post(f"{API}/register", json={"username": "reset-user", "password": "reset-pass-1"})
+    assert r.status_code == 201
+    r = client.post(f"{API}/forgot-password", json={"username": "reset-user"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reset_token"]
+    assert body["expires_in_seconds"] == 1800
+
+
+def test_forgot_password_is_enumeration_safe(client: TestClient):
+    # Unknown username: same 200 shape with an empty token.
+    r = client.post(f"{API}/forgot-password", json={"username": "no-such-user"})
+    assert r.status_code == 200
+    assert r.json() == {"reset_token": "", "expires_in_seconds": 0}
+
+
+def test_reset_password_changes_the_password(client: TestClient):
+    client.post(f"{API}/register", json={"username": "reset-user-2", "password": "old-pass-123"})
+    token = client.post(f"{API}/forgot-password", json={"username": "reset-user-2"}).json()["reset_token"]
+    assert token
+
+    r = client.post(f"{API}/reset-password", json={"reset_token": token, "new_password": "new-pass-456"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    # The old password no longer works; the new one does.
+    assert client.post(f"{API}/login", json={"username": "reset-user-2", "password": "old-pass-123"}).status_code == 401
+    r = client.post(f"{API}/login", json={"username": "reset-user-2", "password": "new-pass-456"})
+    assert r.status_code == 200
+    assert "access_token" in r.json()
+
+
+def test_reset_password_rejects_invalid_or_expired_tokens(client: TestClient):
+    client.post(f"{API}/register", json={"username": "reset-user-3", "password": "old-pass-123"})
+    assert client.post(
+        f"{API}/reset-password", json={"reset_token": "not-a-token", "new_password": "new-pass-456"}
+    ).status_code == 401
+    # An access token is not a reset token.
+    login = client.post(f"{API}/login", json={"username": "reset-user-3", "password": "old-pass-123"}).json()
+    assert client.post(
+        f"{API}/reset-password",
+        json={"reset_token": login["access_token"], "new_password": "new-pass-456"},
+    ).status_code == 401
+    # Short new passwords are rejected.
+    token = client.post(f"{API}/forgot-password", json={"username": "reset-user-3"}).json()["reset_token"]
+    assert client.post(
+        f"{API}/reset-password", json={"reset_token": token, "new_password": "short"}
+    ).status_code == 422

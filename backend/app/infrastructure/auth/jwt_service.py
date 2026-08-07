@@ -11,6 +11,7 @@ from app.application.ports.token_service import TokenService
 from app.infrastructure.auth.jwt import (
     create_access_token,
     create_refresh_token,
+    create_reset_token,
     decode_token,
 )
 
@@ -21,6 +22,9 @@ class JwtTokenService(TokenService):
 
     def create_refresh_token(self, subject: str) -> str:
         return create_refresh_token(subject)
+
+    def create_reset_token(self, subject: str) -> str:
+        return create_reset_token(subject)
 
     def decode_token(self, token: str) -> dict:
         try:
