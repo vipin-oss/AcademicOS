@@ -49,6 +49,15 @@ export interface PdfViewerProps {
   pagesText?: PdfPageText[];
   /** The loaded pdf.js document (for thumbnail navigation). */
   onPdfReady?: (pdf: import("pdfjs-dist").PDFDocumentProxy) => void;
+  /** Controlled viewer state (multi-document workspace): when provided
+   * the viewer reflects these values and reports changes through the
+   * callbacks, so tabs preserve page/zoom/fit across switches. */
+  page?: number;
+  scale?: number;
+  fitMode?: "width" | "page" | "custom";
+  onPageChange?: (page: number) => void;
+  onScaleChange?: (scale: number) => void;
+  onFitModeChange?: (fitMode: "width" | "page" | "custom") => void;
 }
 
 export function PdfViewer({
@@ -59,20 +68,54 @@ export function PdfViewer({
   onToggleBookmark,
   pagesText = [],
   onPdfReady,
+  page,
+  scale,
+  fitMode,
+  onPageChange,
+  onScaleChange,
+  onFitModeChange,
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
-  const [page, setPage] = useState(1);
-  const [scale, setScale] = useState(1);
+  const [internalPage, setInternalPage] = useState(1);
+  const [internalScale, setInternalScale] = useState(1);
+  const [internalFit, setInternalFit] = useState<"width" | "page" | "custom">("width");
   const [searchMatch, setSearchMatch] = useState<PdfSearchMatch | null>(null);
-  const [fitMode, setFitMode] = useState<"width" | "page" | "custom">("width");
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
+
+  const currentPage = page ?? internalPage;
+  const currentScale = scale ?? internalScale;
+  const currentFit = fitMode ?? internalFit;
+
+  const changePage = useCallback((next: number) => {
+    setInternalPage(next);
+    onPageChange?.(next);
+  }, [onPageChange]);
+  const changeScale = useCallback((next: number) => {
+    setInternalScale(next);
+    onScaleChange?.(next);
+  }, [onScaleChange]);
+  const changeFit = useCallback((next: "width" | "page" | "custom") => {
+    setInternalFit(next);
+    onFitModeChange?.(next);
+  }, [onFitModeChange]);
+
   const scaleRef = useRef<number>(1);
-  scaleRef.current = scale;
-  const fitModeRef = useRef<typeof fitMode>("width");
-  fitModeRef.current = fitMode;
+  scaleRef.current = currentScale;
+  const fitModeRef = useRef<typeof currentFit>("width");
+  fitModeRef.current = currentFit;
+  const pdfRef = useRef<PDFDocumentProxy | null>(null);
+
+  // Free the pdf.js document on unmount (memory cleanup).
+  useEffect(() => {
+    return () => {
+      const doc = pdfRef.current;
+      pdfRef.current = null;
+      if (doc) void doc.destroy().catch(() => undefined);
+    };
+  }, []);
 
   // Load the document once.
   useEffect(() => {
@@ -90,9 +133,10 @@ export function PdfViewer({
           return;
         }
         setPdfDoc(doc);
+        pdfRef.current = doc;
         setPageCount(doc.numPages);
         onPdfReady?.(doc);
-        setPage(1);
+        changePage(1);
         // Build the per-page text layer for the side-by-side sync.
         const pages: PdfPageText[] = [];
         for (let n = 1; n <= doc.numPages; n += 1) {
@@ -129,11 +173,11 @@ export function PdfViewer({
     if (!pdf || !canvas) return;
     let cancelled = false;
     (async () => {
-      const pageObj = await pdf.getPage(page);
+      const pageObj = await pdf.getPage(currentPage);
       if (cancelled) return;
       const base = pageObj.getViewport({ scale: 1 });
       const container = containerRef.current;
-      let effective = scale;
+      let effective = currentScale;
       if (fitModeRef.current === "width" && container) {
         effective = Math.max((container.clientWidth - 24) / base.width, 0.1);
       } else if (fitModeRef.current === "page" && container) {
@@ -153,30 +197,30 @@ export function PdfViewer({
       canvas.style.height = `${viewport.height}px`;
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       await pageObj.render({ canvasContext: ctx, viewport }).promise;
-      setScale(effective);
+      changeScale(effective);
     })();
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc, page, scale, fitMode]);
+  }, [pdfDoc, currentPage, currentScale, currentFit, changeScale]);
 
   const goto = useCallback((next: number) => {
-    setPage(Math.min(Math.max(next, 1), pageCount || 1));
-  }, [pageCount]);
+    changePage(Math.min(Math.max(next, 1), pageCount || 1));
+  }, [changePage, pageCount]);
 
   const zoom = useCallback((factor: number) => {
-    setFitMode("custom");
-    setScale((s) => Math.min(Math.max(s * factor, MIN_SCALE), MAX_SCALE));
-  }, []);
+    changeFit("custom");
+    changeScale(Math.min(Math.max(currentScale * factor, MIN_SCALE), MAX_SCALE));
+  }, [changeFit, changeScale, currentScale]);
 
   const bookmarkFor = annotations.find(
-    (a) => a.annotation_type === "bookmark" && a.page === page,
+    (a) => a.annotation_type === "bookmark" && a.page === currentPage,
   );
   const highlightRects = annotations
-    .filter((a) => a.annotation_type === "highlight" && a.page === page)
+    .filter((a) => a.annotation_type === "highlight" && a.page === currentPage)
     .flatMap((a) => (a.payload as { rects?: { x0: number; y0: number; x1: number; y1: number }[] }).rects ?? []);
   const noteCount = annotations.filter(
-    (a) => a.annotation_type === "note" && a.page === page,
+    (a) => a.annotation_type === "note" && a.page === currentPage,
   ).length;
 
   return (
@@ -186,8 +230,8 @@ export function PdfViewer({
         <button
           type="button"
           aria-label="Previous page"
-          disabled={page <= 1}
-          onClick={() => goto(page - 1)}
+          disabled={currentPage <= 1}
+          onClick={() => goto(currentPage - 1)}
           className="rounded-md p-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -198,7 +242,7 @@ export function PdfViewer({
             type="number"
             min={1}
             max={pageCount || 1}
-            value={page}
+            value={currentPage}
             onChange={(e) => goto(Number(e.target.value) || 1)}
             className="w-12 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-app)] px-1 py-0.5 text-center text-xs text-[var(--text-primary)]"
           />
@@ -207,8 +251,8 @@ export function PdfViewer({
         <button
           type="button"
           aria-label="Next page"
-          disabled={page >= pageCount}
-          onClick={() => goto(page + 1)}
+          disabled={currentPage >= pageCount}
+          onClick={() => goto(currentPage + 1)}
           className="rounded-md p-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-40"
         >
           <ChevronRight className="h-4 w-4" />
@@ -222,7 +266,7 @@ export function PdfViewer({
         >
           <Minus className="h-4 w-4" />
         </button>
-        <span className="w-12 text-center">{Math.round(scale * 100)}%</span>
+        <span className="w-12 text-center">{Math.round(currentScale * 100)}%</span>
         <button
           type="button"
           aria-label="Zoom in"
@@ -234,10 +278,10 @@ export function PdfViewer({
         <button
           type="button"
           aria-label="Fit width"
-          onClick={() => setFitMode("width")}
+          onClick={() => changeFit("width")}
           className={cn(
             "flex items-center gap-1 rounded-md px-2 py-1 hover:bg-[var(--bg-hover)]",
-            fitMode === "width" && "bg-[var(--accent-subtle)] text-[var(--accent)]",
+            currentFit === "width" && "bg-[var(--accent-subtle)] text-[var(--accent)]",
           )}
         >
           <Scissors className="h-3.5 w-3.5" /> Fit width
@@ -245,10 +289,10 @@ export function PdfViewer({
         <button
           type="button"
           aria-label="Fit page"
-          onClick={() => setFitMode("page")}
+          onClick={() => changeFit("page")}
           className={cn(
             "flex items-center gap-1 rounded-md px-2 py-1 hover:bg-[var(--bg-hover)]",
-            fitMode === "page" && "bg-[var(--accent-subtle)] text-[var(--accent)]",
+            currentFit === "page" && "bg-[var(--accent-subtle)] text-[var(--accent)]",
           )}
         >
           <Maximize className="h-3.5 w-3.5" /> Fit page
@@ -257,7 +301,7 @@ export function PdfViewer({
         <button
           type="button"
           aria-label={bookmarkFor ? "Remove bookmark" : "Bookmark this page"}
-          onClick={() => onToggleBookmark(page)}
+          onClick={() => onToggleBookmark(currentPage)}
           className={cn(
             "flex items-center gap-1 rounded-md px-2 py-1 hover:bg-[var(--bg-hover)]",
             bookmarkFor && "bg-[var(--warning-subtle)] text-[var(--warning)]",
@@ -279,7 +323,7 @@ export function PdfViewer({
           data-testid="pdf-page-area"
         >
           <div className="relative mx-auto w-fit shadow-sm">
-            <canvas ref={canvasRef} aria-label={`Page ${page} of ${fileName}`} />
+            <canvas ref={canvasRef} aria-label={`Page ${currentPage} of ${fileName}`} />
             <svg
               className="pointer-events-none absolute inset-0 h-full w-full"
               aria-hidden="true"
@@ -287,23 +331,23 @@ export function PdfViewer({
               {highlightRects.map((rect, index) => (
                 <rect
                   key={`hl-${index}`}
-                  x={rect.x0 * scale}
-                  y={rect.y0 * scale}
-                  width={(rect.x1 - rect.x0) * scale}
-                  height={(rect.y1 - rect.y0) * scale}
+                  x={rect.x0 * currentScale}
+                  y={rect.y0 * currentScale}
+                  width={(rect.x1 - rect.x0) * currentScale}
+                  height={(rect.y1 - rect.y0) * currentScale}
                   fill="var(--accent)"
                   opacity={0.25}
                 />
               ))}
-              {searchMatch && searchMatch.page === page && (
+              {searchMatch && searchMatch.page === currentPage && (
                 <g>
                   {searchMatch.rects.map((rect, index) => (
                     <rect
                       key={`sr-${index}`}
-                      x={rect.x0 * scale}
-                      y={rect.y0 * scale}
-                      width={(rect.x1 - rect.x0) * scale}
-                      height={(rect.y1 - rect.y0) * scale}
+                      x={rect.x0 * currentScale}
+                      y={rect.y0 * currentScale}
+                      width={(rect.x1 - rect.x0) * currentScale}
+                      height={(rect.y1 - rect.y0) * currentScale}
                       fill="var(--warning)"
                       opacity={0.4}
                     />

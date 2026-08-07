@@ -1,4 +1,5 @@
-# AcademicOS — Windows patch application automation (Sprint M10.1)
+# AcademicOS - Windows patch application automation (Sprint M10.1, final polish)
+# ASCII-safe, PowerShell 5.1 + 7 compatible.
 # Applies an incremental patch ZIP over the current project tree:
 #   1. backs up every file the patch touches (timestamped),
 #   2. extracts the patch preserving directory structure,
@@ -6,7 +7,7 @@
 #   4. reports Added / Modified / Deleted / Failed with exit codes.
 #
 # Usage:  .\apply_patch.ps1 AcademicOS_M11_Patch.zip
-# PowerShell 5.1+, Windows 10/11. Idempotent.
+# Idempotent: re-applying the same patch reports 0 Added / 0 Modified.
 
 param(
     [Parameter(Mandatory = $true, Position = 0)]
@@ -22,14 +23,14 @@ $script:deleted = 0
 $script:failed = 0
 $script:conflicts = 0
 
-function Write-Step  { param([string]$Msg) Write-Host "[apply] $Msg" -ForegroundColor Cyan }
-function Write-OK    { param([string]$Msg) Write-Host "  OK  $Msg" -ForegroundColor Green }
-function Write-Warn  { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundColor Yellow }
-function Write-Fail  { param([string]$Msg) Write-Host "FAIL  $Msg" -ForegroundColor Red }
+function Write-Step { param([string]$Msg) Write-Host "[apply] $Msg" -ForegroundColor Cyan }
+function Write-OK   { param([string]$Msg) Write-Host "  OK  $Msg" -ForegroundColor Green }
+function Write-Warn { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundColor Yellow }
+function Write-Fail { param([string]$Msg) Write-Host "FAIL  $Msg" -ForegroundColor Red }
 
-# --- resolve the patch path -------------------------------------------------
+# --- resolve the patch path ------------------------------------------------
 if (-not (Test-Path $PatchZip)) {
-    Write-Fail "Patch file not found: $PatchZip"
+    Write-Fail ("Patch file not found: {0}" -f $PatchZip)
     exit 2
 }
 $PatchZip = (Resolve-Path $PatchZip).Path
@@ -38,22 +39,22 @@ if (-not $PatchZip.EndsWith(".zip", [System.StringComparison]::OrdinalIgnoreCase
     exit 2
 }
 if (-not (Test-Path (Join-Path $ProjectRoot "backend"))) {
-    Write-Fail "Project root does not contain backend/ — run from the AcademicOS root."
+    Write-Fail "Project root does not contain backend/ - run from the AcademicOS root."
     exit 2
 }
 
-# --- staging + backup -------------------------------------------------------
+# --- staging + backup ------------------------------------------------------
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$work = Join-Path $env:TEMP "academicos_patch_$stamp"
+$work = Join-Path $env:TEMP ("academicos_patch_" + $stamp)
 $extract = Join-Path $work "extract"
 $backupDir = Join-Path $work "backup"
 New-Item -ItemType Directory -Force -Path $extract, $backupDir | Out-Null
 
-Write-Step "Backing up current files and extracting $PatchZip …"
+Write-Step ("Backing up current files and extracting {0} ..." -f $PatchZip)
 try {
     Expand-Archive -Path $PatchZip -DestinationPath $extract -Force
 } catch {
-    Write-Fail "Failed to extract the patch: $_"
+    Write-Fail ("Failed to extract the patch: {0}" -f $_.Exception.Message)
     exit 3
 }
 
@@ -65,24 +66,21 @@ if (-not (Test-Path $manifest)) {
 }
 $hasManifest = Test-Path $manifest
 
-# --- collect patch files (skip the manifest itself) -------------------------
+# --- collect patch files (skip the manifest itself) ------------------------
 $patchFiles = @()
-$patchDirs = @()
 if ($hasManifest) {
-    # everything except the manifest
     Get-ChildItem -Path $extract -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -ne $manifest } | ForEach-Object {
-            $rel = $_.FullName.Substring($extract.Length).TrimStart("\", "/")
-            $patchFiles += $rel
+            $patchFiles += $_.FullName.Substring($extract.Length).TrimStart("\", "/")
         }
 } else {
-    Write-Warn "PATCH_MANIFEST.md not found — assuming a flat patch (no deleted-file list)."
+    Write-Warn "PATCH_MANIFEST.md not found - assuming a flat patch (no deleted-file list)."
     Get-ChildItem -Path $extract -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
         $patchFiles += $_.FullName.Substring($extract.Length).TrimStart("\", "/")
     }
 }
 
-# --- manifest: parse Deleted Files + apply notes ----------------------------
+# --- manifest: parse Deleted Files -----------------------------------------
 $deletedFiles = @()
 if ($hasManifest) {
     $lines = Get-Content -Path $manifest -ErrorAction SilentlyContinue
@@ -100,26 +98,27 @@ if ($hasManifest) {
     }
 }
 
-# --- detect conflicts: patch file already exists but differs from the zip ---
-Write-Step "Checking for conflicts…"
+# --- detect conflicts -------------------------------------------------------
+Write-Step "Checking for conflicts..."
 foreach ($rel in $patchFiles) {
     $target = Join-Path $ProjectRoot $rel
     if (Test-Path $target) {
-        $a = Get-FileHash -Path (Join-Path $extract $rel) -Algorithm SHA256
-        $b = Get-FileHash -Path $target -Algorithm SHA256
-        if ($a.Hash -ne $b.Hash) {
-            # A modified file is the normal patch case; flag only when the
-            # patch file is OLDER than the working copy (stale patch).
+        $patchHash = (Get-FileHash -Path (Join-Path $extract $rel) -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -Path $target -Algorithm SHA256).Hash
+        if ($patchHash -ne $targetHash) {
+            # Patch differs from the working copy: expected for a modified
+            # file; flag only when the working copy is NEWER than the patch
+            # (a stale patch applied out of order).
             if ((Get-Item $target).LastWriteTime -gt (Get-Item (Join-Path $extract $rel)).LastWriteTime) {
                 $script:conflicts++
-                Write-Warn "Working copy of $rel is newer than the patch — will still apply."
+                Write-Warn ("Working copy of {0} is newer than the patch - applying anyway." -f $rel)
             }
         }
     }
 }
 
-# --- apply ----------------------------------------------------------------
-Write-Step "Applying patch…"
+# --- apply -----------------------------------------------------------------
+Write-Step "Applying patch..."
 foreach ($rel in $patchFiles) {
     $src = Join-Path $extract $rel
     $target = Join-Path $ProjectRoot $rel
@@ -127,8 +126,8 @@ foreach ($rel in $patchFiles) {
     try {
         if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
         if (Test-Path $target) {
-            $bak = Join-Path $backupDir (Get-Item $target).Name + "_" + (Get-Item $target).LastWriteTime.Ticks
-            Copy-Item -Path $target -Destination (Join-Path $backupDir ((Split-Path $rel -Leaf) + "_" + [IO.Path]::GetRandomFileName())) -Force
+            $backupName = (Split-Path $rel -Leaf) + "_" + $stamp + "_" + [IO.Path]::GetRandomFileName()
+            Copy-Item -Path $target -Destination (Join-Path $backupDir $backupName) -Force
             Copy-Item -Path $src -Destination $target -Force
             $script:modified++
         } else {
@@ -137,35 +136,35 @@ foreach ($rel in $patchFiles) {
         }
     } catch {
         $script:failed++
-        Write-Fail "Could not apply $rel : $_"
+        Write-Fail ("Could not apply {0} : {1}" -f $rel, $_.Exception.Message)
     }
 }
 
 # --- delete obsolete files -------------------------------------------------
-Write-Step "Removing obsolete files listed in the manifest…"
+Write-Step "Removing obsolete files listed in the manifest..."
 foreach ($rel in $deletedFiles) {
     $target = Join-Path $ProjectRoot $rel
     if (Test-Path $target) {
         try {
             Remove-Item -Path $target -Force
             $script:deleted++
-            Write-OK "Deleted $rel"
+            Write-OK ("Deleted {0}" -f $rel)
         } catch {
             $script:failed++
-            Write-Fail "Could not delete $rel : $_"
+            Write-Fail ("Could not delete {0} : {1}" -f $rel, $_.Exception.Message)
         }
     }
 }
 
 # --- summary ---------------------------------------------------------------
-Write-Step "Applying dependencies if the manifest requests them…"
+Write-Step "Post-apply commands from the manifest:"
 if ($hasManifest) {
     $mText = Get-Content -Raw -Path $manifest
     if ($mText -match "npm install") {
-        Write-OK "Manifest requests npm install — run it manually: cd frontend && npm install"
+        Write-OK "Run: cd frontend && npm install"
     }
     if ($mText -match "alembic upgrade head") {
-        Write-OK "Manifest requests alembic upgrade head — run: cd backend && alembic upgrade head"
+        Write-OK "Run: cd backend && alembic upgrade head"
     }
 }
 
@@ -177,7 +176,7 @@ Write-Host ("  Deleted:    {0}" -f $script:deleted) -ForegroundColor Yellow
 Write-Host ("  Failed:     {0}" -f $script:failed) -ForegroundColor $(if ($script:failed -gt 0) { "Red" } else { "Green" })
 if ($script:conflicts -gt 0) { Write-Host ("  Conflicts:  {0} (flagged)" -f $script:conflicts) -ForegroundColor Yellow }
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "Backup of replaced files: $backupDir"
+Write-Host ("Backup of replaced files: {0}" -f $backupDir)
 
 if ($script:failed -gt 0) { exit 1 }
 exit 0

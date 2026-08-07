@@ -1,4 +1,5 @@
-# AcademicOS — environment validation (Sprint M10.1)
+# AcademicOS - environment validation (Sprint M10.1, final polish)
+# ASCII-safe, PowerShell 5.1 + 7 compatible.
 # Detects missing tools (Python, Node, npm, Docker, PostgreSQL, Git),
 # required ports, and dependencies; prints how to fix each issue.
 #
@@ -16,7 +17,17 @@ function Write-Fail {
 }
 
 function Test-Port([int]$Port) {
-    return (Test-NetConnection -ComputerName 127.0.0.1 -Port $Port -WarningAction SilentlyContinue -InformationLevel Quiet)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+        $ok = $async.AsyncWaitHandle.WaitOne(800, $false)
+        if ($ok -and $client.Connected) { return $true }
+        return $false
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
 }
 
 Write-Host "================= AcademicOS ENVIRONMENT VALIDATION =================" -ForegroundColor Cyan
@@ -25,7 +36,7 @@ Write-Host "================= AcademicOS ENVIRONMENT VALIDATION ================
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) {
     $ver = python --version 2>&1
-    Write-Pass "Python — $ver"
+    Write-Pass ("Python - {0}" -f $ver)
     python -c "import sys; exit(0 if sys.version_info >= (3,11) else 1)" *> $null
     if ($LASTEXITCODE -ne 0) { Write-Fail "Python 3.11+ required (found older)" "Install Python 3.11+ from python.org and re-run" }
 } else {
@@ -35,15 +46,15 @@ if ($py) {
 # Node / npm
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
-    Write-Pass "Node — $(node --version)"
-    if ((node --version) -match "v(1[0-9]|[2-9][0-9])\.") { } else {
-        Write-Fail "Node 18+ required" "Install Node LTS from https://nodejs.org/"
-    }
+    $nodeVer = node --version
+    Write-Pass ("Node - {0}" -f $nodeVer)
+    $major = [int]($nodeVer -replace "v", "" -split "\.")[0]
+    if ($major -lt 18) { Write-Fail "Node 18+ required" "Install Node LTS from https://nodejs.org/" }
 } else {
     Write-Fail "Node not found" "Install Node LTS from https://nodejs.org/"
 }
 $npm = Get-Command npm -ErrorAction SilentlyContinue
-if ($npm) { Write-Pass "npm — $(npm --version)" }
+if ($npm) { Write-Pass ("npm - {0}" -f (npm --version)) }
 else { Write-Fail "npm not found" "Install Node (bundles npm)" }
 
 # Docker
@@ -59,7 +70,7 @@ if ($docker) {
 # PostgreSQL
 $pg = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($pg) {
-    Write-Pass "PostgreSQL service — $($pg.Name)"
+    Write-Pass ("PostgreSQL service - {0}" -f $pg.Name)
 } elseif (Test-Port 5432) {
     Write-Pass "PostgreSQL reachable on 5432"
 } else {
@@ -68,35 +79,38 @@ if ($pg) {
 
 # Git
 $git = Get-Command git -ErrorAction SilentlyContinue
-if ($git) { Write-Pass "Git — $(git --version)" }
+if ($git) { Write-Pass ("Git - {0}" -f (git --version)) }
 else { Write-Fail "Git not found" "Install Git from https://git-scm.com/download/win" }
 
 # Required ports
 foreach ($port in @(@(8000, "backend"), @(3000, "frontend"), @(6333, "Qdrant"))) {
     if (Test-Port $port[0]) {
-        Write-Host ("  INFO  Port {0} ({1}) already in use — expected when running." -f $port[0], $port[1]) -ForegroundColor DarkGray
+        Write-Host ("  INFO  Port {0} ({1}) already in use - expected when running." -f $port[0], $port[1]) -ForegroundColor DarkGray
     } else {
-        Write-Pass "Port $($port[0]) ($($port[1])) free"
+        Write-Pass ("Port {0} ({1}) free" -f $port[0], $port[1])
     }
 }
 
 # Backend dependencies
-Push-Location (Join-Path (Get-Location) "backend")
+$root = Get-Location
+$backend = Join-Path $root "backend"
+if (-not (Test-Path $backend)) { $backend = Join-Path $root "..\backend" }
+Push-Location $backend
 python -c "import fastapi, sqlalchemy, alembic, uvicorn, qdrant_client" *> $null
 if ($LASTEXITCODE -eq 0) { Write-Pass "Backend Python packages installed" }
 else { Write-Fail "Backend Python packages missing" "cd backend && pip install -r requirements.txt" }
 Pop-Location
 
 # Frontend dependencies
-$frontend = Join-Path (Get-Location) "frontend"
+$frontend = Join-Path (Split-Path $backend -Parent) "frontend"
 if (Test-Path (Join-Path $frontend "node_modules")) { Write-Pass "Frontend node_modules present" }
 else { Write-Fail "Frontend node_modules missing" "cd frontend && npm install" }
 
 Write-Host "=====================================================================" -ForegroundColor Cyan
 if ($script:issues -eq 0) {
-    Write-Host "  ENVIRONMENT OK — run .\start.ps1" -ForegroundColor Green
+    Write-Host "  ENVIRONMENT OK - run .\start.ps1" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host ("  {0} issue(s) found — fix and re-run." -f $script:issues) -ForegroundColor Red
+    Write-Host ("  {0} issue(s) found - fix and re-run." -f $script:issues) -ForegroundColor Red
     exit 1
 }

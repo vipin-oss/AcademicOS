@@ -62,6 +62,7 @@ export default function DocumentDetailsPage() {
   const { document, loading, refreshing, error, notFound, refresh } = useDocument(documentId);
   const { toast, show, dismiss } = useToast();
 
+  const [viewerPage, setViewerPage] = useState(1);
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -318,10 +319,10 @@ export default function DocumentDetailsPage() {
                 </div>
 
                 <Section title="Preview">
-                  <DocumentViewer document={document} />
+                  <DocumentViewer document={document} onPageChange={setViewerPage} />
                 </Section>
 
-                <CitationPanel document={document} currentPage={1} selection="" />
+                <CitationPanel document={document} currentPage={viewerPage} selection="" />
                 <KgLinks document={document} />
               </div>
             ) : null}

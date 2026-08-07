@@ -1,4 +1,41 @@
 
+# AcademicOS — Sprint M10 Final Polish Changelog
+
+Release: **M10 Final Polish** · Baseline `f613b2b` → `HEAD` · Date: 2026-08-07
+
+## Windows automation (audit fixes)
+
+| File | Change |
+|---|---|
+| `scripts/windows/start_academicos.ps1` | Fixed same-file stdout/stderr redirect bug (separate logs now); fast `TcpClient` port probe replacing slow `Test-NetConnection`; ASCII-safe output |
+| `scripts/windows/apply_patch.ps1` | Removed dead backup variable; ASCII-safe output; conflict detection now uses SHA-256 + timestamps consistently |
+| `scripts/windows/health_check.ps1` | Fast port probe; DB-file existence check before connecting |
+| `scripts/windows/validate_environment.ps1` | Robust Node major-version check (numeric parse); resolves backend dir from any cwd |
+| `scripts/windows/stop_academicos.ps1`, `reset_academicos.ps1` | ASCII-safe output |
+| All scripts | Unicode (em-dash, ellipsis, checkmarks) removed — ASCII-safe for PS 5.1 on any codepage |
+
+## Frontend fixes
+
+| File | Change |
+|---|---|
+| `PdfViewer.tsx` | **Controlled page/scale/fitMode props** — the multi-document workspace now genuinely preserves per-tab page/zoom/fit (previously stored but not applied); pdf.js document destroyed on unmount (memory cleanup) |
+| `DocumentWorkspace.tsx` | Every tab stays mounted (hidden when inactive) so switching never destroys the pdf and page/zoom/annotations survive; close unmounts → PdfViewer frees the document; fitMode added to tab state |
+| `document_viewer` detail page | Live viewer page now drives the CitationPanel page reference (`onPageChange` lifting) |
+| `OfficePreview.tsx` + `officeText.ts` | Real DOCX/PPTX/XLSX package parsing with JSZip (readable text/tables/slides) replacing the binary-text approximation; authenticated download fallback (no unauthenticated `<a href>`) |
+| `ImageViewer.tsx` | Image error (e.g. TIFF) → inline fallback with authenticated download |
+| `KgLinks.tsx` | Fetches the attached AcademicOS object's metadata (committed intake docs) so KG links are populated; document's own object always linked |
+| `ExtractedTextPanel.tsx` | Removed duplicate highlight button (SelectionActions owns it); selection preview text |
+| `download.ts` | Shared authenticated download helper |
+
+## Tests
+
+- `officeText.test.ts` (5 tests), updated `KgLinks.test.ts`; 64 frontend tests total.
+
+## Verification
+
+- Backend suite: **1240 passed, 2 skipped** (no regressions).
+- Frontend: **64 vitest passed**, `tsc --noEmit` clean, `next build` clean.
+
 # AcademicOS — Sprint M10B Changelog (Document Workspace)
 
 Release: **M10B** · Baseline `3f7ed91` (M10A) → `860f2bf` · Date: 2026-08-07

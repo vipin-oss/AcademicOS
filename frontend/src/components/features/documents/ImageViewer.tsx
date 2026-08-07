@@ -9,9 +9,10 @@
  * the download fallback is offered.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Maximize, Minus, Move, Plus, Scissors } from "lucide-react";
+import { Download, Maximize, Minus, Move, Plus, Scissors } from "lucide-react";
 
 import { api, toErrorMessage } from "@/lib/api/client";
+import { downloadDocument } from "@/lib/documents/download";
 import { cn } from "@/lib/utils";
 
 const MIN_SCALE = 0.1;
@@ -20,6 +21,7 @@ const MAX_SCALE = 8;
 export function ImageViewer({ documentId, fileName }: { documentId: string; fileName: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [scale, setScale] = useState(1);
   const [fit, setFit] = useState<"width" | "screen" | "custom">("width");
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -46,6 +48,17 @@ export function ImageViewer({ documentId, fileName }: { documentId: string; file
       controller.abort();
     };
   }, [documentId]);
+
+  const download = useCallback(async () => {
+    setDownloading(true);
+    try {
+      await downloadDocument({ id: documentId, file_name: fileName } as never);
+    } catch (err) {
+      setError(toErrorMessage(err, "Download failed."));
+    } finally {
+      setDownloading(false);
+    }
+  }, [documentId, fileName]);
 
   const zoom = useCallback((factor: number) => {
     setFit("custom");
@@ -143,9 +156,19 @@ export function ImageViewer({ documentId, fileName }: { documentId: string; file
         onMouseLeave={onDragEnd}
       >
         {error ? (
-          <p role="alert" className="m-4 rounded-lg border border-[var(--danger)] bg-[var(--danger-subtle)] px-3 py-2 text-sm text-[var(--danger)]">
-            {error}
-          </p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <p role="alert" className="max-w-md rounded-lg border border-[var(--danger)] bg-[var(--danger-subtle)] px-3 py-2 text-sm text-[var(--danger)]">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={() => void download()}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)] disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" /> {downloading ? "Downloading…" : "Download file"}
+            </button>
+          </div>
         ) : url ? (
           <div
             className="absolute"
@@ -162,6 +185,7 @@ export function ImageViewer({ documentId, fileName }: { documentId: string; file
               src={url}
               alt={fileName}
               draggable={false}
+              onError={() => setError("This image format cannot be displayed in the browser.")}
               className="select-none shadow-sm"
               style={{ width: (rendered?.w ?? 0) * effectiveScale, height: (rendered?.h ?? 0) * effectiveScale }}
             />

@@ -1,4 +1,5 @@
-# AcademicOS — development environment reset (Sprint M10.1)
+# AcademicOS - development environment reset (Sprint M10.1, final polish)
+# ASCII-safe, PowerShell 5.1 + 7 compatible.
 # Interactive menu with confirmation before every destructive action:
 #   1 Reset frontend (delete node_modules + .next)
 #   2 Reset backend  (delete venv/.venv + caches)
@@ -19,40 +20,40 @@ function Write-Step { param([string]$Msg) Write-Host "[reset] $Msg" -ForegroundC
 function Write-Warn { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundColor Yellow }
 
 function Confirm-Destructive([string]$What) {
-    $answer = Read-Host "Are you sure you want to $What? (y/N)"
+    $answer = Read-Host ("Are you sure you want to {0}? (y/N)" -f $What)
     return ($answer.Trim().ToLower() -in @("y", "yes"))
 }
 
 function Reset-Frontend {
-    Write-Step "Resetting frontend (node_modules + .next)…"
+    Write-Step "Resetting frontend (node_modules + .next)..."
     if (-not (Confirm-Destructive "delete frontend node_modules and .next")) { Write-Warn "Skipped."; return }
     $frontend = Join-Path $ProjectRoot "frontend"
     foreach ($dir in @("node_modules", ".next", "dist", "coverage")) {
         $p = Join-Path $frontend $dir
-        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step "Removed $dir" }
+        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step ("Removed {0}" -f $dir) }
     }
     Write-Step "Run: cd frontend && npm install && npm run dev"
 }
 
 function Reset-Backend {
-    Write-Step "Resetting backend (venv + caches)…"
+    Write-Step "Resetting backend (venv + caches)..."
     if (-not (Confirm-Destructive "delete backend venv and caches")) { Write-Warn "Skipped."; return }
     $backend = Join-Path $ProjectRoot "backend"
     foreach ($dir in @(".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache", "storage")) {
         $p = Join-Path $backend $dir
-        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step "Removed $dir" }
+        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step ("Removed {0}" -f $dir) }
     }
     Write-Step "Run: cd backend && python -m venv .venv && .\.venv\Scripts\Activate.ps1 && pip install -r requirements.txt"
 }
 
 function Reset-Database {
-    Write-Step "Resetting database…"
+    Write-Step "Resetting database..."
     if (-not (Confirm-Destructive "reset the AcademicOS database")) { Write-Warn "Skipped."; return }
     $backend = Join-Path $ProjectRoot "backend"
     Push-Location $backend
     if ($env:DATABASE_URL -like "sqlite*" -or -not $env:DATABASE_URL) {
         $db = Join-Path $backend "academicos.db"
-        if (Test-Path $db) { Remove-Item -Force $db; Write-Step "Removed $db" }
+        if (Test-Path $db) { Remove-Item -Force $db; Write-Step ("Removed {0}" -f $db) }
         python scripts/init_db.py
         Write-Step "Fresh SQLite database initialised."
     } else {
@@ -64,7 +65,7 @@ function Reset-Database {
 }
 
 function Reset-Qdrant {
-    Write-Step "Resetting Qdrant…"
+    Write-Step "Resetting Qdrant..."
     if (-not (Confirm-Destructive "delete the Qdrant container and volume")) { Write-Warn "Skipped."; return }
     $hasDocker = Get-Command docker -ErrorAction SilentlyContinue
     if ($hasDocker) {
@@ -72,12 +73,12 @@ function Reset-Qdrant {
         docker volume rm academicos_qdrant *> $null
         Write-Step "Qdrant container + volume removed."
     } else {
-        Write-Warn "Docker not found — Qdrant left as-is."
+        Write-Warn "Docker not found - Qdrant left as-is."
     }
 }
 
 Write-Host ""
-Write-Host "AcademicOS — Development Environment Reset" -ForegroundColor Cyan
+Write-Host "AcademicOS - Development Environment Reset" -ForegroundColor Cyan
 Write-Host "  1  Reset frontend"
 Write-Host "  2  Reset backend"
 Write-Host "  3  Reset database"

@@ -14,6 +14,7 @@ extracted-text lookup:
 """
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from app.application.dtos.annotation import (
@@ -73,8 +74,6 @@ class DocumentAnnotationService:
         current = self._store.get(annotation_id)
         if current is None:
             raise ObjectNotFoundError(f"Annotation not found: {annotation_id}")
-        import datetime as dt
-
         updated = DocumentAnnotation(
             annotation_id=current.annotation_id,
             document_id=current.document_id,

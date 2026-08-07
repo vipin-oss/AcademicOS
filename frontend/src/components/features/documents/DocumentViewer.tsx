@@ -23,10 +23,21 @@ import { ImageViewer } from "./ImageViewer";
 import { OfficePreview } from "./OfficePreview";
 import { PdfViewer } from "./PdfViewer";
 
-export function DocumentViewer({ document }: { document: DocumentResponse }) {
+export function DocumentViewer({
+  document,
+  onPageChange,
+}: {
+  document: DocumentResponse;
+  /** Reports the currently viewed page (citations etc.). */
+  onPageChange?: (page: number) => void;
+}) {
   const [annotations, setAnnotations] = useState<DocumentAnnotation[]>([]);
   const [pagesText, setPagesText] = useState<PdfPageText[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const changePage = (page: number) => {
+    setCurrentPage(page);
+    onPageChange?.(page);
+  };
   const [showText, setShowText] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,7 +107,7 @@ export function DocumentViewer({ document }: { document: DocumentResponse }) {
               annotations={annotations}
               pagesText={pagesText}
               currentPage={currentPage}
-              onJump={setCurrentPage}
+              onJump={changePage}
               onChanged={refreshAnnotations}
               onError={setError}
             />

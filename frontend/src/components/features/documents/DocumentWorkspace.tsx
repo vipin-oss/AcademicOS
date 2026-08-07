@@ -27,6 +27,7 @@ export interface WorkspaceTab {
   /** Restored per-tab viewer state. */
   page: number;
   scale: number;
+  fitMode: "width" | "page" | "custom";
   showText: boolean;
 }
 
@@ -62,6 +63,7 @@ export function DocumentWorkspace({
         document,
         page: 1,
         scale: 1,
+        fitMode: "width" as const,
         showText: true,
       }));
       return newTabs;
@@ -94,14 +96,13 @@ export function DocumentWorkspace({
   }, [activeId]);
 
   const active = tabs.find((t) => t.document.id === activeId) ?? null;
-  const runtime = activeId ? (runtimeRef.current[activeId] ?? null) : null;
 
   const openTab = useCallback(
     (document: DocumentResponse) => {
       setTabs((prev) =>
         prev.some((t) => t.document.id === document.id)
           ? prev
-          : [...prev, { document, page: 1, scale: 1, showText: true }],
+          : [...prev, { document, page: 1, scale: 1, fitMode: "width" as const, showText: true }],
       );
       setActiveId(document.id);
     },
@@ -112,9 +113,8 @@ export function DocumentWorkspace({
     setTabs((prev) => {
       const index = prev.findIndex((t) => t.document.id === id);
       const next = prev.filter((t) => t.document.id !== id);
-      // Free the pdf.js document (memory cleanup).
-      const rt = runtimeRef.current[id];
-      if (rt?.pdf) void rt.pdf.destroy();
+      // The PdfViewer destroys its pdf.js document on unmount; here we
+      // only drop the runtime reference.
       delete runtimeRef.current[id];
       if (next.length === 0) {
         setActiveId(null);
@@ -211,101 +211,128 @@ export function DocumentWorkspace({
         )}
       </div>
 
-      {/* Active tab body */}
+      {/* Tab bodies — every open tab stays mounted (hidden when inactive)
+          so switching tabs never destroys the pdf.js document and
+          page/zoom/annotations survive; closing a tab unmounts its
+          viewer, which frees the document (memory cleanup). */}
       <div className="flex min-h-0 flex-1">
-        {active && runtime ? (
-          <>
-            <ThumbnailSidebar
-              pdfDoc={runtime.pdf}
-              currentPage={active.page}
-              onJump={(page) => updateTab(active.document.id, { page })}
-            />
-            <div className="flex min-w-0 flex-1">
-              <PdfViewer
-                documentId={active.document.id}
-                fileName={active.document.file_name || active.document.title}
-                annotations={runtime.annotations}
-                pagesText={runtime.pagesText}
-                onPdfReady={(pdf) => {
-                  runtimeRef.current[active.document.id] = {
-                    ...(runtimeRef.current[active.document.id] ?? {
-                      pagesText: [],
-                      annotations: [],
-                    }),
-                    pdf,
-                  };
-                  bump();
-                }}
-                onTextReady={(pages) => {
-                  runtimeRef.current[active.document.id] = {
-                    ...(runtimeRef.current[active.document.id] ?? {
-                      pdf: null,
-                      annotations: [],
-                    }),
-                    pagesText: pages,
-                  };
-                  bump();
-                }}
-                onToggleBookmark={async (page) => {
-                  const existing = runtime.annotations.find(
-                    (a) => a.annotation_type === "bookmark" && a.page === page,
-                  );
-                  try {
-                    if (existing) {
-                      const { deleteAnnotation } = await import("@/lib/api/annotations");
-                      await deleteAnnotation(existing.annotation_id);
-                    } else {
-                      const { createAnnotation } = await import("@/lib/api/annotations");
-                      await createAnnotation(active.document.id, "bookmark", page, {
-                        label: "page mark",
-                      });
-                    }
-                    const { listAnnotations } = await import("@/lib/api/annotations");
-                    const items = await listAnnotations(active.document.id);
-                    runtimeRef.current[active.document.id] = {
-                      ...(runtimeRef.current[active.document.id] ?? { pdf: null, pagesText: [] }),
-                      annotations: items.items,
-                    };
-                    bump();
-                  } catch (err) {
-                    /* annotation errors surface via the panel */
-                  }
-                }}
-              />
-              {active.showText && (
-                <div className="w-[26rem] max-w-[40vw] shrink-0 border-l border-[var(--border-subtle)]">
-                  <ExtractedTextPanel
-                    documentId={active.document.id}
-                    annotations={runtime.annotations}
-                    pagesText={runtime.pagesText}
-                    currentPage={active.page}
-                    onJump={(page) => updateTab(active.document.id, { page })}
-                    onChanged={async () => {
-                      const items = await listAnnotations(active.document.id);
-                      runtimeRef.current[active.document.id] = {
-                        ...(runtimeRef.current[active.document.id] ?? { pdf: null, pagesText: [] }),
-                        annotations: items.items,
-                      };
-                      bump();
-                    }}
-                    onError={() => undefined}
+        {tabs.map((tab) => {
+          const rt = runtimeRef.current[tab.document.id] ?? {
+            pdf: null,
+            pagesText: [],
+            annotations: [],
+          };
+          const isActive = tab.document.id === activeId;
+          return (
+            <div
+              key={tab.document.id}
+              role="tabpanel"
+              aria-label={tab.document.file_name || tab.document.title}
+              className="flex min-w-0 flex-1"
+              style={{ display: isActive ? "flex" : "none" }}
+            >
+              {tab.document.document_type === "pdf" ? (
+                <>
+                  <ThumbnailSidebar
+                    pdfDoc={rt.pdf}
+                    currentPage={tab.page}
+                    onJump={(page) => updateTab(tab.document.id, { page })}
                   />
+                  <div className="flex min-w-0 flex-1">
+                    <PdfViewer
+                      documentId={tab.document.id}
+                      fileName={tab.document.file_name || tab.document.title}
+                      annotations={rt.annotations}
+                      pagesText={rt.pagesText}
+                      page={tab.page}
+                      scale={tab.scale}
+                      fitMode={tab.fitMode}
+                      onPageChange={(page) => updateTab(tab.document.id, { page })}
+                      onScaleChange={(scale) => updateTab(tab.document.id, { scale })}
+                      onFitModeChange={(fitMode) => updateTab(tab.document.id, { fitMode })}
+                      onPdfReady={(pdf) => {
+                        runtimeRef.current[tab.document.id] = {
+                          ...(runtimeRef.current[tab.document.id] ?? {
+                            pagesText: [],
+                            annotations: [],
+                          }),
+                          pdf,
+                        };
+                        bump();
+                      }}
+                      onTextReady={(pages) => {
+                        runtimeRef.current[tab.document.id] = {
+                          ...(runtimeRef.current[tab.document.id] ?? {
+                            pdf: null,
+                            annotations: [],
+                          }),
+                          pagesText: pages,
+                        };
+                        bump();
+                      }}
+                      onToggleBookmark={async (page) => {
+                        const existing = rt.annotations.find(
+                          (a) => a.annotation_type === "bookmark" && a.page === page,
+                        );
+                        try {
+                          if (existing) {
+                            const { deleteAnnotation } = await import("@/lib/api/annotations");
+                            await deleteAnnotation(existing.annotation_id);
+                          } else {
+                            const { createAnnotation } = await import("@/lib/api/annotations");
+                            await createAnnotation(tab.document.id, "bookmark", page, {
+                              label: "page mark",
+                            });
+                          }
+                          const { listAnnotations } = await import("@/lib/api/annotations");
+                          const items = await listAnnotations(tab.document.id);
+                          runtimeRef.current[tab.document.id] = {
+                            ...(runtimeRef.current[tab.document.id] ?? { pdf: null, pagesText: [] }),
+                            annotations: items.items,
+                          };
+                          bump();
+                        } catch {
+                          /* annotation errors surface via the panel */
+                        }
+                      }}
+                    />
+                    {tab.showText && (
+                      <div className="w-[26rem] max-w-[40vw] shrink-0 border-l border-[var(--border-subtle)]">
+                        <ExtractedTextPanel
+                          documentId={tab.document.id}
+                          annotations={rt.annotations}
+                          pagesText={rt.pagesText}
+                          currentPage={tab.page}
+                          onJump={(page) => updateTab(tab.document.id, { page })}
+                          onChanged={async () => {
+                            const items = await listAnnotations(tab.document.id);
+                            runtimeRef.current[tab.document.id] = {
+                              ...(runtimeRef.current[tab.document.id] ?? { pdf: null, pagesText: [] }),
+                              annotations: items.items,
+                            };
+                            bump();
+                          }}
+                          onError={() => undefined}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-1 items-center justify-center p-6">
+                  <DocumentPreview document={tab.document} />
                 </div>
               )}
             </div>
-          </>
-        ) : active ? (
-          <div className="flex flex-1 items-center justify-center p-6">
-            <DocumentPreview document={active.document} />
-          </div>
-        ) : null}
+          );
+        })}
       </div>
 
       {/* Viewer toolbar per active tab */}
       {active && (
         <div className="flex items-center gap-3 border-t border-[var(--border-subtle)] px-3 py-2 text-xs text-[var(--text-secondary)]">
           <span>
-            Page {active.page} · {runtime?.pdf?.numPages ?? "—"} · zoom{" "}
+            Page {active.page} · {runtimeRef.current[active.document.id]?.pdf?.numPages ?? "-"} · zoom{" "}
             {Math.round(active.scale * 100)}%
           </span>
           <button

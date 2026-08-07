@@ -1,4 +1,5 @@
-# AcademicOS — health check (Sprint M10.1)
+# AcademicOS - health check (Sprint M10.1, final polish)
+# ASCII-safe, PowerShell 5.1 + 7 compatible.
 # Prints PASS/FAIL for every component and exits 0 when all required
 # components are healthy, 1 otherwise.
 #
@@ -22,10 +23,21 @@ function Write-Check {
 }
 
 function Test-Port([int]$Port) {
-    return (Test-NetConnection -ComputerName 127.0.0.1 -Port $Port -WarningAction SilentlyContinue -InformationLevel Quiet)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+        $ok = $async.AsyncWaitHandle.WaitOne(800, $false)
+        if ($ok -and $client.Connected) { return $true }
+        return $false
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
 }
 
-if (Test-Path (Join-Path $ProjectRoot "backend")) { $backend = Join-Path $ProjectRoot "backend" } else { $backend = Join-Path $ProjectRoot "..\backend" }
+$backend = Join-Path $ProjectRoot "backend"
+if (-not (Test-Path $backend)) { $backend = Join-Path $ProjectRoot "..\backend" }
 $frontend = Join-Path (Split-Path $backend -Parent) "frontend"
 
 Write-Host "================= AcademicOS HEALTH CHECK =================" -ForegroundColor Cyan
@@ -38,19 +50,25 @@ if ($pgService) {
     Write-Check "PostgreSQL (port 5432)" (Test-Port 5432)
 }
 
-# Database connection (backend health implies it; direct check via python)
+# Database connection
 Push-Location $backend
 $dbOk = $false
 $url = $env:DATABASE_URL
 if (-not $url) { $url = "sqlite:///./academicos.db" }
 if ($url -like "sqlite*") {
-    python -c "import sqlite3; sqlite3.connect(r'$($url -replace 'sqlite:///','')').execute('select 1')" *> $null
-    $dbOk = ($LASTEXITCODE -eq 0)
+    $dbPath = ($url -replace "sqlite:///", "").TrimStart("/")
+    if (Test-Path $dbPath) {
+        python -c "import sqlite3; sqlite3.connect(r'$dbPath').execute('select 1')" *> $null
+        $dbOk = ($LASTEXITCODE -eq 0)
+    } else {
+        Write-Check "Database connection" $false "db file missing"
+    }
 } else {
     python -c "import sqlalchemy; sqlalchemy.create_engine(r'$url').connect()" *> $null
     $dbOk = ($LASTEXITCODE -eq 0)
 }
-Write-Check "Database connection" $dbOk
+if (-not $dbOk) { Write-Check "Database connection" $false }
+else { Write-Check "Database connection" $true }
 Pop-Location
 
 # Docker
@@ -111,6 +129,6 @@ if ($script:allPass) {
     Write-Host "  ALL CHECKS PASSED" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host "  SOME CHECKS FAILED — see above." -ForegroundColor Red
+    Write-Host "  SOME CHECKS FAILED - see above." -ForegroundColor Red
     exit 1
 }

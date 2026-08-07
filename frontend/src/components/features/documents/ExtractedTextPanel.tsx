@@ -9,7 +9,7 @@
  * adds page-anchored notes, and lists every annotation with delete.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Highlighter, Plus, StickyNote, Trash2 } from "lucide-react";
+import { Plus, StickyNote, Trash2 } from "lucide-react";
 
 import {
   createAnnotation,
@@ -20,7 +20,6 @@ import { SelectionActions, type SelectionActionHandler } from "./SelectionAction
 import { toErrorMessage } from "@/lib/api/client";
 import { findTextHighlight, type PdfPageText } from "@/lib/pdf/textSync";
 import type { DocumentAnnotation } from "@/types";
-import { cn } from "@/lib/utils";
 
 export interface ExtractedTextPanelProps extends SelectionActionHandler {
   documentId: string;
@@ -178,7 +177,7 @@ export function ExtractedTextPanel({
         onLlmAction={onLlmAction}
         onHighlight={(text) => {
           setSelection(text);
-          void highlightSelection();
+          window.setTimeout(() => void highlightSelection(), 0);
         }}
         onCreateNote={(text) => {
           setNotePage(currentPage);
@@ -191,21 +190,7 @@ export function ExtractedTextPanel({
             .catch((err) => onError(toErrorMessage(err)));
         }}
       />
-      <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border-subtle)] px-3 py-2 text-xs">
-        <button
-          type="button"
-          disabled={!selection || busy}
-          onClick={() => void highlightSelection()}
-          className={cn(
-            "flex items-center gap-1 rounded-md px-2.5 py-1.5 font-semibold",
-            selection
-              ? "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-              : "cursor-not-allowed bg-[var(--bg-hover)] text-[var(--text-tertiary)]",
-          )}
-        >
-          <Highlighter className="h-3.5 w-3.5" />
-          {selection ? "Highlight selection" : "Select text to highlight"}
-        </button>
+      <div className="flex items-center gap-2 border-t border-[var(--border-subtle)] px-3 py-2 text-xs">
         <button
           type="button"
           onClick={() => {
@@ -216,6 +201,11 @@ export function ExtractedTextPanel({
         >
           <StickyNote className="h-3.5 w-3.5" /> Add note
         </button>
+        {selection && (
+          <span className="text-[var(--text-tertiary)]">
+            Selection: {selection.length > 40 ? selection.slice(0, 40) + "..." : selection}
+          </span>
+        )}
       </div>
 
       {noteOpen && (

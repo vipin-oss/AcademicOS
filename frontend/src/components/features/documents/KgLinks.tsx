@@ -1,18 +1,20 @@
 "use client";
 
 /**
- * Knowledge-graph integration (Sprint M10).
+ * Knowledge-graph integration (Sprint M10, final polish).
  *
- * When a document's metadata references AcademicOS objects (faculty,
- * student, publication, project, event, organization, …), this panel
- * renders clickable links that open the corresponding object page
- * (`/objects/{id}`). The metadata keys follow the module conventions
- * (e.g. `related.faculty`, `related.project`, `doc.author`) and may
- * carry either an object id (`obj:faculty:…`) or a plain title.
+ * When a document's metadata (or the metadata of the AcademicOS object
+ * it is attached to) references other objects (faculty, student,
+ * publication, project, event, organization, ...), this panel renders
+ * clickable links that open the corresponding object page
+ * (`/objects/{id}`). The document's own object is always linked when
+ * present.
  */
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Network } from "lucide-react";
 
+import { getObject } from "@/lib/api/objects";
 import type { DocumentResponse } from "@/types";
 
 export const KG_OBJECT_PREFIX = "obj:";
@@ -27,19 +29,20 @@ const OBJECT_TYPE_LABELS: Record<string, string> = {
   course: "Course",
 };
 
-/** Extract object references from document metadata. */
+/** Extract object references from a metadata record. */
 export function extractObjectReferences(
-  document: DocumentResponse,
+  metadata: Record<string, unknown>,
 ): { label: string; objectId: string }[] {
   const refs: { label: string; objectId: string }[] = [];
-  const meta = (document as unknown as { metadata?: Record<string, unknown> }).metadata ?? {};
   const candidates: string[] = [];
-  for (const [key, value] of Object.entries(meta)) {
+  for (const [key, value] of Object.entries(metadata)) {
     if (!/faculty|student|publication|project|event|organization|author|related/i.test(key)) {
       continue;
     }
     if (typeof value === "string") candidates.push(value);
-    else if (Array.isArray(value)) candidates.push(...value.filter((v): v is string => typeof v === "string"));
+    else if (Array.isArray(value)) {
+      candidates.push(...value.filter((v): v is string => typeof v === "string"));
+    }
   }
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
@@ -52,8 +55,41 @@ export function extractObjectReferences(
 }
 
 export function KgLinks({ document }: { document: DocumentResponse }) {
-  const refs = extractObjectReferences(document);
-  if (refs.length === 0) return null;
+  const [linkedRefs, setLinkedRefs] = useState<{ label: string; objectId: string }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const docMeta = (document as unknown as { metadata?: Record<string, unknown> }).metadata;
+    const direct = extractObjectReferences(docMeta ?? {});
+    setLinkedRefs(direct);
+    // Also pull the metadata of the AcademicOS object this document is
+    // attached to (committed intake documents carry it).
+    if (document.object_id) {
+      getObject(document.object_id)
+        .then((obj) => {
+          if (cancelled) return;
+          const meta = (obj as unknown as { metadata?: Record<string, unknown> }).metadata;
+          const refs = extractObjectReferences(meta ?? {});
+          setLinkedRefs((prev) => {
+            const seen = new Set(prev.map((r) => r.objectId));
+            return [...prev, ...refs.filter((r) => !seen.has(r.objectId))];
+          });
+        })
+        .catch(() => {
+          /* object not readable — links are best-effort */
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [document]);
+
+  const refs = linkedRefs;
+  const ownObject = document.object_id ? [
+    { label: "Document object", objectId: document.object_id },
+  ] : [];
+
+  if (refs.length === 0 && ownObject.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
@@ -61,6 +97,16 @@ export function KgLinks({ document }: { document: DocumentResponse }) {
         <Network className="h-4 w-4 text-[var(--accent)]" /> Related objects
       </h3>
       <ul className="flex flex-wrap gap-2">
+        {ownObject.map((ref) => (
+          <li key={ref.objectId}>
+            <Link
+              href={`/objects/${encodeURIComponent(ref.objectId)}`}
+              className="inline-flex items-center gap-1 rounded-lg bg-[var(--bg-hover)] px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-active)] hover:text-[var(--text-primary)]"
+            >
+              {ref.label}
+            </Link>
+          </li>
+        ))}
         {refs.map((ref) => (
           <li key={ref.objectId}>
             <Link
