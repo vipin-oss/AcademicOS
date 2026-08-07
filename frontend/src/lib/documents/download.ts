@@ -5,9 +5,15 @@
  * triggers a browser download via an object URL.
  */
 import { api } from "@/lib/api/client";
-import type { DocumentResponse } from "@/types";
 
-export async function downloadDocument(doc: DocumentResponse): Promise<void> {
+/** What the downloader needs: the id plus optional names for the filename. */
+export interface DownloadableDocument {
+  id: string;
+  file_name?: string;
+  title?: string;
+}
+
+export async function downloadDocument(doc: DownloadableDocument): Promise<void> {
   const blob = await api.getBlob(`/documents/${doc.id}/download`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

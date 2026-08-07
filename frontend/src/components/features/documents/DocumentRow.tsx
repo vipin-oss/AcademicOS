@@ -6,12 +6,14 @@ import type { KeyboardEvent } from "react";
 import { Download } from "lucide-react";
 import { formatDate, titleCase } from "@/lib/utils";
 import type { DocumentResponse } from "@/types";
+import { useDocumentDownload } from "@/hooks/useDocumentDownload";
 import { DocumentStatusBadge, DocumentTypeBadge } from "./DocumentBadge";
 import { FileIcon } from "./FileIcon";
 import { formatFileSize } from "@/lib/documents/constants";
 
 export function DocumentRow({ document }: { document: DocumentResponse }) {
   const router = useRouter();
+  const { download, downloadingId, error } = useDocumentDownload();
 
   // The ONLY place the document id is encoded — mirrors the Objects row.
   const href = `/documents/${encodeURIComponent(document.id)}`;
@@ -103,16 +105,28 @@ export function DocumentRow({ document }: { document: DocumentResponse }) {
       {/* Actions */}
       <td className="px-4 py-3 text-right">
         {document.url ? (
-          <a
-            href={document.url}
-            download={document.file_name || document.title}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Download ${document.title}`}
-            title="Download"
-            className="inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              void download(document);
+            }}
+            disabled={downloadingId === document.id}
+            aria-busy={downloadingId === document.id}
+            aria-label={
+              error
+                ? `Download ${document.title} failed: ${error}`
+                : `Download ${document.title}`
+            }
+            title={error ? `Download failed: ${error}` : "Download"}
+            className={`inline-flex items-center justify-center rounded-lg border border-[var(--border-subtle)] p-1.5 transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50 ${
+              error
+                ? "text-[var(--danger)] hover:text-[var(--danger)]"
+                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
           >
             <Download className="h-4 w-4" aria-hidden="true" />
-          </a>
+          </button>
         ) : (
           <button
             type="button"

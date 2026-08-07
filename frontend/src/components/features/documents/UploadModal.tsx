@@ -13,7 +13,9 @@ import { listObjects } from "@/lib/api/objects";
 import {
   DOCUMENT_STATUSES,
   DOCUMENT_TYPES,
+  MAX_UPLOAD_BYTES,
   documentTypeFromFileName,
+  formatFileSize,
 } from "@/lib/documents/constants";
 import { useModalDismiss } from "@/hooks/useModalDismiss";
 import { cn, titleCase } from "@/lib/utils";
@@ -158,6 +160,12 @@ export function UploadModal({
         });
         onSaved({ mode: "edit", document: saved });
       } else if (file) {
+        if (file.size > MAX_UPLOAD_BYTES) {
+          setFormError(
+            `This file is ${formatFileSize(file.size)} — the upload limit is ${formatFileSize(MAX_UPLOAD_BYTES)}.`,
+          );
+          return;
+        }
         const saved = await uploadDocument(
           {
             title: title.trim(),

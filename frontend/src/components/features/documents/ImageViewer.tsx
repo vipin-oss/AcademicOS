@@ -52,7 +52,7 @@ export function ImageViewer({ documentId, fileName }: { documentId: string; file
   const download = useCallback(async () => {
     setDownloading(true);
     try {
-      await downloadDocument({ id: documentId, file_name: fileName } as never);
+      await downloadDocument({ id: documentId, file_name: fileName });
     } catch (err) {
       setError(toErrorMessage(err, "Download failed."));
     } finally {

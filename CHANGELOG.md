@@ -1,3 +1,42 @@
+# AcademicOS — M10 Release Candidate 1 (RC1) Changelog
+
+Release: **M10 RC1** · Baseline `f891383` (audited M10 HEAD) · Date: 2026-08-07
+Status: **feature-frozen; production hardening only — no new functionality**
+
+Sprint M10 passed an independent engineering audit and is frozen. RC1
+contains only the release review's low-risk production fixes, verified in
+full. All remaining improvements are deferred to Sprint M11 or later.
+
+## Release fixes
+
+| Area | Fix |
+|---|---|
+| Authenticated downloads | The download endpoints require the bearer token, but the document detail page, `DocumentCard`, `DocumentRow` and `DocumentPreview` rendered plain `<a href={document.url}>` links — an href cannot carry the JWT, so every such click 401'd in production. All four now download through the existing authenticated `downloadDocument` helper via a shared `useDocumentDownload` hook (busy id, no swallowed errors). `downloadDocument` takes the structural `{id, file_name?, title?}` shape, removing the unsound `as never` cast in `ImageViewer` |
+| Upload hardening | The document upload route read the whole request body into memory with no cap — an authenticated client could exhaust server RAM. `_read_upload` now enforces the intake pipeline's shared 512 MB cap (`MAX_FILE_BYTES`): a declared-size fast path (where the framework exposes `file.size`) and a chunked read aborting with **413** once the cap is crossed. The upload modal pre-checks the same cap client-side so a doomed transfer never starts |
+| Debug code | Removed a leftover `console.log` in `useObjects.ts` |
+| Windows launchers | Root `apply_patch.ps1` / `start.ps1` / `stop.ps1` / `health.ps1` still contained em-dashes (the M10.1 polish cleaned `scripts/windows/` but missed the root files); PowerShell 5.1 misreads non-BOM UTF-8 — now ASCII-safe |
+| `start_academicos.ps1` | Temp logs now use `[IO.Path]::GetTempPath()` (the `TEMP` env var is not guaranteed in every environment); the final summary reflects the real PostgreSQL / Docker / Qdrant state instead of always printing green `[OK]` |
+| `health_check.ps1` | Alembic head check now matches the `(head)` marker Alembic prints instead of a hardcoded `0008`, so future migrations never break the check |
+| `apply_patch.ps1` | Deleted files are now backed up like replaced files (they cannot be restored from the patch itself); a single wrapper folder in a patch ZIP is stripped so wrapped and flat archives apply identically (conflict detection and apply previously used the wrong root for wrapped zips); identical files are skipped so re-applying a patch reports **0 Added / 0 Modified** as documented; `PATCH_MANIFEST.md` is installed so the project manifest always reflects the applied state |
+| All Windows scripts | **Literal-path file operations** — PowerShell treats `[` `]` in `-Path` as wildcard classes, so Next.js dynamic-route files (`documents/[id]/page.tsx`, `objects/[id]/page.tsx`, …) were **silently skipped** by `apply_patch.ps1` (counted as added, content never replaced). Every `Test-Path` / `Get-Item` / `Get-FileHash` / `Copy-Item` / `Remove-Item` now uses `-LiteralPath`, and directory creation uses `[System.IO.Directory]::CreateDirectory` (`New-Item` has no `-LiteralPath`). Caught by end-to-end verification of the RC1 patch itself against a clean baseline |
+| Documentation | `README.md` migration count corrected to `0001..0008`; `FINAL_RELEASE_NOTES.md` added |
+
+## Tests added
+
+- `test_documents_api.py::test_upload_rejects_oversized_files` — HTTP 413 via the chunked read
+- `test_documents_api.py::test_read_upload_size_cap` — declared-size fast path, chunked cap, happy path
+- `DocumentPreview.test.tsx` — download goes through the authenticated client (no raw href) and failures surface in an alert
+
+## Verification (full suite, 2026-08-07)
+
+- Backend: **1242 passed, 2 skipped** (was 1240 + 2 new cap tests; 2 skips = PostgreSQL-gated JSONB containment)
+- Frontend: **65 passed (14 files)** (was 64), `tsc --noEmit` clean, `next build` clean
+- Architecture guardrails: **7/7**
+- Windows scripts: all 10 parse clean under the PowerShell AST parser; ASCII-safe;
+  `apply_patch.ps1` verified end-to-end on PowerShell 7 (apply → re-apply → 0/0/0/0, backups, wrapper-folder strip)
+- Manual API verification: upload 201 / oversize 413 / download 200 with JWT / 401 without
+
+---
 
 # AcademicOS — Sprint M10 Final Polish Changelog
 

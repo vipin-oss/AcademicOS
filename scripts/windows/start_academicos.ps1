@@ -21,6 +21,9 @@ function Write-OK   { param([string]$Msg) Write-Host "  OK  $Msg" -ForegroundCol
 function Write-Warn { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundColor Yellow }
 function Write-Fail { param([string]$Msg) Write-Host "FAIL  $Msg" -ForegroundColor Red }
 
+# Portable temp root (Windows always sets TEMP; fall back for safety).
+$tempRoot = [System.IO.Path]::GetTempPath()
+
 function Test-Port([int]$Port) {
     # Fast, reliable TCP probe (works on PS 5.1 and 7; no Test-NetConnection delay).
     $client = New-Object System.Net.Sockets.TcpClient
@@ -37,8 +40,8 @@ function Test-Port([int]$Port) {
 }
 
 function Resolve-ProjectRoot {
-    if (Test-Path (Join-Path $ProjectRoot "backend")) { return $ProjectRoot }
-    if (Test-Path (Join-Path $ProjectRoot "..\backend")) { return (Resolve-Path (Join-Path $ProjectRoot "..")).Path }
+    if (Test-Path -LiteralPath (Join-Path $ProjectRoot "backend")) { return $ProjectRoot }
+    if (Test-Path -LiteralPath (Join-Path $ProjectRoot "..\backend")) { return (Resolve-Path (Join-Path $ProjectRoot "..")).Path }
     Write-Fail "Could not locate the AcademicOS project root."
     exit 1
 }
@@ -50,6 +53,7 @@ $frontendDir = Join-Path $ProjectRoot "frontend"
 
 # ---------------------------------------------------------------- 1. Postgres
 Write-Step "1. PostgreSQL"
+$pgOk = $false
 $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($pgService) {
     if ($pgService.Status -ne "Running") {
@@ -58,17 +62,20 @@ if ($pgService) {
         Start-Sleep -Seconds 3
     }
     if ((Get-Service -Name $pgService.Name).Status -eq "Running") {
+        $pgOk = $true
         Write-OK ("PostgreSQL ({0}) running" -f $pgService.Name)
     } else {
         Write-Fail "PostgreSQL could not be started."
         exit 1
     }
 } else {
-    if (Test-Port 5432) { Write-OK "PostgreSQL reachable on 5432 (docker or local)" }
+    if (Test-Port 5432) { $pgOk = $true; Write-OK "PostgreSQL reachable on 5432 (docker or local)" }
     else { Write-Warn "PostgreSQL not detected - docker compose db expected; continuing." }
 }
 
 # ------------------------------------------------------------ 2. Docker
+$dockerOk = $false
+$qdrantOk = $false
 if (-not $SkipDocker) {
     Write-Step "2. Docker"
     $dockerCli = Get-Command docker -ErrorAction SilentlyContinue
@@ -81,7 +88,7 @@ if (-not $SkipDocker) {
             $dd = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
             if (-not $dd) {
                 $ddPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-                if (Test-Path $ddPath) { Start-Process $ddPath }
+                if (Test-Path -LiteralPath $ddPath) { Start-Process $ddPath }
                 else { Write-Warn "Docker Desktop not found at default path - start it manually." }
             }
             $tries = 0
@@ -92,8 +99,9 @@ if (-not $SkipDocker) {
                 $tries++
             }
             if ($LASTEXITCODE -ne 0) { Write-Warn "Docker Engine still not ready - Qdrant may be unavailable." }
-            else { Write-OK "Docker Engine running" }
+            else { $dockerOk = $true; Write-OK "Docker Engine running" }
         } else {
+            $dockerOk = $true
             Write-OK "Docker Engine running"
         }
 
@@ -109,7 +117,7 @@ if (-not $SkipDocker) {
             }
             Start-Sleep -Seconds 5
         }
-        if (Test-Port $QdrantPort) { Write-OK ("Qdrant reachable on {0}" -f $QdrantPort) }
+        if (Test-Port $QdrantPort) { $qdrantOk = $true; Write-OK ("Qdrant reachable on {0}" -f $QdrantPort) }
         else { Write-Warn "Qdrant not reachable - search will run lexical-only." }
     }
 } else {
@@ -135,7 +143,7 @@ Write-OK "Backend dependencies present"
 Pop-Location
 
 Push-Location $frontendDir
-if (-not (Test-Path "node_modules")) {
+if (-not (Test-Path -LiteralPath "node_modules")) {
     Write-Step "Installing frontend dependencies (npm install)..."
     npm install --no-audit --no-fund *> $null
     if ($LASTEXITCODE -ne 0) { Write-Fail "Frontend dependency install failed."; Pop-Location; exit 1 }
@@ -163,8 +171,8 @@ if (Test-Port $BackendPort) {
     Write-OK ("Backend already running on {0}" -f $BackendPort)
 } else {
     Push-Location $backendDir
-    $logOut = Join-Path $env:TEMP "academicos_backend.out.log"
-    $logErr = Join-Path $env:TEMP "academicos_backend.err.log"
+    $logOut = Join-Path $tempRoot "academicos_backend.out.log"
+    $logErr = Join-Path $tempRoot "academicos_backend.err.log"
     Start-Process -FilePath "python" -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$BackendPort" -WorkingDirectory $backendDir -WindowStyle Hidden -RedirectStandardOutput $logOut -RedirectStandardError $logErr
     Pop-Location
     $tries = 0
@@ -183,8 +191,8 @@ if (Test-Port $FrontendPort) {
     Write-OK ("Frontend already running on {0}" -f $FrontendPort)
 } else {
     Push-Location $frontendDir
-    $logOut = Join-Path $env:TEMP "academicos_frontend.out.log"
-    $logErr = Join-Path $env:TEMP "academicos_frontend.err.log"
+    $logOut = Join-Path $tempRoot "academicos_frontend.out.log"
+    $logErr = Join-Path $tempRoot "academicos_frontend.err.log"
     Start-Process -FilePath "npm" -ArgumentList "run", "dev", "--", "--hostname", "127.0.0.1", "--port", "$FrontendPort" -WorkingDirectory $frontendDir -WindowStyle Hidden -RedirectStandardOutput $logOut -RedirectStandardError $logErr
     Pop-Location
     $tries = 0
@@ -201,13 +209,22 @@ if (Test-Port $FrontendPort) {
 if (-not $NoOpenBrowser) {
     Start-Process "http://localhost:3000"
 }
+function Write-SummaryLine {
+    param([string]$Name, [bool]$Ok, [string]$Detail = "")
+    if ($Ok) { Write-Host ("  [OK] {0}  {1}" -f $Name, $Detail) -ForegroundColor Green }
+    else { Write-Host ("  [--] {0}  {1} (see warning above)" -f $Name, $Detail) -ForegroundColor Yellow }
+}
 Write-Host ""
-Write-Host "=============================================" -ForegroundColor Green
-Write-Host "  [OK] PostgreSQL" -ForegroundColor Green
-Write-Host "  [OK] Docker" -ForegroundColor Green
-Write-Host "  [OK] Qdrant" -ForegroundColor Green
-Write-Host "  [OK] Backend  (http://127.0.0.1:8000/api/v1/health)" -ForegroundColor Green
-Write-Host "  [OK] Frontend (http://localhost:3000)" -ForegroundColor Green
-Write-Host "=============================================" -ForegroundColor Green
-Write-Host "AcademicOS is ready." -ForegroundColor Green
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-SummaryLine "PostgreSQL" $pgOk
+Write-SummaryLine "Docker" $dockerOk
+Write-SummaryLine "Qdrant" $qdrantOk
+Write-SummaryLine "Backend  (http://127.0.0.1:8000/api/v1/health)" $true
+Write-SummaryLine "Frontend (http://localhost:3000)" $true
+Write-Host "=============================================" -ForegroundColor Cyan
+if ($pgOk -and $dockerOk -and $qdrantOk) {
+    Write-Host "AcademicOS is ready." -ForegroundColor Green
+} else {
+    Write-Host "AcademicOS is up, but some optional components are degraded - see the warnings above." -ForegroundColor Yellow
+}
 exit 0

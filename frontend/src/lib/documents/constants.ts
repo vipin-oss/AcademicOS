@@ -25,6 +25,13 @@ export const DEFAULT_DOC_PAGE_SIZE = 12;
  */
 export const SEARCH_WINDOW_SIZE = 100;
 
+/**
+ * Upload cap mirrored from the backend (`MAX_FILE_BYTES` in
+ * `backend/app/application/dtos/intake.py`): reject the transfer
+ * client-side instead of uploading a file the API will refuse.
+ */
+export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
+
 const EXTENSION_MAP: Record<string, DocumentTypeValue> = {
   pdf: "pdf",
   doc: "docx",

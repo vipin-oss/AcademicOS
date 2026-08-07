@@ -38,7 +38,9 @@ from app.api.mappers.document_mapper import to_create_input, to_response, to_upd
 from app.application.commands.create_document import CreateDocumentCommand
 from app.application.commands.delete_document import DeleteDocumentCommand
 from app.application.commands.update_document import UpdateDocumentCommand
+from app.application.dtos.intake import MAX_FILE_BYTES
 from app.application.exceptions import ObjectNotFoundError, ValidationError
+from app.application.intake.pipeline import human_bytes
 from app.application.queries.get_document import GetDocumentQuery
 from app.application.queries.list_documents import ListDocumentsQuery
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
@@ -121,6 +123,29 @@ def _download_url(out, storage: LocalFileStorage) -> str | None:
     )
 
 
+def _read_upload(file: UploadFile) -> bytes:
+    """Read an upload into memory with the shared 512 MB cap (413 on
+    oversize). Chunked so an oversized file never loads into RAM, and the
+    ``size`` fast path (Starlette >= 0.40) skips the read entirely when the
+    client declared it. Mirrors the intake pipeline's ``MAX_FILE_BYTES``
+    guard."""
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {human_bytes(MAX_FILE_BYTES)} upload cap.",
+        )
+    content = bytearray()
+    while chunk := file.file.read(1024 * 1024):
+        content.extend(chunk)
+        if len(content) > MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds the {human_bytes(MAX_FILE_BYTES)} upload cap.",
+            )
+    return bytes(content)
+
+
 @router.get("", response_model=ListDocumentsResponseModel)
 def list_documents(
     page: int = Query(1, ge=1, description="1-based page number"),
@@ -188,7 +213,7 @@ def create_document(
     doc_status: str = Form("draft", alias="status"),
     user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
-    content = file.file.read()
+    content = _read_upload(file)
     file_name = file.filename or "unnamed"
     mime_type = (
         file.content_type

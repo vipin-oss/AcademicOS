@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentPreview } from "./DocumentPreview";
@@ -8,7 +8,8 @@ import type { DocumentResponse } from "@/types";
  * Pins the Sprint-3 M3 inline PDF preview: the component fetches the
  * document bytes with the authenticated client, renders them via an
  * object URL, revokes the URL on unmount, and degrades honestly for
- * non-PDFs and fetch failures.
+ * non-PDFs and fetch failures. Downloads (M10 RC1) go through the
+ * authenticated client too — a plain href would 401.
  */
 vi.mock("@/lib/api/client", () => ({
   api: { getBlob: vi.fn() },
@@ -89,13 +90,33 @@ describe("DocumentPreview", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-preview");
   });
 
-  it("downloads use the authorized blob URL when a preview is loaded", async () => {
+  it("downloads through the authenticated client, never a raw href", async () => {
     mockedGetBlob.mockResolvedValue(new Blob(["%PDF-1.7"], { type: "application/pdf" }));
 
     render(<DocumentPreview document={pdfDocument()} />);
     await screen.findByTitle("Preview of paper.pdf");
 
-    const link = screen.getByText("Download").closest("a");
-    expect(link?.getAttribute("href")).toBe("blob:mock-preview");
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+
+    await waitFor(() =>
+      expect(mockedGetBlob).toHaveBeenLastCalledWith(
+        "/documents/obj:document:X/download",
+      ),
+    );
+    // no unauthenticated anchor to the API URL survives
+    expect(
+      screen.queryByRole("link", { name: "Download" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a failed download instead of silently swallowing it", async () => {
+    render(<DocumentPreview document={pdfDocument({ document_type: "docx" })} />);
+    mockedGetBlob.mockRejectedValueOnce(new Error("download boom"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("download boom"),
+    );
   });
 });

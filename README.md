@@ -5,6 +5,13 @@ for academic institutions: students, teaching, research, publications,
 faculty, committees, finance, events, documents, intake, reports, and a
 grounded AI assistant.
 
+## Release status
+
+**M10 Release Candidate 1 (RC1)** — feature-frozen, production hardening
+only. See **[FINAL_RELEASE_NOTES.md](FINAL_RELEASE_NOTES.md)** for the
+full release statement, verification results, and the list of improvements
+deferred to Sprint M11.
+
 ## Quickstart
 
 Follow **[INSTALL.md](INSTALL.md)** — a fresh Windows/Linux/macOS machine
@@ -44,7 +51,7 @@ and `backend/.env.example`.
 ```
 academicos/
 ├── backend/        # FastAPI service (Clean Architecture)
-│   ├── alembic/    # Migrations 0001..0007
+│   ├── alembic/    # Migrations 0001..0008
 │   ├── app/        # api / application / domain / infrastructure
 │   ├── scripts/    # init_db.py (SQLite quickstart), seed_regression.py
 │   └── tests/      # unit + integration + architecture guardrails (1200+)

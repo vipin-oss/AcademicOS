@@ -30,7 +30,7 @@ function Reset-Frontend {
     $frontend = Join-Path $ProjectRoot "frontend"
     foreach ($dir in @("node_modules", ".next", "dist", "coverage")) {
         $p = Join-Path $frontend $dir
-        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step ("Removed {0}" -f $dir) }
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force; Write-Step ("Removed {0}" -f $dir) }
     }
     Write-Step "Run: cd frontend && npm install && npm run dev"
 }
@@ -41,7 +41,7 @@ function Reset-Backend {
     $backend = Join-Path $ProjectRoot "backend"
     foreach ($dir in @(".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache", "storage")) {
         $p = Join-Path $backend $dir
-        if (Test-Path $p) { Remove-Item -Recurse -Force $p; Write-Step ("Removed {0}" -f $dir) }
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force; Write-Step ("Removed {0}" -f $dir) }
     }
     Write-Step "Run: cd backend && python -m venv .venv && .\.venv\Scripts\Activate.ps1 && pip install -r requirements.txt"
 }
@@ -53,7 +53,7 @@ function Reset-Database {
     Push-Location $backend
     if ($env:DATABASE_URL -like "sqlite*" -or -not $env:DATABASE_URL) {
         $db = Join-Path $backend "academicos.db"
-        if (Test-Path $db) { Remove-Item -Force $db; Write-Step ("Removed {0}" -f $db) }
+        if (Test-Path -LiteralPath $db) { Remove-Item -LiteralPath $db -Force; Write-Step ("Removed {0}" -f $db) }
         python scripts/init_db.py
         Write-Step "Fresh SQLite database initialised."
     } else {

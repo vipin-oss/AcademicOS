@@ -1,4 +1,4 @@
-# AcademicOS — root launcher for health
+# AcademicOS - root launcher for health
 # Delegates to scripts/windows/health_check.ps1 with the project root resolved.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path

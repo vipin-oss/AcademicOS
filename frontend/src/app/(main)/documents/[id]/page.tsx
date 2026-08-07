@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -33,6 +33,7 @@ import { Section, SectionPlaceholder, DetailRow } from "@/components/features/ob
 import { Spinner } from "@/components/features/objects/Spinner";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useDocument } from "@/hooks/useDocument";
+import { useDocumentDownload } from "@/hooks/useDocumentDownload";
 import { deleteDocument } from "@/lib/api/documents";
 import { toErrorMessage } from "@/lib/api/client";
 import { setFlash } from "@/lib/objects/flash";
@@ -61,6 +62,13 @@ export default function DocumentDetailsPage() {
 
   const { document, loading, refreshing, error, notFound, refresh } = useDocument(documentId);
   const { toast, show, dismiss } = useToast();
+  const { download, downloadingId, error: downloadError } = useDocumentDownload();
+
+  // Surface download failures through the page toast (row/card surfaces
+  // render the error inline; here the actions bar stays compact).
+  useEffect(() => {
+    if (downloadError) show("error", downloadError);
+  }, [downloadError, show]);
 
   const [viewerPage, setViewerPage] = useState(1);
   const [editOpen, setEditOpen] = useState(false);
@@ -101,13 +109,22 @@ export default function DocumentDetailsPage() {
   const actions = document ? (
     <>
       {document.url ? (
-        <a
-          href={document.url}
-          download={document.file_name || document.title}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]"
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            void download(document);
+          }}
+          disabled={downloadingId === document.id}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Download className="h-4 w-4" aria-hidden="true" /> Download
-        </a>
+          {downloadingId === document.id ? (
+            <Spinner className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Download className="h-4 w-4" aria-hidden="true" />
+          )}
+          {downloadingId === document.id ? "Downloading…" : "Download"}
+        </button>
       ) : null}
       <button
         type="button"

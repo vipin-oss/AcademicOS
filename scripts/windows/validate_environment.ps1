@@ -94,7 +94,7 @@ foreach ($port in @(@(8000, "backend"), @(3000, "frontend"), @(6333, "Qdrant")))
 # Backend dependencies
 $root = Get-Location
 $backend = Join-Path $root "backend"
-if (-not (Test-Path $backend)) { $backend = Join-Path $root "..\backend" }
+if (-not (Test-Path -LiteralPath $backend)) { $backend = Join-Path $root "..\backend" }
 Push-Location $backend
 python -c "import fastapi, sqlalchemy, alembic, uvicorn, qdrant_client" *> $null
 if ($LASTEXITCODE -eq 0) { Write-Pass "Backend Python packages installed" }
@@ -103,7 +103,7 @@ Pop-Location
 
 # Frontend dependencies
 $frontend = Join-Path (Split-Path $backend -Parent) "frontend"
-if (Test-Path (Join-Path $frontend "node_modules")) { Write-Pass "Frontend node_modules present" }
+if (Test-Path -LiteralPath (Join-Path $frontend "node_modules")) { Write-Pass "Frontend node_modules present" }
 else { Write-Fail "Frontend node_modules missing" "cd frontend && npm install" }
 
 Write-Host "=====================================================================" -ForegroundColor Cyan

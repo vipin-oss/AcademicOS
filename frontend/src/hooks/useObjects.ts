@@ -160,14 +160,6 @@ export function useObjects(options: number | UseObjectsOptions = {}): UseObjects
   );
 
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
-console.log({
-  search,
-  trimmedSearch,
-  debouncedSearch,
-  searchActive,
-  totalItems: allItems.length,
-  filteredItems: filtered.length,
-});
 
   return {
     items,

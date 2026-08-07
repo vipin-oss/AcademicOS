@@ -29,7 +29,7 @@ function Write-Warn { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundCol
 function Write-Fail { param([string]$Msg) Write-Host "FAIL  $Msg" -ForegroundColor Red }
 
 # --- resolve the patch path ------------------------------------------------
-if (-not (Test-Path $PatchZip)) {
+if (-not (Test-Path -LiteralPath $PatchZip)) {
     Write-Fail ("Patch file not found: {0}" -f $PatchZip)
     exit 2
 }
@@ -38,17 +38,19 @@ if (-not $PatchZip.EndsWith(".zip", [System.StringComparison]::OrdinalIgnoreCase
     Write-Fail "Expected a .zip patch file."
     exit 2
 }
-if (-not (Test-Path (Join-Path $ProjectRoot "backend"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot "backend"))) {
     Write-Fail "Project root does not contain backend/ - run from the AcademicOS root."
     exit 2
 }
 
 # --- staging + backup ------------------------------------------------------
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$work = Join-Path $env:TEMP ("academicos_patch_" + $stamp)
+$tempRoot = [System.IO.Path]::GetTempPath()
+$work = Join-Path $tempRoot ("academicos_patch_" + $stamp)
 $extract = Join-Path $work "extract"
 $backupDir = Join-Path $work "backup"
-New-Item -ItemType Directory -Force -Path $extract, $backupDir | Out-Null
+[System.IO.Directory]::CreateDirectory($extract) | Out-Null
+[System.IO.Directory]::CreateDirectory($backupDir) | Out-Null
 
 Write-Step ("Backing up current files and extracting {0} ..." -f $PatchZip)
 try {
@@ -60,23 +62,32 @@ try {
 
 # Locate the manifest (patch root or inside an AcademicOS/ folder).
 $manifest = Join-Path $extract "PATCH_MANIFEST.md"
-if (-not (Test-Path $manifest)) {
+if (-not (Test-Path -LiteralPath $manifest)) {
     $candidate = Get-ChildItem -Path $extract -Recurse -Filter "PATCH_MANIFEST.md" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($candidate) { $manifest = $candidate.FullName }
 }
-$hasManifest = Test-Path $manifest
+$hasManifest = Test-Path -LiteralPath $manifest
 
-# --- collect patch files (skip the manifest itself) ------------------------
+# Strip a single wrapper folder (AcademicOS/...) so wrapped and flat patch
+# archives apply identically; mixed archives stay relative to the extract root.
+$topEntries = @(Get-ChildItem -Path $extract -Force -ErrorAction SilentlyContinue)
+if ($topEntries.Count -eq 1 -and $topEntries[0].PSIsContainer) {
+    $relRoot = $topEntries[0].FullName
+} else {
+    $relRoot = $extract
+}
+
+# --- collect patch files (the manifest is installed too, so the project's
+# manifest always reflects the applied state) -------------------------------
 $patchFiles = @()
 if ($hasManifest) {
-    Get-ChildItem -Path $extract -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -ne $manifest } | ForEach-Object {
-            $patchFiles += $_.FullName.Substring($extract.Length).TrimStart("\", "/")
-        }
+    Get-ChildItem -Path $extract -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $patchFiles += $_.FullName.Substring($relRoot.Length).TrimStart("\", "/")
+    }
 } else {
     Write-Warn "PATCH_MANIFEST.md not found - assuming a flat patch (no deleted-file list)."
     Get-ChildItem -Path $extract -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-        $patchFiles += $_.FullName.Substring($extract.Length).TrimStart("\", "/")
+        $patchFiles += $_.FullName.Substring($relRoot.Length).TrimStart("\", "/")
     }
 }
 
@@ -102,14 +113,14 @@ if ($hasManifest) {
 Write-Step "Checking for conflicts..."
 foreach ($rel in $patchFiles) {
     $target = Join-Path $ProjectRoot $rel
-    if (Test-Path $target) {
-        $patchHash = (Get-FileHash -Path (Join-Path $extract $rel) -Algorithm SHA256).Hash
-        $targetHash = (Get-FileHash -Path $target -Algorithm SHA256).Hash
+    if (Test-Path -LiteralPath $target) {
+        $patchHash = (Get-FileHash -LiteralPath (Join-Path $relRoot $rel) -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
         if ($patchHash -ne $targetHash) {
             # Patch differs from the working copy: expected for a modified
             # file; flag only when the working copy is NEWER than the patch
             # (a stale patch applied out of order).
-            if ((Get-Item $target).LastWriteTime -gt (Get-Item (Join-Path $extract $rel)).LastWriteTime) {
+            if ((Get-Item -LiteralPath $target).LastWriteTime -gt (Get-Item -LiteralPath (Join-Path $relRoot $rel)).LastWriteTime) {
                 $script:conflicts++
                 Write-Warn ("Working copy of {0} is newer than the patch - applying anyway." -f $rel)
             }
@@ -120,18 +131,21 @@ foreach ($rel in $patchFiles) {
 # --- apply -----------------------------------------------------------------
 Write-Step "Applying patch..."
 foreach ($rel in $patchFiles) {
-    $src = Join-Path $extract $rel
+    $src = Join-Path $relRoot $rel
     $target = Join-Path $ProjectRoot $rel
     $targetDir = Split-Path $target -Parent
     try {
-        if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
-        if (Test-Path $target) {
+        if (-not (Test-Path -LiteralPath $targetDir)) { [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null }
+        if (Test-Path -LiteralPath $target) {
+            if ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) {
+                continue  # identical already applied - idempotent re-apply
+            }
             $backupName = (Split-Path $rel -Leaf) + "_" + $stamp + "_" + [IO.Path]::GetRandomFileName()
-            Copy-Item -Path $target -Destination (Join-Path $backupDir $backupName) -Force
-            Copy-Item -Path $src -Destination $target -Force
+            Copy-Item -LiteralPath $target -Destination (Join-Path $backupDir $backupName) -Force
+            Copy-Item -LiteralPath $src -Destination $target -Force
             $script:modified++
         } else {
-            Copy-Item -Path $src -Destination $target -Force
+            Copy-Item -LiteralPath $src -Destination $target -Force
             $script:added++
         }
     } catch {
@@ -144,11 +158,13 @@ foreach ($rel in $patchFiles) {
 Write-Step "Removing obsolete files listed in the manifest..."
 foreach ($rel in $deletedFiles) {
     $target = Join-Path $ProjectRoot $rel
-    if (Test-Path $target) {
+    if (Test-Path -LiteralPath $target) {
         try {
-            Remove-Item -Path $target -Force
+            $backupName = (Split-Path $rel -Leaf) + "_" + $stamp + "_" + [IO.Path]::GetRandomFileName()
+            Copy-Item -LiteralPath $target -Destination (Join-Path $backupDir $backupName) -Force
+            Remove-Item -LiteralPath $target -Force
             $script:deleted++
-            Write-OK ("Deleted {0}" -f $rel)
+            Write-OK ("Deleted {0} (backed up)" -f $rel)
         } catch {
             $script:failed++
             Write-Fail ("Could not delete {0} : {1}" -f $rel, $_.Exception.Message)

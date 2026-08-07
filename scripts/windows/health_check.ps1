@@ -37,7 +37,7 @@ function Test-Port([int]$Port) {
 }
 
 $backend = Join-Path $ProjectRoot "backend"
-if (-not (Test-Path $backend)) { $backend = Join-Path $ProjectRoot "..\backend" }
+if (-not (Test-Path -LiteralPath $backend)) { $backend = Join-Path $ProjectRoot "..\backend" }
 $frontend = Join-Path (Split-Path $backend -Parent) "frontend"
 
 Write-Host "================= AcademicOS HEALTH CHECK =================" -ForegroundColor Cyan
@@ -57,7 +57,7 @@ $url = $env:DATABASE_URL
 if (-not $url) { $url = "sqlite:///./academicos.db" }
 if ($url -like "sqlite*") {
     $dbPath = ($url -replace "sqlite:///", "").TrimStart("/")
-    if (Test-Path $dbPath) {
+    if (Test-Path -LiteralPath $dbPath) {
         python -c "import sqlite3; sqlite3.connect(r'$dbPath').execute('select 1')" *> $null
         $dbOk = ($LASTEXITCODE -eq 0)
     } else {
@@ -102,7 +102,7 @@ Write-Check "Frontend (3000)" $frontendOk
 
 # Storage
 $storage = Join-Path $backend "storage"
-Write-Check "Storage directory" (Test-Path $storage) "(backend/storage)"
+Write-Check "Storage directory" (Test-Path -LiteralPath $storage) "(backend/storage)"
 
 # Alembic version
 Push-Location $backend
@@ -110,13 +110,15 @@ $alembicOk = $false
 $alembicVersion = ""
 try {
     $alembicVersion = python -m alembic current 2>$null | Select-Object -Last 1
-    $alembicOk = ($LASTEXITCODE -eq 0 -and $alembicVersion -match "0008")
+    # Alembic appends "(head)" when the current revision is the head, so
+    # this stays correct across future migrations without re-hardcoding.
+    $alembicOk = ($LASTEXITCODE -eq 0 -and $alembicVersion -match "\(head\)")
 } catch { $alembicOk = $false }
-Write-Check "Alembic at head (0008)" $alembicOk $alembicVersion
+Write-Check "Alembic at head" $alembicOk $alembicVersion
 Pop-Location
 
 # Node modules
-Write-Check "Node modules" (Test-Path (Join-Path $frontend "node_modules"))
+Write-Check "Node modules" (Test-Path -LiteralPath (Join-Path $frontend "node_modules"))
 
 # Python packages
 Push-Location $backend

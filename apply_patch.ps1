@@ -1,4 +1,4 @@
-# AcademicOS — root launcher for apply_patch
+# AcademicOS - root launcher for apply_patch
 # Delegates to scripts/windows/apply_patch.ps1 with the project root resolved.
 # Usage:  .\apply_patch.ps1 AcademicOS_M11_Patch.zip
 $ErrorActionPreference = "Stop"
