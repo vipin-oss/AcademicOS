@@ -184,7 +184,14 @@ class AskQuestionInput:
     question: str
     conversation_id: str | None = None
     asked_by: str = "system"
-    model_id: str | None = None  # S7 M2: per-request model override
+    provider_id: str | None = None  # M11.3.1: the selection key (a provider_id)
+    model_id: str | None = None  # DEPRECATED alias for provider_id (legacy API)
+
+    def __post_init__(self) -> None:
+        # Resolve the legacy alias so the selection key is unambiguous
+        # regardless of how the input is constructed (mapper or directly).
+        if not self.provider_id and self.model_id:
+            self.provider_id = self.model_id
 
 
 @dataclass
@@ -458,7 +465,8 @@ class AssistantCitation:
 KEY_REVIEW_STATUS = "assistant.review_status"
 # Sprint-7 M2: the model this conversation uses (registry model id). Stored
 # as L1/SYSTEM metadata like assistant.pinned.
-KEY_MODEL_ID = "assistant.model_id"
+KEY_PROVIDER_ID = "assistant.provider_id"  # M11.3.1: the selected provider id
+KEY_MODEL_ID = "assistant.model_id"  # DEPRECATED legacy key (still read for old conversations)
 
 REVIEW_PENDING = "pending"
 REVIEW_APPROVED = "approved"

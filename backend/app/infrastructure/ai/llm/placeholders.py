@@ -7,6 +7,12 @@ estimates work (deterministic, pure). These files are the future homes
 of the real adapters — a later sprint replaces the body of one class
 without touching the registry, core, routes or frontend.
 
+Identity (M11.3.1): ``provider_id`` is the configured catalogue identity
+(from ``ProviderConfig.provider_id``); ``kind`` is the family. They are
+distinct, and multiple providers of the same kind stay distinguishable.
+When no config is present (the unconfigured discovery case) ``provider_id``
+falls back to ``kind``.
+
 No network, no SDKs, no credentials anywhere in this module.
 """
 from __future__ import annotations
@@ -40,15 +46,23 @@ def _utcnow_iso() -> str:
 
 
 class NotConfiguredGateway:
-    """Shared placeholder behavior for every M11.1 provider."""
+    """Shared placeholder behavior for every catalogue provider."""
 
-    provider_id: str = ""
     display_name: str = ""
     kind: str = ""
     capabilities: tuple[str, ...] = ()
 
     def __init__(self, config: ProviderConfig | None = None) -> None:
         self._config = config
+
+    # ------------------------------------------------------------- identity
+    @property
+    def provider_id(self) -> str:
+        """The configured catalogue identity, NOT the kind. Falls back to the
+        kind for the unconfigured discovery case (no config)."""
+        if self._config is not None and self._config.provider_id:
+            return self._config.provider_id
+        return self.kind
 
     # ------------------------------------------------------------- health
     def health(self) -> ProviderHealth:
@@ -68,11 +82,7 @@ class NotConfiguredGateway:
 
     # -------------------------------------------------------------- models
     def list_models(self) -> tuple[ModelInfo, ...]:
-        """The models *declared* in configuration, marked not usable.
-
-        ``configured=False`` keeps the settings surface honest: the admin
-        sees the intended model, but no adapter can serve it yet.
-        """
+        """The models *declared* in configuration, marked not usable."""
         if self._config is not None and self._config.model:
             return (
                 ModelInfo(
@@ -108,7 +118,6 @@ class NotConfiguredGateway:
         input_tokens: int,
         output_tokens: int,
     ) -> float:
-        # No cost tables in M11.1 — an honest 0.0, never a fabricated price.
         del model
         return estimate_cost_usd(
             input_tokens=input_tokens, output_tokens=output_tokens
@@ -118,33 +127,29 @@ class NotConfiguredGateway:
     def _not_configured(self) -> AiNotConfiguredError:
         return AiNotConfiguredError(
             f"Provider '{self.provider_id}' is not configured: no adapter is "
-            f"wired for kind '{self.kind}' (planned for a later M11 sprint)."
+            f"wired for kind '{self.kind}'."
         )
 
 
 class AnthropicProvider(NotConfiguredGateway):
-    provider_id = PROVIDER_KIND_ANTHROPIC
     display_name = "Anthropic"
     kind = PROVIDER_KIND_ANTHROPIC
     capabilities = KIND_CAPABILITIES[PROVIDER_KIND_ANTHROPIC]
 
 
 class GoogleProvider(NotConfiguredGateway):
-    provider_id = PROVIDER_KIND_GOOGLE
     display_name = "Google"
     kind = PROVIDER_KIND_GOOGLE
     capabilities = KIND_CAPABILITIES[PROVIDER_KIND_GOOGLE]
 
 
 class OllamaProvider(NotConfiguredGateway):
-    provider_id = PROVIDER_KIND_OLLAMA
     display_name = "Ollama"
     kind = PROVIDER_KIND_OLLAMA
     capabilities = KIND_CAPABILITIES[PROVIDER_KIND_OLLAMA]
 
 
 class LocalProvider(NotConfiguredGateway):
-    provider_id = PROVIDER_KIND_LOCAL
     display_name = "Local"
     kind = PROVIDER_KIND_LOCAL
     capabilities = KIND_CAPABILITIES[PROVIDER_KIND_LOCAL]

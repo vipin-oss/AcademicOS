@@ -1,66 +1,46 @@
-# AcademicOS M11.3 — Incremental Patch Manifest (AI Core Configuration Authority & OpenAI Hardening)
+# AcademicOS M11.3.1 — Incremental Patch Manifest (Production Correctness Hardening)
 
-**Milestone:** M11.3 (AI Core = single production authority; OpenAI adapter production-ready)
-**Baseline:** `01a9f04` (M11.2.1)
+**Milestone:** M11.3.1 (provider/model identity contract, AI_DEFAULT_MODEL runtime, health correctness)
+**Baseline:** `e7c1d8e` (M11.3)
 **Branch:** `feature/m11-ai-workspace`
-**Patch commit:** `60a0bc6` (code + tests) · docs/manifest on top
+**Patch commit:** `26cbc91`
 **Date:** 2026-08-07
 
-**Scope:** AI Core becomes the authoritative owner of provider/model/config/
-credentials/base-URL/generation-policy/selection; the assistant no longer
-constructs a `ProviderConfig`; the OpenAI transport is hardened to production
-grade. No RAG/embeddings/memory/agents/chat-UI. Fully backward compatible: no
-schema change, no new dependencies, no new settings required.
-
----
+**Scope:** Production-correctness fixes only. No architecture redesign, no new
+capabilities, no new SDKs. Fully backward compatible (no schema, dependency, or
+required-settings change; `model_id` retained as a deprecated alias; legacy
+conversation pins still resolved).
 
 ## Files Added
 
 | Path | Purpose |
 |---|---|
-| `backend/app/tests/architecture/test_ai_config_authority.py` | Guardrail: `ProviderConfig(...)` may be constructed only inside the AI Core. |
-| `backend/app/tests/unit/test_openai_adapter_hardening.py` | 13 tests for the hardened adapter (policy body, accounting, structured output, client lifecycle, capability reporting). |
+| `backend/app/tests/architecture/test_production_provider_isolation.py` | Guardrail: api/ and application/ never import the bypass constructors. |
+| `backend/app/tests/unit/test_ai_runtime_contract.py` | Runtime contract tests: identity, multi-provider distinguishability, selection precedence, AI_DEFAULT_MODEL influence, health/runtime consistency. |
 
 ## Files Modified
 
 | Path | Change |
 |---|---|
-| `backend/app/application/ai/core.py` | `AiCore` is provider-id-keyed with `select_provider` + `gateway`; health projects the 5 discovery kinds (API shape preserved). |
-| `backend/app/infrastructure/ai/provider_factory.py` | `build_ai_core` builds the catalogue from `AI_PROVIDERS_JSON` (authoritative) + DEPRECATED `ASSISTANT_*` synthesis; `build_gateway_from_params` is the config-authority seam. |
-| `backend/app/infrastructure/ai/llm/openai.py` | Production hardening: reused client + `close()`, `max_tokens`/`temperature` from config, parsed `finish_reason`/`usage`, measured latency, implemented `structured_generate`, accurate capabilities. |
-| `backend/app/infrastructure/assistant/provider_factory.py` | `build_assistant_provider` composes the translator over an AI-Core gateway (no `ProviderConfig`); legacy `build_provider` removed. |
-| `backend/app/infrastructure/llm/llm_provider.py` | Legacy test-injection ctor delegates config construction to the AI Core (`build_gateway_from_params`). |
-| `backend/app/application/use_cases/assistant/ask_question.py` | Selection via `AiCore` (`select_provider`/`gateway`); `registry`/`ModelRegistry` retired from the use case. |
-| `backend/app/api/routes/assistant.py` | Route consumes AI Core; per-conversation factory bound to `ai_core`; unknown provider -> 422. |
-| `backend/app/application/services/model_registry.py` | Clearly DEPRECATED (isolated; not on the production path). |
-| `backend/app/tests/unit/test_llm_pipeline.py`, `test_assistant_llm_api.py`, `test_model_registry.py` | Selection tests migrated to AI Core; retired build_provider tests. |
+| `backend/app/infrastructure/ai/llm/openai.py` | `provider_id` is a property = the configured catalogue identity (distinct from `kind`). |
+| `backend/app/infrastructure/ai/llm/placeholders.py` | Same `provider_id` property (config identity, falls back to kind for discovery). |
+| `backend/app/application/ai/core.py` | Health rows keyed by provider_id (one per provider); health reports effective default + executability; `build_gateway` disabled; effective-default helpers. |
+| `backend/app/infrastructure/ai/provider_factory.py` | `_resolve_default_provider_id` honours `AI_DEFAULT_MODEL`; authoritative settings precede legacy. |
+| `backend/app/application/dtos/assistant.py` | `AskQuestionInput.provider_id` (+ `model_id` alias via `__post_init__`); `KEY_PROVIDER_ID`. |
+| `backend/app/api/mappers/assistant_mapper.py` | Maps `provider_id` (with `model_id` alias). |
+| `backend/app/api/routes/assistant.py` | `AskBody.provider_id`; eager validation uses `provider_id`. |
+| `backend/app/application/use_cases/assistant/ask_question.py` | Selection/pin by `provider_id` (legacy key fallback read). |
+| `backend/app/core/config.py` | Truthful `AI_DEFAULT_PROVIDER` / `AI_DEFAULT_MODEL` comments. |
+| `backend/app/tests/...` (health, pipeline, assistant-llm) | Updated to the corrected contract (provider_id identity, effective-default validity, pin key). |
+| `AI_DEVELOPER_GUIDE.md` | Identity/selection contract section; corrected config + health descriptions. |
 
-## Files Deleted
+## Database Migrations / Dependencies / Settings
+*(none required)*
 
-*(none)*
-
-## Database Migrations
-
-*(none)* — schema-free.
-
-## New Dependencies
-
-*(none)* — no SDKs, no new packages.
-
-## Environment Variable Changes
-
-*(none required for existing behaviour.)* `AI_PROVIDERS_JSON` is now the
-authoritative provider config; legacy `ASSISTANT_*` still works (deprecated).
-
-## Post-Apply Commands
-
+## Post-Apply
 ```powershell
 cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Verification (this patch)
-
-- Backend: **1366 passed, 2 skipped** (zero regressions)
-- Frontend: **70 vitest passed (15 files)** · `tsc --noEmit` clean
-- Architecture guardrails: **15/15**
-- `ruff check --select F401,I001` clean on changed files; app boots (264 routes)
+## Verification
+- Backend: **1379 passed, 2 skipped** · Frontend: **70 vitest + tsc clean** · Architecture: **16/16** · ruff clean.

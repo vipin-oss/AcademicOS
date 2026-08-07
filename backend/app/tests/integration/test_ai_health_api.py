@@ -91,7 +91,7 @@ class TestAiHealthPublic:
         assert body["status"] == "not_configured"
         assert body["ai_enabled"] is True
         assert body["default_provider"] == "local"
-        assert body["default_provider_valid"] is True
+        assert body["default_provider_valid"] is False  # M11.3.1: no provider is actually executable
         assert body["providers_total"] == 5
         assert body["providers_configured"] == 0
         assert body["feature_flags"]["rag"] is False
@@ -162,7 +162,9 @@ class TestAiProvidersAuthenticated:
         )
         _override_core(settings)
         body = client.get("/api/v1/ai/providers").json()
-        openai = next(p for p in body["items"] if p["provider_id"] == "openai")
+        # M11.3.1: the row identity is the provider_id ("oa"); kind distinguishes the family.
+        openai = next(p for p in body["items"] if p["kind"] == "openai")
+        assert openai["provider_id"] == "oa"
         assert openai["models"][0]["model_id"] == "gpt-4o-mini"
         assert openai["models"][0]["provider_id"] == "oa"
         assert openai["models"][0]["configured"] is False

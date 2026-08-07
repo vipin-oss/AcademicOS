@@ -1,6 +1,6 @@
-# AcademicOS — AI Developer Guide (Sprint M11.1)
+# AcademicOS — AI Developer Guide (extended through M11.3.1)
 
-How the AI Foundation works and how to extend it. The core contract:
+How the AI Core works and how to extend it. The core contract:
 **adding a new provider (or a new AI capability) requires implementing an
 adapter — nothing else in the system changes.**
 
@@ -23,6 +23,34 @@ Layering rules (enforced by `tests/architecture/test_ai_guardrails.py`):
    composition crossing is `infrastructure/ai/provider_factory.py`.
 3. Routes never construct anything — they receive the composed `AiCore`
    through `get_ai_core`.
+
+
+
+## 1a. Provider identity & selection contract (M11.3.1)
+
+Three distinct identifiers — never conflated:
+
+| Concept | Meaning | Example |
+|---|---|---|
+| `provider_id` | The configured **catalogue identity** of one provider (from `AI_PROVIDERS_JSON` `provider_id`). Unique; selection key. | `"oa"`, `"main"` |
+| `kind` | The provider **family/adapter** (one of `PROVIDER_KINDS`). | `"openai"` |
+| `model` / `model_id` | The **model name** configured on a provider (`ProviderConfig.model`). A property of a provider, not a selection key. | `"gpt-4o-mini"` |
+
+- A gateway reports `provider_id` = its configured catalogue identity (NOT the
+  kind), so multiple providers of the same kind stay distinguishable. When no
+  config is present (discovery), `provider_id` falls back to `kind`.
+- Selection resolves a `provider_id` via `AiCore.select_provider(requested, pinned)`
+  with precedence **override > conversation pin > configured default**.
+- The assistant's selection key is `provider_id` (API field `provider_id`;
+  `model_id` is a deprecated alias). The conversation pin is stored under
+  metadata key `assistant.provider_id` (legacy `assistant.model_id` still read).
+- `AI_DEFAULT_MODEL`, when set, makes the default provider the one whose model
+  matches — so it genuinely influences runtime selection.
+- Health (`/ai/health`) reports the **runtime-effective** default provider and
+  `default_provider_valid` = the default is actually executable; it never claims
+  "ok" when the selected provider cannot run.
+- `AiCore.build_gateway(config)` is **disabled** — gateways come only from the
+  catalogue via `select_provider` / `gateway`.
 
 ## 2. The LanguageModelGateway port
 
@@ -91,8 +119,8 @@ and the health API require zero changes — they all speak the port.
 | Setting | Default | Meaning |
 |---|---|---|
 | `AI_ENABLED` | `true` | master switch (health reports `disabled` when off) |
-| `AI_DEFAULT_PROVIDER` | `local` | catalogue row used as default (openai/anthropic/google/ollama/local) |
-| `AI_DEFAULT_MODEL` | `` | default model id (empty = provider default) |
+| `AI_DEFAULT_PROVIDER` | `local` | default provider (a provider_id, or a kind resolved to its first provider) |
+| `AI_DEFAULT_MODEL` | `` | default model name; when set, the default provider is the one whose model matches (influences runtime) |
 | `AI_TEMPERATURE` | `0.0` | generation default for future adapters |
 | `AI_MAX_TOKENS` | `2048` | generation default for future adapters |
 | `AI_TIMEOUT_SECONDS` | `30.0` | transport timeout default |
@@ -103,10 +131,12 @@ and the health API require zero changes — they all speak the port.
 ## 5. The health surface
 
 - `GET /api/v1/ai/health` — public liveness: aggregate status
-  (`ok` / `not_configured` / `disabled` / `error`), default provider
-  validity, configured counts, feature flags.
-- `GET /api/v1/ai/providers` — authenticated: one row per catalogue
-  provider (status, declared models, detail).
+  (`ok` / `not_configured` / `disabled` / `error`). `default_provider` is the
+  runtime-effective default; `default_provider_valid` is True only when that
+  default is actually executable (no misleading "healthy" state).
+- `GET /api/v1/ai/providers` — authenticated: one row per **provider**
+  (keyed by `provider_id`, with its `kind`), so multiple providers of a kind
+  stay distinguishable; plus a not-configured discovery row per unconfigured kind.
 - `GET /api/v1/ai/models` — authenticated: aggregated model list plus
   the configured defaults.
 
@@ -117,5 +147,12 @@ and the health API require zero changes — they all speak the port.
 - Integration: full DI chain through the API
   (`tests/integration/test_ai_health_api.py`), including auth gates and
   the `/api/v1/health` regression.
-- Architecture: `tests/architecture/test_ai_guardrails.py` (4 tests).
+- Architecture guardrails (16 tests): AI purity + adapter independence,
+  transport ownership (no feature imports httpx), composition authority
+  (no feature imports a concrete provider; one `build_gateway`), config
+  authority (only the AI Core constructs `ProviderConfig`), production
+  isolation (api/application never import the bypass constructors).
+- Runtime contract (`tests/unit/test_ai_runtime_contract.py`): provider
+  identity, multi-provider distinguishability, selection precedence,
+  `AI_DEFAULT_MODEL` influence, health/runtime default consistency.
 - Frontend: `AiSettingsView.test.tsx` (mocked API client).

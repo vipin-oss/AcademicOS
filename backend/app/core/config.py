@@ -76,11 +76,13 @@ class Settings(BaseSettings):
     # Master switch for the AI surface (/ai/health reports "disabled" when
     # off). No M1–M10 behavior depends on it.
     ai_enabled: bool = True
-    # The catalogue provider used when no explicit provider is requested.
-    # M11.1 has no wired adapters — the value selects the default row in
-    # the settings surface and the target for future gateway() calls.
+    # The default provider used when a request specifies none. May be a
+    # configured provider_id or a kind (first provider of that kind). This is
+    # the runtime selection default (AiCore.select_provider with no override).
     ai_default_provider: str = "local"
-    # Default model id; empty means "the provider's own default".
+    # Default model name. When set, the default provider resolves to the
+    # configured provider whose model matches this value (so AI_DEFAULT_MODEL
+    # influences runtime selection). Empty means "use AI_DEFAULT_PROVIDER".
     ai_default_model: str = ""
     # Generation defaults (used by future adapters; placeholders ignore).
     ai_temperature: float = 0.0

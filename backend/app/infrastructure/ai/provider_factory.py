@@ -190,18 +190,34 @@ def _legacy_provider_configs(settings) -> tuple[ProviderConfig, ...]:
 
 
 def _resolve_default_provider_id(settings, gateways: dict) -> str:
-    """Resolve the default EXECUTION provider id: legacy assistant default
-    model > ``AI_DEFAULT_PROVIDER`` (a kind) > first configured provider."""
-    candidates = [str(getattr(settings, "assistant_default_model", "") or ""),
-                  str(getattr(settings, "ai_default_provider", "") or "")]
-    for candidate in candidates:
-        if candidate and candidate in gateways:
-            return candidate
-    for candidate in candidates:
-        if not candidate:
-            continue
+    """Resolve the default EXECUTION provider id.
+
+    Precedence (M11.3.1): ``AI_DEFAULT_PROVIDER`` (as a provider id) >
+    ``AI_DEFAULT_MODEL`` (the provider whose configured model matches) >
+    ``AI_DEFAULT_PROVIDER`` (as a kind) > legacy ``assistant_default_model``
+    (deprecated) > first configured provider. ``AI_DEFAULT_MODEL`` therefore
+    genuinely influences runtime selection, and the authoritative settings
+    take precedence over the legacy compat setting.
+    """
+    ai_default_provider = str(getattr(settings, "ai_default_provider", "") or "")
+    ai_default_model = str(getattr(settings, "ai_default_model", "") or "")
+    legacy = str(getattr(settings, "assistant_default_model", "") or "")
+
+    if ai_default_provider and ai_default_provider in gateways:
+        return ai_default_provider
+    if ai_default_model:
         for pid, gateway in gateways.items():
-            if getattr(gateway, "kind", None) == candidate:
+            if getattr(gateway, "model", "") == ai_default_model:
+                return pid
+    if ai_default_provider:
+        for pid, gateway in gateways.items():
+            if getattr(gateway, "kind", None) == ai_default_provider:
+                return pid
+    if legacy and legacy in gateways:
+        return legacy
+    if legacy:
+        for pid, gateway in gateways.items():
+            if getattr(gateway, "kind", None) == legacy:
                 return pid
     return next(iter(gateways), "")
 

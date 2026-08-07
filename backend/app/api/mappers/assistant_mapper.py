@@ -22,10 +22,13 @@ DEFAULT_ACTOR = "faculty:ui"  # the shared web-client actor convention
 
 def to_ask_input(body: dict) -> AskQuestionInput:
     conversation_id = body.get("conversation_id")
+    # M11.3.1: the selection key is provider_id; model_id is a legacy alias.
+    provider_id = body.get("provider_id") or body.get("model_id")
     return AskQuestionInput(
         question=str(body.get("question") or ""),
         conversation_id=str(conversation_id) if conversation_id else None,
         asked_by=(body.get("asked_by") or DEFAULT_ACTOR),
+        provider_id=(str(provider_id) if provider_id else None),
         model_id=(str(body.get("model_id")) if body.get("model_id") else None),
     )
 

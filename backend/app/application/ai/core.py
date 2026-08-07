@@ -31,7 +31,6 @@ from app.application.dtos.ai import (
     NOT_CONFIGURED_DETAIL,
     PROVIDER_KINDS,
     PROVIDER_LABELS,
-    STATUS_CONFIGURED,
     STATUS_NOT_CONFIGURED,
     AiHealthSummary,
     AiModelsSummary,
@@ -117,27 +116,68 @@ class AiCore:
         return self._default_provider
 
     def build_gateway(self, config: ProviderConfig) -> LanguageModelGateway:
-        """Construct a gateway for an ad-hoc config (delegates to the
-        registry). Kept for completeness; production selection uses the
-        pre-built provider-id-keyed catalogue."""
-        return self._registry.build(config)
+        """DISABLED. Gateway construction outside the catalogue is a
+        configuration-authority bypass (ADR-001); production MUST resolve
+        providers through :meth:`select_provider` / :meth:`gateway`. Retained
+        only so older callers fail loudly instead of silently building an
+        untracked gateway."""
+        raise UnknownProviderError(
+            "AiCore.build_gateway is disabled: resolve providers through "
+            "AiCore.gateway / AiCore.select_provider (ADR-001)."
+        )
+
+    # ------------------------------------------------------- runtime default
+    def effective_default_provider(self) -> str:
+        """The runtime-effective default provider id (what ``select_provider``
+        uses with no override/pin). Falls back to the configured default name
+        when no provider is resolvable, so config/runtime/health agree."""
+        if self._default_provider and self._default_provider in self._gateways:
+            return self._default_provider
+        return self._config.default_provider
+
+    def effective_default_model(self) -> str:
+        """The model of the runtime-effective default provider (else the
+        configured ``AI_DEFAULT_MODEL``)."""
+        gateway = self._effective_gateway()
+        if gateway is not None:
+            models = gateway.list_models()
+            if models:
+                return models[0].model_id
+        return self._config.default_model
+
+    def _effective_gateway(self):
+        if self._default_provider and self._default_provider in self._gateways:
+            return self._gateways[self._default_provider]
+        return None
+
+    def _default_is_misconfigured(self) -> bool:
+        """True when a default was explicitly configured but is neither a
+        resolvable provider nor a known kind (a genuine config error)."""
+        configured = self._config.default_provider or ""
+        if not configured:
+            return False
+        if configured in self._gateways:
+            return False
+        return configured not in PROVIDER_KINDS
 
     # ------------------------------------------------------- health surface
     def health_summary(self) -> AiHealthSummary:
+        effective = self._effective_gateway()
+        default_executable = effective is not None and effective.health().configured
         if not self._config.enabled:
             status = HEALTH_DISABLED
-        elif not self._config.default_provider_valid:
+        elif self._default_is_misconfigured():
             status = HEALTH_ERROR
-        elif self._configured_kinds() > 0:
+        elif default_executable:
             status = HEALTH_OK
         else:
             status = HEALTH_NOT_CONFIGURED
         return AiHealthSummary(
             status=status,
             ai_enabled=self._config.enabled,
-            default_provider=self._config.default_provider,
-            default_model=self._config.default_model,
-            default_provider_valid=self._config.default_provider_valid,
+            default_provider=self.effective_default_provider(),
+            default_model=self.effective_default_model(),
+            default_provider_valid=default_executable,
             providers_total=len(self._provider_order),
             providers_configured=self._configured_kinds(),
             feature_flags=dict(self._config.feature_flags),
@@ -145,26 +185,27 @@ class AiCore:
         )
 
     def provider_records(self) -> tuple[ProviderRecord, ...]:
-        """One record per discovery KIND, aggregating its providers. A kind
-        with no providers yields an honest ``not_configured`` discovery row."""
+        """One row per configured PROVIDER (keyed by its provider_id), so
+        multiple providers of the same kind stay distinguishable. A kind with
+        no providers yields an honest ``not_configured`` discovery row keyed
+        by the kind."""
         records: list[ProviderRecord] = []
         for kind in self._provider_order:
             providers = [gw for gw in self._gateways.values() if _gateway_kind(gw) == kind]
             if providers:
-                models = tuple(m for gw in providers for m in gw.list_models())
-                configured = any(gw.health().configured for gw in providers)
-                ref_health = providers[0].health()
-                records.append(
-                    ProviderRecord(
-                        provider_id=kind,
-                        display_name=ref_health.display_name,
-                        kind=kind,
-                        status=STATUS_CONFIGURED if configured else STATUS_NOT_CONFIGURED,
-                        configured=configured,
-                        models=models,
-                        detail=ref_health.detail,
+                for gateway in providers:
+                    health = gateway.health()
+                    records.append(
+                        ProviderRecord(
+                            provider_id=health.provider_id,
+                            display_name=health.display_name,
+                            kind=health.kind,
+                            status=health.status,
+                            configured=health.configured,
+                            models=gateway.list_models(),
+                            detail=health.detail,
+                        )
                     )
-                )
             else:
                 records.append(
                     ProviderRecord(

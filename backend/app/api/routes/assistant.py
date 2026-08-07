@@ -223,7 +223,8 @@ class AskBody(StrictBody):
     question: str
     conversation_id: str | None = None
     asked_by: str | None = None
-    model_id: str | None = None  # S7 M2: per-request model override
+    provider_id: str | None = None  # M11.3.1: the provider selection key
+    model_id: str | None = None  # DEPRECATED alias for provider_id (legacy API)
 
 
 class CreateConversationBody(StrictBody):
@@ -360,8 +361,8 @@ def ask_question_stream(
         assert_valid_ask_input(command.input)
         # Eager provider validation (ADR-001): an unknown override fails fast
         # with 422 instead of mid-stream. The AI Core is the single authority.
-        if command.input.model_id and not ai_core.has_provider(command.input.model_id):
-            raise _unprocessable(ValueError(f"Unknown model: {command.input.model_id}"))
+        if command.input.provider_id and not ai_core.has_provider(command.input.provider_id):
+            raise _unprocessable(ValueError(f"Unknown provider: {command.input.provider_id}"))
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
 

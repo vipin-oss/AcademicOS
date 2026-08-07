@@ -92,7 +92,7 @@ class AskQuestionUseCase:
         model selection (Sprint-7 M2)."""
         assert_valid_ask_input(command.input)
         obj, question, asked_by = self._prepare(command)
-        provider = self._select_provider(obj, command.input.model_id)
+        provider = self._select_provider(obj, command.input.provider_id)
         _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
         answer = provider.answer(question, asked_by, **kwargs)
         return self._finalize(obj, question, answer, citations, asked_by)
@@ -112,7 +112,7 @@ class AskQuestionUseCase:
         """
         assert_valid_ask_input(command.input)
         obj, question, asked_by = self._prepare(command)
-        provider = self._select_provider(obj, command.input.model_id)
+        provider = self._select_provider(obj, command.input.provider_id)
         _context, citations, kwargs = self._call_kwargs(obj, question, asked_by)
         stream_fn = getattr(provider, "stream", None)
         if stream_fn is None:
@@ -140,9 +140,9 @@ class AskQuestionUseCase:
             obj = create_conversation_object(
                 self._repository, "New conversation", command.input.asked_by, title_auto=True
             )
-        if self._ai_core is not None and command.input.model_id is not None:
+        if self._ai_core is not None and command.input.provider_id is not None:
             # An explicit override re-pins the conversation.
-            self._bind_provider(obj, command.input.model_id)
+            self._bind_provider(obj, command.input.provider_id)
         return obj, command.input.question.strip(), command.input.asked_by
 
     def _bind_provider(self, obj: UniversalObject, requested: str | None) -> None:
@@ -150,7 +150,7 @@ class AskQuestionUseCase:
         owns selection). The resolved provider (override > pin > default)
         becomes the conversation's provider, stored as L1/SYSTEM metadata,
         persisting across follow-ups. An explicit override always re-pins."""
-        current = obj.metadata.get_value(dto.KEY_MODEL_ID)
+        current = self._pinned_provider_id(obj)
         if current and not requested:
             return  # already pinned; no override requested
         provider_id = self._ai_core.select_provider(  # type: ignore[union-attr]
@@ -166,7 +166,7 @@ class AskQuestionUseCase:
 
         obj.set_metadata(
             MetadataEntry(
-                dto.KEY_MODEL_ID, provider_id, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
+                dto.KEY_PROVIDER_ID, provider_id, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM
             ),
             actor="system",
         )
@@ -181,7 +181,7 @@ class AskQuestionUseCase:
         """
         if self._ai_core is None or self._provider_factory is None:
             return self._provider
-        pinned = obj.metadata.get_value(dto.KEY_MODEL_ID)
+        pinned = self._pinned_provider_id(obj)
         if not requested and not pinned and self._provider is not None:
             # No pin, no override: the injected default provider (the route's
             # default) is authoritative; this preserves test overrides. With
@@ -193,6 +193,16 @@ class AskQuestionUseCase:
         if not pinned:
             self._bind_provider(obj, provider_id)
         return provider
+
+    def _pinned_provider_id(self, obj: UniversalObject) -> str | None:
+        """The conversation's pinned provider id. Reads the canonical key
+        (``assistant.provider_id``) and falls back to the legacy
+        ``assistant.model_id`` key for conversations stored before M11.3.1."""
+        return (
+            obj.metadata.get_value(dto.KEY_PROVIDER_ID)
+            or obj.metadata.get_value(dto.KEY_MODEL_ID)
+            or None
+        )
 
     def _call_kwargs(
         self, obj: UniversalObject, question: str, asked_by: str

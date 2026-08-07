@@ -555,7 +555,7 @@ def test_model_selection_over_http_pin_override_invalid(harness):
         conv_id = out["conversation"]["id"]
         assert captured["models"] == ["model-main"]
         stored = repo.get_by_id(ObjectId(conv_id))
-        assert stored.metadata.get_value("assistant.model_id") == "main"
+        assert stored.metadata.get_value("assistant.provider_id") == "main"
 
         # 2. Follow-up reuses the pin (same provider, no override needed).
         captured["models"].clear()
@@ -567,7 +567,7 @@ def test_model_selection_over_http_pin_override_invalid(harness):
         _ask(client, "find quantum", conversation_id=conv_id, model_id="alt")
         assert captured["models"] == ["model-alt"]
         stored = repo.get_by_id(ObjectId(conv_id))
-        assert stored.metadata.get_value("assistant.model_id") == "alt"
+        assert stored.metadata.get_value("assistant.provider_id") == "alt"
 
         # 4. Unknown model -> 422 (sync and stream).
         res = client.post(f"{API}/ask", json={

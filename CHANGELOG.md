@@ -1,3 +1,39 @@
+# AcademicOS — Sprint M11.3.1 Changelog (Production Correctness Hardening)
+
+Release: **M11.3.1** · Baseline `e7c1d8e` (M11.3) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **correctness fixes only — no architecture redesign, no new capabilities, no new SDKs.**
+
+Resolves the production-correctness / runtime-semantics findings of the
+hostile audit of M11.3. The AI Core is internally consistent: provider
+identity is unambiguous, model selection is correct, `AI_DEFAULT_MODEL` matches
+runtime, and health reflects actual executability.
+
+## Fixes
+
+| Audit finding | Fix |
+|---|---|
+| #1 Provider/model/kind contract ambiguity | `provider_id` is the configured catalogue identity (a gateway property), DISTINCT from `kind`; the assistant selects by `provider_id` (`model_id` kept as a deprecated alias resolved in `__post_init__`); the conversation pin is stored under `assistant.provider_id` (legacy `assistant.model_id` still read). |
+| #2 `AI_DEFAULT_MODEL` ignored at runtime | `_resolve_default_provider_id` now honours `AI_DEFAULT_MODEL` (the provider whose model matches becomes the default); `AI_DEFAULT_PROVIDER` takes precedence over the legacy setting. Health surfaces the effective default model. |
+| #3 Provider identity inconsistency | Health rows are keyed by `provider_id` (one row per provider); `ProviderHealth.provider_id` == `ModelInfo.provider_id`; multiple providers of the same kind are distinguishable. |
+| #4 Misleading health | `/ai/health` reports the EFFECTIVE default provider; `default_provider_valid` is True only when the default is actually executable; `status` is never `ok` when the selected provider cannot run. |
+| #5 Compatibility bypass | `AiCore.build_gateway` is disabled (gateways come only from the catalogue). New guardrail: `api/` and `application/` never import the bypass constructors (`LlmAssistantProvider`, `build_gateway_from_params`). |
+| #6 Semantic guardrails | New `test_production_provider_isolation` + `test_ai_runtime_contract` (runtime: identity, multi-provider distinguishability, selection precedence, `AI_DEFAULT_MODEL` influence, health/runtime consistency). |
+| #7 Documentation | Developer guide + `config.py` comments corrected to match the implementation; no over-claimed capabilities. |
+
+## What did NOT change
+
+- No architecture redesign; no new AI capabilities / SDKs; `RuleBasedAssistantProvider` / `FallbackAssistantProvider` untouched.
+- API surface additions are backward-compatible (`provider_id` added; `model_id` retained as alias; legacy conversations still resolve).
+
+## Verification
+
+- Backend: **1379 passed, 2 skipped** (zero regressions; +13 new tests)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16**
+- `ruff check --select F401,I001` clean; app boots (264 routes)
+
+---
+
 # AcademicOS — Sprint M11.3 Changelog (AI Core Configuration Authority & OpenAI Hardening)
 
 Release: **M11.3** · Baseline `01a9f04` (M11.2.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

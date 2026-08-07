@@ -96,7 +96,9 @@ class OpenAIProvider:
     behaves as the honest "not configured" gateway.
     """
 
-    provider_id = PROVIDER_KIND_OPENAI
+    # ``kind`` is the family (openai); ``provider_id`` (property below) is the
+    # configured catalogue identity - they are distinct, and multiple providers
+    # of the same kind stay distinguishable by provider_id.
     display_name = "OpenAI"
     kind = PROVIDER_KIND_OPENAI
     # Only the capabilities actually implemented here (ADR-001: do not fake).
@@ -119,6 +121,16 @@ class OpenAIProvider:
         self._owned_client: httpx.Client | None = None
 
     # ------------------------------------------------------------- identity
+    @property
+    def provider_id(self) -> str:
+        """The configured provider identity (the catalogue ``provider_id``),
+        NOT the kind. Falls back to the kind only for the unconfigured
+        discovery case (no config). Multiple providers of the same kind stay
+        distinguishable by provider_id."""
+        if self._config is not None and self._config.provider_id:
+            return self._config.provider_id
+        return self.kind
+
     @property
     def model(self) -> str:
         return self._config.model if self._config is not None else ""

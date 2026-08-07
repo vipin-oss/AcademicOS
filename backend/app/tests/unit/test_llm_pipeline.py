@@ -696,7 +696,7 @@ def test_conversation_pins_default_model_and_persists(db, repo):
     assert captured["model"] == "model-main"
     conv_id = str(first.conversation.id)
     stored = repo.get_by_id(ObjectId(conv_id))
-    assert stored.metadata.get_value("assistant.model_id") == "main"
+    assert stored.metadata.get_value("assistant.provider_id") == "main"
 
     # Follow-up WITHOUT an override reuses the pin.
     captured.clear()
@@ -719,7 +719,7 @@ def test_request_override_replaces_model_and_repins(db, repo):
     assert captured["model"] == "model-alt"
     conv_id = str(first.conversation.id)
     stored = repo.get_by_id(ObjectId(conv_id))
-    assert stored.metadata.get_value("assistant.model_id") == "alt"  # re-pinned
+    assert stored.metadata.get_value("assistant.provider_id") == "alt"  # re-pinned
 
     # Follow-up without override now uses the new pin.
     captured.clear()
