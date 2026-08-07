@@ -105,7 +105,7 @@ DEFERRED_STAGE_MILESTONES: dict[IntakeStage, str] = {
     IntakeStage.PROPOSE: "M8 (proposal engine)",
 }
 
-#: Terminal item statuses for M1 (commit arrives with the proposal engine).
+#: Terminal item statuses (commit is delivered by the M9 review workflow).
 TERMINAL_ITEM_STATUSES: frozenset[IntakeItemStatus] = frozenset(
     {IntakeItemStatus.AWAITING_REVIEW, IntakeItemStatus.ERROR, IntakeItemStatus.REJECTED}
 )

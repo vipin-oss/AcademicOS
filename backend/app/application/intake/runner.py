@@ -559,7 +559,7 @@ class IntakeRunner:
                     + (f"; {unsupported} unsupported (kept staged)" if unsupported else "")
                     + "."
                 )
-            summary += " Files await your review; commit arrives with the proposal engine (M9)."
+            summary += " Files await your review; approve them to commit and index (M9)."
 
         stored = json_decode(session.metadata.get_value(KEY_STATISTICS), {})
         # Cooperative control wins the finish line: every other boundary in
