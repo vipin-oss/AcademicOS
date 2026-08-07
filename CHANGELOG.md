@@ -1,3 +1,33 @@
+# AcademicOS — Sprint M11.3.2 Changelog (Final Production Contract Hardening)
+
+Release: **M11.3.2** · Baseline `0afde47` (M11.3.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07
+Status: **production-contract hardening only — no architecture redesign, no new capabilities. Final hardening before M11 freeze.**
+
+Closes the remaining production-contract / operational findings of the hostile
+audit. Runtime identity is fully consistent across the public APIs, health
+separates configured/executable/operational, and the AI Core owns the gateway
+lifecycle.
+
+## Fixes
+
+| # | Finding | Fix |
+|---|---|---|
+| 1, 5 | Runtime identity disagreement (`/ai/models` used the raw config default) | `model_records` now uses the **runtime-effective** default (same source as `health_summary`); `/ai/health` and `/ai/models` never disagree on provider/model. |
+| 2 | Health conflated configured/executable/operational | `ProviderHealth`/`ProviderRecord` distinguish **configured** (declared), **executable** (can run) and **operational** (None — no live probe). `status` "ok" / `default_provider_valid` require EXECUTABLE, never mere config. |
+| 3 | Compatibility seam | Legacy test-injection ctor + `build_gateway_from_params` deprecated + isolated (architecture guardrail; production never imports them). |
+| 4 | Gateway lifecycle not owned | `AiCore.close()` owns gateway cleanup; `get_ai_core` is a lazy singleton so httpx clients are reused (one consistent lifecycle), not leaked per request. No shutdown manager (by design). |
+| 6 | Runtime contract tests | +8 tests: health/models agreement, three-state health, lifecycle ownership. |
+| 7 | Documentation | README + developer guide corrected to match the implementation; no over-claimed capabilities. |
+
+## Verification
+
+- Backend: **1387 passed, 2 skipped** (zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16**
+- `ruff check --select F401,I001` clean; app boots (264 routes)
+
+---
+
 # AcademicOS — Sprint M11.3.1 Changelog (Production Correctness Hardening)
 
 Release: **M11.3.1** · Baseline `e7c1d8e` (M11.3) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

@@ -73,6 +73,8 @@ class AiProviderResponseModel(BaseModel):
     kind: str
     status: str
     configured: bool
+    executable: bool = False
+    operational: bool | None = None
     models: list[AiModelResponseModel] = Field(default_factory=list)
     detail: str = ""
 

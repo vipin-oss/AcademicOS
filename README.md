@@ -45,26 +45,29 @@ and `backend/.env.example`.
 | Vector DB | Qdrant (optional — search degrades to lexical-only) |
 | Auth | JWT (access + refresh), bcrypt, role-based access |
 | Storage | Local filesystem adapter (Google Drive / OneDrive slots reserved) |
-| AI Core (M11.1) | Provider-independent `LanguageModelGateway` port · provider registry (OpenAI / Anthropic / Google / Ollama / Local placeholders) · health API · no LLM calls yet |
+| AI Core (M11.1–M11.3.2) | Provider-independent `LanguageModelGateway` port · AI Core authority (provider/model/config/credentials/selection) · real OpenAI-compatible adapter (the others placeholders) · three-state health (configured/executable/operational) · no chat/RAG/memory/agents/embeddings yet |
 
-## AI Foundation (Sprint M11.1)
+## AI Core (M11.1 – M11.3.2)
 
-AcademicOS's AI Core is in place as **infrastructure only**: a
-provider-independent gateway port, a provider registry with five honest
-"Not Configured" placeholders, central AI configuration, and a JSON
-health surface.
+AcademicOS's AI Core is the single authority for provider/model/config/
+credentials/selection and runtime execution (ADR-001). It owns a
+provider-id-keyed catalogue built from `AI_PROVIDERS_JSON` (with deprecated
+`ASSISTANT_*` compatibility), a real OpenAI-compatible adapter (the single
+owner of generative transport; Anthropic/Google/Ollama/Local remain honest
+"Not Configured" placeholders until their sprints), and a three-state health
+surface that distinguishes **configured** (declared), **executable** (can run)
+and **operational** (verified — None, since no live probe is performed).
 
-- `GET /api/v1/ai/health` — aggregate AI health (public)
-- `GET /api/v1/ai/providers` — provider catalogue (authenticated)
-- `GET /api/v1/ai/models` — model catalogue (authenticated)
+- `GET /api/v1/ai/health` — aggregate runtime health + the effective default (public)
+- `GET /api/v1/ai/providers` — one row per provider, keyed by `provider_id` (authenticated)
+- `GET /api/v1/ai/models` — aggregated models + the effective default (authenticated)
 - UI: **Settings → AI Settings** (`/settings/ai`)
 
-No generation, chat, RAG, memory, agents or embeddings exist yet — every
-capability flag is OFF and no LLM is called. Future sprints add providers
-by implementing only an adapter (see `AI_DEVELOPER_GUIDE.md`).
-
-Configuration lives in `backend/.env.example` under the `AI_*` keys
-(`AI_PROVIDERS_JSON`, `AI_DEFAULT_PROVIDER`, feature flags, …).
+The assistant resolves providers through the AI Core (`AiCore.select_provider`
+/ `AiCore.gateway`); it constructs no provider or `ProviderConfig`. **No chat,
+RAG, memory, agents or embeddings exist yet** — those capability flags are OFF.
+Future sprints add providers by implementing only an adapter (see
+`AI_DEVELOPER_GUIDE.md`).
 
 ## Repository Layout
 

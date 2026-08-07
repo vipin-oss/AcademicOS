@@ -159,27 +159,24 @@ class OpenAIProvider:
     # ------------------------------------------------------------- health
     def health(self) -> ProviderHealth:
         models = self.list_models()
-        if self._is_configured:
-            return ProviderHealth(
-                provider_id=self.provider_id,
-                display_name=self.display_name,
-                kind=self.kind,
-                status=STATUS_CONFIGURED,
-                configured=True,
-                models_configured=len(models),
-                detail="OpenAI-compatible endpoint configured (base_url is set).",
-                checked_at=_utcnow_iso(),
+        executable = self._is_configured  # real adapter + base_url
+        declared = self._config is not None  # a config entry exists
+        if executable:
+            detail = "OpenAI-compatible endpoint configured (base_url is set)."
+        else:
+            detail = NOT_CONFIGURED_DETAIL.format(
+                provider_id=self.provider_id, kind=self.kind
             )
         return ProviderHealth(
             provider_id=self.provider_id,
             display_name=self.display_name,
             kind=self.kind,
-            status=STATUS_NOT_CONFIGURED,
-            configured=False,
+            status=STATUS_CONFIGURED if executable else STATUS_NOT_CONFIGURED,
+            configured=declared,
+            executable=executable,
+            operational=None,  # no live probe; operational state is honestly unknown
             models_configured=len(models),
-            detail=NOT_CONFIGURED_DETAIL.format(
-                provider_id=self.provider_id, kind=self.kind
-            ),
+            detail=detail,
             checked_at=_utcnow_iso(),
         )
 

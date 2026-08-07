@@ -156,3 +156,61 @@ class TestHealthRuntimeConsistency:
         summary = core.health_summary()
         assert summary.status == "error"
         assert summary.default_provider_valid is False
+
+
+class TestPublicApiIdentityAgreement:
+    def test_health_and_models_agree_on_defaults(self):
+        core = _core({"oa": _gw("oa", "gpt-4o-mini", "http://x/v1")}, default_provider="oa")
+        h = core.health_summary()
+        m = core.model_records()
+        assert h.default_provider == m.default_provider == "oa"
+        assert h.default_model == m.default_model == "gpt-4o-mini"
+
+    def test_provider_records_and_health_share_identity(self):
+        core = _core({"oa": _gw("oa", "gpt-4o-mini", "http://x/v1")}, default_provider="oa")
+        record = core.provider_records()[0]
+        gw_health = core.gateway("oa").health()
+        assert record.provider_id == gw_health.provider_id == "oa"
+        assert record.executable == gw_health.executable is True
+
+
+class TestThreeStateHealth:
+    def test_declared_and_executable(self):
+        h = _gw("oa", base_url="http://x/v1").health()
+        assert h.configured is True   # declared
+        assert h.executable is True   # can run
+        assert h.operational is None  # not probed
+
+    def test_declared_but_not_executable(self):
+        gw = OpenAIProvider(ProviderConfig(provider_id="oa2", kind="openai", model="m"))
+        h = gw.health()
+        assert h.configured is True    # declared (config exists)
+        assert h.executable is False   # no endpoint
+        assert h.status == "not_configured"
+
+    def test_discovery_not_declared(self):
+        h = OpenAIProvider().health()
+        assert h.configured is False
+        assert h.executable is False
+
+    def test_status_ok_requires_executable_not_mere_config(self):
+        # default declared but not executable -> not ok
+        core = _core({"oa": _gw("oa", base_url="")}, default_provider="oa")
+        assert core.health_summary().status == "not_configured"
+        assert core.health_summary().default_provider_valid is False
+
+
+class TestLifecycleOwnership:
+    def test_aicore_close_releases_gateway_clients(self):
+        gw = _gw("oa", base_url="http://x/v1")
+        gw._client_or_build()  # force creation of the owned httpx client
+        assert gw._owned_client is not None
+        core = _core({"oa": gw}, default_provider="oa")
+        core.close()
+        assert gw._owned_client is None  # AI Core owned + released the lifecycle
+
+    def test_close_is_idempotent(self):
+        gw = _gw("oa", base_url="http://x/v1")
+        core = _core({"oa": gw}, default_provider="oa")
+        core.close()
+        core.close()  # must not raise

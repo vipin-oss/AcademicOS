@@ -2528,6 +2528,8 @@ export interface AiProviderInfo {
   kind: string;
   status: "configured" | "not_configured" | "error";
   configured: boolean;
+  executable: boolean;
+  operational: boolean | null;
   models: AiModelInfo[];
   detail: string;
 }

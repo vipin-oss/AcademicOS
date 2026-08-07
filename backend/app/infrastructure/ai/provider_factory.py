@@ -86,7 +86,11 @@ def build_gateway_from_params(
     retry_attempts: int = RETRY_ATTEMPTS,
     retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
 ) -> LanguageModelGateway:
-    """Construct a gateway from raw parameters (AI Core owns the config).
+    """DEPRECATED test-injection seam (M11.3.2). Construct a gateway from raw
+    parameters (AI Core owns the config). Used only by the assistant
+    translator's legacy test constructor; isolated from production by
+    test_production_provider_isolation. Production gateways come only from the
+    catalogue via build_ai_core.
 
     The configuration-authority seam: ``ProviderConfig`` is constructed HERE
     (inside the AI Core), never by a feature. Used by the assistant

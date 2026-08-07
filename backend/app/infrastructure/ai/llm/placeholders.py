@@ -72,7 +72,9 @@ class NotConfiguredGateway:
             display_name=self.display_name,
             kind=self.kind,
             status=STATUS_NOT_CONFIGURED,
-            configured=False,
+            configured=self._config is not None,  # declared
+            executable=False,  # no real adapter is wired
+            operational=None,
             models_configured=len(models),
             detail=NOT_CONFIGURED_DETAIL.format(
                 provider_id=self.provider_id, kind=self.kind

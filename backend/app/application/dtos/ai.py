@@ -253,15 +253,26 @@ class StructuredGenerationResult:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ProviderHealth:
-    """Per-provider health as reported by the gateway."""
+    """Per-provider health as reported by the gateway.
+
+    Three distinct runtime states (M11.3.2):
+    - ``configured``  — the provider is DECLARED in configuration (an entry exists).
+    - ``executable``  — the gateway can actually run (a real adapter + endpoint).
+    - ``operational`` — the endpoint is verified reachable (None = not probed;
+      AcademicOS performs no live health probe, so this is honestly unknown).
+    Readiness (status "ok" / ``executable``) is never claimed merely because a
+    configuration entry exists.
+    """
 
     provider_id: str
     display_name: str
     kind: str
     status: str
     configured: bool
-    models_configured: int
-    detail: str
+    executable: bool = False
+    operational: bool | None = None
+    models_configured: int = 0
+    detail: str = ""
     checked_at: str = ""
 
     def __post_init__(self) -> None:
@@ -280,6 +291,8 @@ class ProviderRecord:
     kind: str
     status: str
     configured: bool
+    executable: bool = False
+    operational: bool | None = None
     models: tuple[ModelInfo, ...] = ()
     detail: str = ""
 
@@ -318,6 +331,8 @@ def provider_record_dict(record: ProviderRecord) -> dict:
         "kind": record.kind,
         "status": record.status,
         "configured": record.configured,
+        "executable": record.executable,
+        "operational": record.operational,
         "models": [model_info_dict(m) for m in record.models],
         "detail": record.detail,
     }

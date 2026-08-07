@@ -73,7 +73,10 @@ class LlmAssistantProvider:
         retry_attempts: int = RETRY_ATTEMPTS,
         retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
     ) -> None:
-        # Duck-typed detection keeps this module free of an httpx import.
+        # NOTE: the client/model/base_url form is a DEPRECATED test-injection
+        # seam (M11.3.2). It is isolated from production by
+        # test_production_provider_isolation (api/application never import this
+        # class). Production uses the gateway form with an AiCore gateway.
         if hasattr(gateway_or_client, "generate") and hasattr(
             gateway_or_client, "stream"
         ):

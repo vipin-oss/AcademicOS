@@ -52,7 +52,9 @@ class _FakeGateway:
             display_name=self.display_name,
             kind=self.kind,
             status=STATUS_CONFIGURED if self._configured else STATUS_NOT_CONFIGURED,
-            configured=self._configured,
+            configured=True,  # declared (fakes represent real catalogue entries)
+            executable=self._configured,  # can actually run
+            operational=None,
             models_configured=len(self._models),
             detail=self._detail,
             checked_at="2026-08-07T00:00:00+00:00",
@@ -158,7 +160,7 @@ class TestAiCoreProviders:
         records = core.provider_records()
         assert [r.provider_id for r in records] == ["google", "openai", "local"]
         assert all(r.status == STATUS_NOT_CONFIGURED for r in records)
-        assert all(r.configured is False for r in records)
+        assert all(r.executable is False for r in records)  # not ready to run
 
     def test_provider_record_carries_models(self):
         local = _FakeGateway(

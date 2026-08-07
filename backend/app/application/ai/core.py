@@ -80,6 +80,21 @@ class AiCore:
         """Configured provider ids in declaration order (for selection)."""
         return tuple(self._gateways)
 
+    def close(self) -> None:
+        """Release gateway resources (e.g. httpx clients) owned by the AI Core.
+
+        The AI Core owns the gateway lifecycle (ADR-001 - M11.3.2): one
+        consistent lifecycle for every gateway it holds. Best-effort — a
+        gateway without ``close()`` (placeholders, fakes) is skipped.
+        """
+        for gateway in self._gateways.values():
+            close = getattr(gateway, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - cleanup must not raise
+                    pass
+
     def has_provider(self, provider_id: str) -> bool:
         return provider_id in self._gateways
 
@@ -163,7 +178,7 @@ class AiCore:
     # ------------------------------------------------------- health surface
     def health_summary(self) -> AiHealthSummary:
         effective = self._effective_gateway()
-        default_executable = effective is not None and effective.health().configured
+        default_executable = effective is not None and effective.health().executable
         if not self._config.enabled:
             status = HEALTH_DISABLED
         elif self._default_is_misconfigured():
@@ -179,7 +194,7 @@ class AiCore:
             default_model=self.effective_default_model(),
             default_provider_valid=default_executable,
             providers_total=len(self._provider_order),
-            providers_configured=self._configured_kinds(),
+            providers_configured=self._executable_kinds(),
             feature_flags=dict(self._config.feature_flags),
             checked_at=_utcnow_iso(),
         )
@@ -202,6 +217,8 @@ class AiCore:
                             kind=health.kind,
                             status=health.status,
                             configured=health.configured,
+                            executable=health.executable,
+                            operational=health.operational,
                             models=gateway.list_models(),
                             detail=health.detail,
                         )
@@ -221,22 +238,28 @@ class AiCore:
         return tuple(records)
 
     def model_records(self) -> AiModelsSummary:
-        """The aggregated model catalogue across all configured providers."""
+        """The aggregated model catalogue across all configured providers.
+
+        The defaults are the RUNTIME-EFFECTIVE ones (same source as
+        :meth:`health_summary`), so ``/ai/models`` and ``/ai/health`` never
+        disagree on provider/model identity."""
         models: list[ModelInfo] = []
         for gateway in self._gateways.values():
             models.extend(gateway.list_models())
         return AiModelsSummary(
-            default_provider=self._config.default_provider,
-            default_model=self._config.default_model,
+            default_provider=self.effective_default_provider(),
+            default_model=self.effective_default_model(),
             models=tuple(models),
         )
 
     # ------------------------------------------------------------ internals
-    def _configured_kinds(self) -> int:
-        configured_kinds = {
-            _gateway_kind(gw) for gw in self._gateways.values() if gw.health().configured
+    def _executable_kinds(self) -> int:
+        """Count discovery kinds that have at least one EXECUTABLE provider
+        (real adapter + endpoint) — the runtime-readiness count."""
+        executable_kinds = {
+            _gateway_kind(gw) for gw in self._gateways.values() if gw.health().executable
         }
-        return sum(1 for kind in self._provider_order if kind in configured_kinds)
+        return sum(1 for kind in self._provider_order if kind in executable_kinds)
 
 
 def _gateway_kind(gateway: LanguageModelGateway) -> str:

@@ -210,7 +210,7 @@ export function AiSettingsView() {
               </div>
               <span
                 className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-                  provider.configured
+                  provider.executable
                     ? "border-[var(--success)] bg-[var(--success-subtle)] text-[var(--success)]"
                     : "border-[var(--border-subtle)] text-[var(--text-tertiary)]"
                 }`}
