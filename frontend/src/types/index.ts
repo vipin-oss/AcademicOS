@@ -57,6 +57,11 @@ export type DocumentTypeValue =
   | "zip"
   | "image"
   | "video"
+  | "png"
+  | "jpg"
+  | "jpeg"
+  | "tiff"
+  | "svg"
   | "unknown";
 
 /**
@@ -2434,4 +2439,50 @@ export interface AuthUser {
 export interface ForgotPasswordResult {
   reset_token: string;
   expires_in_seconds: number;
+}
+
+// ---------------------------------------------------------------------------
+// Document viewer & annotations (Sprint M10)
+// ---------------------------------------------------------------------------
+export type AnnotationType = "highlight" | "note" | "bookmark";
+
+export interface AnnotationRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface HighlightPayload {
+  rects: AnnotationRect[];
+  text?: string;
+}
+
+export interface NotePayload {
+  text: string;
+  x?: number;
+  y?: number;
+}
+
+export interface BookmarkPayload {
+  label?: string;
+}
+
+export type AnnotationPayload = HighlightPayload | NotePayload | BookmarkPayload;
+
+export interface DocumentAnnotation {
+  annotation_id: string;
+  document_id: string;
+  annotation_type: AnnotationType;
+  page: number;
+  payload: AnnotationPayload;
+  created_by: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface ExtractedTextResponse {
+  text: string;
+  session_id: string;
+  item_id: string;
 }

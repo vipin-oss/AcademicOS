@@ -18,7 +18,10 @@ import { TopHeader } from "@/components/layout/TopHeader";
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
 import { DocumentHeader } from "@/components/features/documents/DocumentHeader";
 import { DocumentMetadata } from "@/components/features/documents/DocumentMetadata";
+import { CitationPanel } from "@/components/features/documents/CitationPanel";
+import { KgLinks } from "@/components/features/documents/KgLinks";
 import { DocumentPreview } from "@/components/features/documents/DocumentPreview";
+import { DocumentViewer } from "@/components/features/documents/DocumentViewer";
 import { EmptyState } from "@/components/features/objects/EmptyState";
 import { DetailSkeleton } from "@/components/features/objects/LoadingSkeleton";
 import {
@@ -315,8 +318,11 @@ export default function DocumentDetailsPage() {
                 </div>
 
                 <Section title="Preview">
-                  <DocumentPreview document={document} />
+                  <DocumentViewer document={document} />
                 </Section>
+
+                <CitationPanel document={document} currentPage={1} selection="" />
+                <KgLinks document={document} />
               </div>
             ) : null}
           </div>

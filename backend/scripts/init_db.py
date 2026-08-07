@@ -28,6 +28,9 @@ if str(BACKEND_ROOT) not in sys.path:
 import sqlalchemy as sa
 
 # Register every table before ``Base.metadata.create_all``.
+from app.infrastructure.db.models.annotation_model import (  # noqa: F401
+    DocumentAnnotationModel,
+)
 from app.infrastructure.db.models.eval_run_model import EvalRunModel  # noqa: F401
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.models.object_relationship_model import (  # noqa: F401
@@ -44,7 +47,7 @@ from app.infrastructure.db.models.search_document_model import (  # noqa: F401
     SearchDocumentModel,
 )
 
-CURRENT_MIGRATION = "0007_review_decisions"
+CURRENT_MIGRATION = "0008_document_annotations"
 
 
 def main() -> None:

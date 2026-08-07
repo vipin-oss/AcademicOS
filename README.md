@@ -66,3 +66,64 @@ academicos/
 
 See `AcademicOS_Execution_Roadmap.md` for the delivery history and
 `AcademicOS_Engineering_Review.md` for engineering decisions.
+
+---
+
+## Windows Development Automation (Sprint M10.1)
+
+AcademicOS ships one-command PowerShell tooling for Windows 10/11
+(PowerShell 5.1+). From the project root:
+
+| Command | Purpose |
+|---|---|
+| `.\start.ps1` | Verify/start PostgreSQL, Docker Desktop + Engine, Qdrant; install missing deps; run migrations; start backend + frontend; open http://localhost:3000 |
+| `.\stop.ps1` | Gracefully stop backend + frontend (+ optional Qdrant container). PostgreSQL is never touched |
+| `.\health.ps1` | PASS/FAIL for PostgreSQL, DB connection, Docker, Qdrant, backend, frontend, storage, Alembic, node_modules, Python packages |
+| `.\apply_patch.ps1 AcademicOS_M11_Patch.zip` | Apply an incremental patch ZIP with backup, extract, replace, manifest-deleted files, conflict detection, summary + exit code |
+| `scripts\windows\reset_academicos.ps1` | Interactive menu (frontend / backend / database / Qdrant / everything) with confirmation |
+| `scripts\windows\validate_environment.ps1` | Detect missing Python / Node / npm / Docker / PostgreSQL / Git / ports / deps with fix instructions |
+
+### First-time setup
+
+1. Install Python 3.11+, Node 18+ LTS, Docker Desktop, Git (see `validate_environment.ps1`).
+2. `.\validate_environment.ps1` — resolves any missing tooling.
+3. `.\start.ps1` — provisions everything (installs deps, initialises the DB,
+   starts services) and opens the app.
+
+### Daily startup
+
+```
+.\start.ps1
+```
+
+### Daily shutdown
+
+```
+.\stop.ps1
+```
+
+### Applying future patches
+
+```
+.\apply_patch.ps1 AcademicOS_M11_Patch.zip
+```
+
+The script backs up every replaced file, extracts the patch preserving
+paths, applies it, deletes obsolete files from `PATCH_MANIFEST.md`, prints
+Added / Modified / Deleted / Failed counts, and exits 0 on success (non-zero
+on failure). Run `cd frontend && npm install` and `cd backend && alembic
+upgrade head` when the manifest reports new dependencies or migrations.
+
+### Health check
+
+```
+.\health.ps1
+```
+
+### Troubleshooting
+
+- **Backend won't start** — `$env:TEMP\academicos_backend.log`
+- **Frontend won't start** — `$env:TEMP\academicos_frontend.log`
+- **Qdrant unreachable** — `docker start academicos-qdrant` (or re-run `.\start.ps1`)
+- **Ports in use** — stop other dev servers; `stop_academicos.ps1` clears 8000/3000
+- **DB reset** — `scripts\windows\reset_academicos.ps1` (option 3)

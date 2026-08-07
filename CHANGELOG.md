@@ -1,3 +1,81 @@
+
+# AcademicOS — Sprint M10B Changelog (Document Workspace)
+
+Release: **M10B** · Baseline `3f7ed91` (M10A) → `860f2bf` · Date: 2026-08-07
+
+## New features
+
+| Feature | Implementation |
+|---|---|
+| PDF full-text search | `PdfSearchPanel` (Ctrl+F): match highlighting overlay, Previous/Next, match counter, case-sensitive + whole-word options; pure `searchPdf.ts` matcher (5 tests) |
+| Thumbnail sidebar | `ThumbnailSidebar`: lazy-rendered, virtualized page thumbnails, current-page indicator, click-to-jump |
+| Multi-document workspace | `DocumentWorkspace` at `/documents/workspace`: tabs, per-tab zoom/page/annotations, close with pdf.js memory cleanup, sessionStorage restore |
+| Image viewer | `ImageViewer`: PNG/JPG/JPEG/TIFF/SVG, zoom, pan, fit width/fit screen |
+| Office preview | `OfficePreview`: DOCX/PPTX/XLSX read-only browser preview, download fallback |
+| Citation workspace | `CitationPanel`: copy citation (academic formatting), page + paragraph references (persistent) |
+| AI selection hooks | `SelectionActions`: Explain/Summarize/Rewrite extension points (no fake AI), implemented Highlight/Note/Bookmark |
+| Knowledge-graph integration | `KgLinks`: metadata object references → clickable `/objects/{id}` links |
+| Accessibility | aria labels, Ctrl+F/Escape/Enter keyboard, focus management, sr-only text |
+
+## Files added
+`src/lib/pdf/searchPdf.ts` + test, `PdfSearchPanel.tsx`, `ThumbnailSidebar.tsx`, `DocumentWorkspace.tsx`, `ImageViewer.tsx`, `OfficePreview.tsx`, `CitationPanel.tsx` + test, `SelectionActions.tsx`, `KgLinks.tsx` + test, `src/app/(main)/documents/workspace/page.tsx`, `DocumentViewer.test.tsx` (dispatch).
+
+## Files modified
+`DocumentViewer.tsx` (type dispatch), `ExtractedTextPanel.tsx` (selection actions), `PdfViewer.tsx` (search panel + onPdfReady), `documents/[id]/page.tsx` (Citation + KgLinks panels), `src/types/index.ts` (png/jpg/jpeg/tiff/svg), `FileIcon.tsx`.
+
+## Verification
+- Backend suite: **1240 passed, 2 skipped** (unchanged — no backend regressions).
+- Frontend: **59 vitest passed** (13 new), `tsc --noEmit` clean, `next build` clean.
+
+# AcademicOS — Sprint M10 Changelog
+
+Release: **M10 (Native Document Viewer + Annotation Framework)** · Baseline `c438ff3` → `a3c9935` · Date: 2026-08-07
+
+## Backend — annotations + viewer data
+
+| File | Change |
+|---|---|
+| `backend/alembic/versions/0008_document_annotations.py` | **new** — `document_annotations` table (annotation_id UUID unique, document_id, type, page, JSONB payload, created_by/at, updated_at; `(document_id, page)` index) |
+| `backend/app/infrastructure/db/models/annotation_model.py` | **new** — SQLAlchemy model |
+| `backend/app/application/dtos/annotation.py` | **new** — `DocumentAnnotation` record + invariants + factory |
+| `backend/app/application/ports/annotation_store.py` | **new** — `AnnotationStore` port (add/get/by_document/update/delete) |
+| `backend/app/infrastructure/persistence/annotation_store.py` | **new** — SQL adapter (the review_decision doctrine) |
+| `backend/app/application/services/document_annotation_service.py` | **new** — create/list/update/delete + `extracted_text()` resolving the linked intake item via the existing extraction use case |
+| `backend/app/api/routes/document_viewer.py` | **new** — viewer routes (below); registered in `main.py` |
+| `backend/scripts/init_db.py` | import the annotation model (SQLite quickstart table creation); stamp 0008 |
+| `backend/app/tests/unit/test_document_annotations.py` | **new** — 7 tests |
+| `backend/app/tests/integration/test_document_annotations_api.py` | **new** — 5 tests |
+
+## Frontend — native viewer
+
+| File | Change |
+|---|---|
+| `frontend/package.json` / `package-lock.json` | **new dependency** `pdfjs-dist@4.10.38` |
+| `frontend/public/pdf.worker.min.mjs` | **new** — pdf.js worker asset (served from /public) |
+| `frontend/src/components/features/documents/PdfViewer.tsx` | **new** — in-app PDF render (no download), prev/next/jump, zoom in/out, fit width/page, highlight/note/bookmark overlay |
+| `frontend/src/components/features/documents/ExtractedTextPanel.tsx` | **new** — extracted-text pane: select text → highlight (text sync via `findTextHighlight`), page notes, annotation list with delete |
+| `frontend/src/components/features/documents/DocumentViewer.tsx` | **new** — side-by-side composition (toggleable); non-PDF keeps the M3 `DocumentPreview` |
+| `frontend/src/lib/pdf/textSync.ts` | **new** — pure normalized text→pdf-rect matcher |
+| `frontend/src/lib/api/annotations.ts` | **new** — annotations/extracted-text client |
+| `frontend/src/app/(main)/documents/[id]/page.tsx` | Preview section now renders `DocumentViewer` |
+| `frontend/src/types/index.ts` | annotation + extracted-text types |
+| `frontend/src/lib/api/annotations.test.ts`, `frontend/src/lib/pdf/textSync.test.ts`, `frontend/src/components/features/documents/DocumentViewer.test.tsx` | **new** — 13 tests |
+
+## API surface added
+
+- `GET /api/v1/documents/{id}/extracted-text` — linked intake item's extracted text (404 when none)
+- `GET|POST /api/v1/documents/{id}/annotations`
+- `PUT|DELETE /api/v1/documents/annotations/{annotation_id}`
+
+## Database
+
+- **Migration:** `alembic upgrade head` (0008_document_annotations); SQLite quickstart: `python scripts/init_db.py` (stamps 0008).
+
+## Verification
+
+- Backend suite: **1240 passed, 2 skipped**.
+- Frontend: **48 vitest passed**, `tsc --noEmit` clean, `next build` clean.
+- Manual: upload PDF → annotation CRUD (highlight/bookmark/note, update, delete, 401 gate) → intake→approve→commit → `extracted-text` returns the pipeline text → highlight persisted → download 200.
 # AcademicOS — Final Release Changelog
 
 Release: **1.0.0 (Sprint 8 complete)** · Git: `80892d6` · Date: 2026-08-07
