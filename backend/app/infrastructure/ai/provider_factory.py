@@ -118,6 +118,11 @@ def build_ai_core(settings) -> AiCore:
     configs = parse_provider_configs(settings.ai_providers_json)
     if not configs:
         configs = _legacy_provider_configs(settings)  # DEPRECATED compat
+    # Enforce AI_STREAMING_ENABLED globally (M11.3.4): if off, every provider
+    # streaming is off — streaming never bypasses configuration.
+    if configs and not bool(getattr(settings, "ai_streaming_enabled", True)):
+        from dataclasses import replace as _replace
+        configs = tuple(_replace(c, streaming_enabled=False) for c in configs)
 
     registry = ProviderRegistry()
     for kind in PROVIDER_KINDS:

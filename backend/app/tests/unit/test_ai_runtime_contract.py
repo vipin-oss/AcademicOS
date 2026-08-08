@@ -142,7 +142,7 @@ class TestHealthRuntimeConsistency:
         summary = core.health_summary()
         assert summary.default_provider == "oa"
         assert summary.default_provider_valid is True  # oa is configured/executable
-        assert summary.status == "ok"
+        assert summary.status == "configured"
 
     def test_health_not_healthy_when_default_not_executable(self):
         # default "oa" configured with NO base_url -> not executable

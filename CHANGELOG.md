@@ -1,3 +1,24 @@
+# AcademicOS — Sprint M11.3.4 Changelog (Final Production Runtime Contract Fixes)
+
+Release: **M11.3.4** · Baseline `72248be` (M11.3.3) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08
+Status: **two verified production contract defect fixes — no redesign, no new capabilities. Final M11 freeze sprint.**
+
+## Fixes
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | Health status `ok` overclaimed verified reachability for a provider that merely had `base_url` | The strongest honest aggregate status without a live probe is **`configured`** (has endpoint, can attempt) — not `ok`. `HEALTH_OK` is reserved for operationally-verified state (never used without a probe). |
+| 2 | `OpenAIProvider.stream()` did not check `streaming_enabled` — streaming bypassed configuration | `stream()` now raises `LlmProviderError` when `streaming_enabled` is False. `build_ai_core` ANDs the global `AI_STREAMING_ENABLED` with per-provider `streaming_enabled`, so global-off disables all providers. `generate()` is unaffected. |
+
+## Verification
+
+- Backend: **1400 passed, 2 skipped** (+6 new; zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16**
+- `ruff --select F401,I001` clean
+
+---
+
 # AcademicOS — Sprint M11.3.3 Changelog (Final Runtime Hardening)
 
 Release: **M11.3.3** · Baseline `f8d7b2e` (M11.3.2) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08

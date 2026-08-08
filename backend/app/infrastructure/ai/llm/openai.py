@@ -218,6 +218,10 @@ class OpenAIProvider:
         """
         if not self._is_configured:
             raise self._not_configured()
+        if not self._config.streaming_enabled:
+            raise LlmProviderError(
+                "Streaming is disabled for this provider (streaming_enabled is False)."
+            )
         return self._stream(prompt)
 
     def structured_generate(

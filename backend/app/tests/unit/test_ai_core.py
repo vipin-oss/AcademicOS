@@ -11,10 +11,10 @@ from app.application.ai.core import AiCore
 from app.application.ai.errors import UnknownProviderError
 from app.application.ai.providers.registry import ProviderRegistry
 from app.application.dtos.ai import (
+    HEALTH_CONFIGURED,
     HEALTH_DISABLED,
     HEALTH_ERROR,
     HEALTH_NOT_CONFIGURED,
-    HEALTH_OK,
     STATUS_CONFIGURED,
     STATUS_NOT_CONFIGURED,
     ModelInfo,
@@ -136,7 +136,7 @@ class TestAiCoreHealth:
             order=("openai", "local"),
         )
         summary = core.health_summary()
-        assert summary.status == HEALTH_OK
+        assert summary.status == HEALTH_CONFIGURED
         assert summary.providers_configured == 1
 
     def test_disabled_when_ai_disabled(self):

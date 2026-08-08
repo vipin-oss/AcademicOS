@@ -24,10 +24,10 @@ from app.application.ai.errors import UnknownProviderError
 from app.application.ai.llm.ports import LanguageModelGateway
 from app.application.ai.providers.registry import ProviderRegistry
 from app.application.dtos.ai import (
+    HEALTH_CONFIGURED,
     HEALTH_DISABLED,
     HEALTH_ERROR,
     HEALTH_NOT_CONFIGURED,
-    HEALTH_OK,
     NOT_CONFIGURED_DETAIL,
     PROVIDER_KINDS,
     PROVIDER_LABELS,
@@ -184,7 +184,7 @@ class AiCore:
         elif self._default_is_misconfigured():
             status = HEALTH_ERROR
         elif default_executable:
-            status = HEALTH_OK
+            status = HEALTH_CONFIGURED
         else:
             status = HEALTH_NOT_CONFIGURED
         return AiHealthSummary(

@@ -2493,7 +2493,7 @@ export interface ExtractedTextResponse {
 
 /** Aggregate AI health (`GET /ai/health`). */
 export interface AiHealth {
-  status: "ok" | "not_configured" | "disabled" | "error";
+  status: "ok" | "configured" | "not_configured" | "disabled" | "error";
   ai_enabled: boolean;
   default_provider: string;
   default_model: string;

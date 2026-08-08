@@ -21,6 +21,7 @@ import type { AiHealth, AiModelInfo, AiProviderInfo } from "@/types";
 
 const STATUS_LABELS: Record<string, string> = {
   ok: "AI is ready",
+  configured: "Configured — endpoint is set, not verified reachable",
   not_configured: "Not configured — no adapter is wired yet",
   disabled: "AI is disabled",
   error: "Configuration error",
@@ -83,7 +84,7 @@ export function AiSettingsView() {
   }
 
   const statusTone =
-    health?.status === "ok"
+    health?.status === "configured"
       ? "border-[var(--success)] bg-[var(--success-subtle)] text-[var(--success)]"
       : health?.status === "error"
         ? "border-[var(--danger)] bg-[var(--danger-subtle)] text-[var(--danger)]"

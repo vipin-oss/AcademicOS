@@ -58,7 +58,8 @@ STATUS_NOT_CONFIGURED = "not_configured"
 STATUS_DISABLED = "disabled"
 STATUS_ERROR = "error"
 
-HEALTH_OK = "ok"
+HEALTH_OK = "ok"  # reserved for operationally-verified state (never used without a probe)
+HEALTH_CONFIGURED = "configured"  # the strongest honest aggregate status: executable but not verified
 HEALTH_NOT_CONFIGURED = "not_configured"
 HEALTH_DISABLED = "disabled"
 HEALTH_ERROR = "error"
@@ -380,6 +381,7 @@ __all__ = [
     "HEALTH_DISABLED",
     "HEALTH_ERROR",
     "HEALTH_NOT_CONFIGURED",
+    "HEALTH_CONFIGURED",
     "HEALTH_OK",
     "KIND_CAPABILITIES",
     "ModelInfo",
