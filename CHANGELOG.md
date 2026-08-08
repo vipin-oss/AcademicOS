@@ -1,3 +1,37 @@
+# AcademicOS — Sprint M13.3.1 Changelog (Corrective — Related Documents Defects)
+
+Release: **M13.3.1** · Baseline `7d93a39` (M13.3) · Commit `836d60d` · Date: 2026-08-08
+Status: **corrective sprint only — two production-critical M13.3 audit defects. No new abstractions, no architecture change, no `/search` contract change.**
+
+## Defects fixed
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | `GET /ai/related` declared `get_embedder`/`get_vector_repository` as `Depends()`, so FastAPI resolved them **before** the handler-body feature gate — a disabled feature still resolved the AI embedder and touched the Qdrant/vector store. | The embedder and vector repository are now resolved **inline, after the gate**, via the **same** `get_embedder`/`get_vector_repository` functions `/search` uses. The gate (`core.config.enabled AND feature_flags["related_documents"]`) runs first and short-circuits to 404, so a disabled feature never resolves the embedder nor queries the vector store. |
+| 2 | `RelatedDocumentsUseCase._select()` returned **any** object type present in the global vector index. | The source must be a document (`ValidationError` otherwise — checked **after** READ so an unauthorized object's type is not leaked); candidates are filtered to `ObjectType.DOCUMENT` via the **authoritative object** before result construction. Permission filtering, self-exclusion, ordering and limit are unchanged. |
+
+## Exact implementation
+- **Defect 1:** removed `vector_repository`/`embedder` from the route signature; call `get_embedder(core)` and `get_vector_repository(embedder)` inside the handler body immediately after the gate. Smallest correct change — the gate is a plain `if … raise` before the calls (no FastAPI dependency-ordering reliance).
+- **Defect 2:** in the use case, after the READ check, `if source.object_type is not ObjectType.DOCUMENT: raise ValidationError`; in `_select`, `if obj.object_type is not ObjectType.DOCUMENT: continue` (authoritative object type).
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/api/routes/ai.py` | `/ai/related` resolves embedder/vector inline after the gate (no `Depends`). |
+| `backend/app/application/use_cases/ai/related_documents.py` | Source must be a document; candidates filtered to `ObjectType.DOCUMENT`. |
+| `backend/app/tests/integration/test_ai_related_api.py` | DEFECT-1 regression: embedder/vector NOT resolved when disabled, resolved only when enabled; `/search`-unchanged smoke test. |
+| `backend/app/tests/unit/test_related_documents.py` | DEFECT-2 regression: non-document source rejected; non-document candidate excluded. |
+
+## Verification
+- Backend: **1534 passed, 2 skipped** (1527 → 1534; +7 new; zero failures)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean (backend-only)
+- Architecture guardrails: **16/16** · ruff clean on changed files (route: accepted `B008`; integration: accepted `E402`)
+- `/search` behavior unchanged (smoke test + full search suite green)
+
+The two prior M13.3 tests asserting on the old `Depends`-override mechanism were updated to match the corrected architecture — the new tests **strictly** prove the embedder is not resolved when disabled (which the old ones could not, since the override masked resolution).
+
+---
+
 # AcademicOS — Sprint M13.3 Changelog (Provenance Retrofit + Related Documents)
 
 Release: **M13.3** · Baseline `0d93094` (M13.2.1) · Commit `97da723` · Date: 2026-08-08

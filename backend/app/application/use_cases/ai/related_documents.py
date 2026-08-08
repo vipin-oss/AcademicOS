@@ -58,7 +58,7 @@ from app.application.use_cases.search.search_objects import _RRF_K, _SCORE_DECIM
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.repositories.vector_repository import VectorRepository
-from app.domain.value_objects.enums import PermissionAction
+from app.domain.value_objects.enums import ObjectType, PermissionAction
 from app.domain.value_objects.object_id import ObjectId
 
 _DEFAULT_LIMIT = 10
@@ -106,6 +106,15 @@ class RelatedDocumentsUseCase:
         ):
             raise PermissionDeniedError(
                 f"User lacks READ permission on source document {source_id}."
+            )
+
+        # M13.3.1 (defect-2 fix): related documents are a document-to-document
+        # capability. The source must be a document (READ is checked first so
+        # the type of an unauthorized object is never leaked).
+        if source.object_type is not ObjectType.DOCUMENT:
+            raise ValidationError(
+                f"Source object {source_id} is not a document; related "
+                f"documents require a document source."
             )
 
         # 3. Authoritative source text (existing intake pipeline).
@@ -160,6 +169,8 @@ class RelatedDocumentsUseCase:
             obj = by_id.get(cid)
             if obj is None:
                 continue  # index row for a deleted object — never leak
+            if obj.object_type is not ObjectType.DOCUMENT:
+                continue  # M13.3.1: related results are documents only
             if not self._permission_evaluator.can(
                 principal=principal,
                 scope=object_acl_scope(obj),

@@ -22,7 +22,6 @@ from sqlalchemy.pool import StaticPool
 import app.core.config as config_mod
 from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
-from app.api.routes.search import get_embedder
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.value_objects.object_id import ObjectId
@@ -134,73 +133,120 @@ class TestFeatureFlagAndAuth:
                 app.dependency_overrides.pop(get_ai_core, None)
 
 
-class TestMasterSwitchGate:
-    """AI_ENABLED=false must block related docs even when the flag is on, and
-    no embedding call may occur."""
+def _install_resolvers(monkeypatch, *, embedder=None, vector=None):
+    """Patch the inline get_embedder/get_vector_repository the /ai/related route
+    calls (M13.3.1: they are resolved AFTER the gate, not via Depends), and
+    return a call log so tests can prove whether they were resolved at all."""
+    log = {"embedder": 0, "vector": 0}
+
+    def _embedder(core):
+        log["embedder"] += 1
+        return embedder if embedder is not None else HashingEmbedder()
+
+    def _vector(emb):
+        log["vector"] += 1
+        return vector  # None by default -> use case degrades honestly
+
+    monkeypatch.setattr("app.api.routes.ai.get_embedder", _embedder)
+    monkeypatch.setattr("app.api.routes.ai.get_vector_repository", _vector)
+    return log
+
+
+def _use_core(core):
+    original = app.dependency_overrides.get(get_ai_core)
+    app.dependency_overrides[get_ai_core] = lambda: core
+    return original
+
+
+class TestFeatureGateResolutionOrder:
+    """M13.3.1 defect-1: the gate runs BEFORE get_embedder/get_vector_repository
+    can execute. A disabled feature must NOT resolve the AI embedder nor touch
+    the vector store."""
 
     def test_ai_disabled_blocks_related_even_when_flag_on(self, harness):
-        disabled_core = _core_with(enabled=False, related_documents=True)
-        original = app.dependency_overrides.get(get_ai_core)
-        app.dependency_overrides[get_ai_core] = lambda: disabled_core
+        original = _use_core(_core_with(enabled=False, related_documents=True))
         try:
             resp = harness.get(f"{API}/related", params={"object_id": "x"})
             assert resp.status_code == 404
         finally:
-            if original is not None:
-                app.dependency_overrides[get_ai_core] = original
-            else:
-                app.dependency_overrides.pop(get_ai_core, None)
-
-    def test_no_embedding_call_when_ai_disabled(self, harness):
-        embed_calls: list[str] = []
-
-        class _TrackingEmbedder(HashingEmbedder):
-            def embed(self, text):  # type: ignore[override]
-                embed_calls.append(text)
-                raise AssertionError("embed() must not be called when AI is disabled")
-
-        disabled_core = _core_with(enabled=False, related_documents=True)
-        app.dependency_overrides[get_ai_core] = lambda: disabled_core
-        app.dependency_overrides[get_embedder] = lambda: _TrackingEmbedder()
-        try:
-            resp = harness.get(f"{API}/related", params={"object_id": "x"})
-            assert resp.status_code == 404
-            assert embed_calls == []
-        finally:
-            app.dependency_overrides.pop(get_embedder, None)
-            app.dependency_overrides[get_ai_core] = lambda: build_ai_core(config_mod.settings)
-
-
-class TestEmbedderIdentityReuse:
-    def test_reuses_same_embedder_identity_as_semantic_search(self, harness):
-        """When the related flag is on but semantic search is off, the route
-        resolves the SAME embedder the /search route would (HashingEmbedder),
-        never a different embedding abstraction."""
-        original = config_mod.settings.ai_related_documents_enabled
-        config_mod.settings.ai_related_documents_enabled = True
-        captured: dict = {}
-
-        class _CapturingEmbedder(HashingEmbedder):
-            pass
-
-        def _capture_embedder():
-            e = _CapturingEmbedder()
-            captured["embedder"] = e
-            return e
-
-        app.dependency_overrides[get_embedder] = _capture_embedder
-        try:
-            # related flag on; /ai/related gate uses its own flag; the embedder
-            # dep resolves to the same HashingEmbedder path as /search.
-            resp = harness.get(
-                f"{API}/related",
-                params={"object_id": "obj:document:none"},
+            app.dependency_overrides[get_ai_core] = (
+                original or (lambda: build_ai_core(config_mod.settings))
             )
-            assert resp.status_code in (200, 404)  # source not found -> 404
-            assert isinstance(captured.get("embedder"), HashingEmbedder)
+
+    def test_embedder_not_resolved_when_flag_off(self, harness, monkeypatch):
+        log = _install_resolvers(monkeypatch)
+        original = _use_core(_core_with(enabled=True, related_documents=False))
+        try:
+            resp = harness.get(f"{API}/related", params={"object_id": "x"})
+            assert resp.status_code == 404
+            assert log == {"embedder": 0, "vector": 0}  # gate short-circuited
         finally:
-            app.dependency_overrides.pop(get_embedder, None)
-            config_mod.settings.ai_related_documents_enabled = original
+            app.dependency_overrides[get_ai_core] = (
+                original or (lambda: build_ai_core(config_mod.settings))
+            )
+
+    def test_embedder_not_resolved_when_master_off_flag_on(self, harness, monkeypatch):
+        log = _install_resolvers(monkeypatch)
+        original = _use_core(_core_with(enabled=False, related_documents=True))
+        try:
+            resp = harness.get(f"{API}/related", params={"object_id": "x"})
+            assert resp.status_code == 404
+            assert log == {"embedder": 0, "vector": 0}  # gate short-circuited
+        finally:
+            app.dependency_overrides[get_ai_core] = (
+                original or (lambda: build_ai_core(config_mod.settings))
+            )
+
+    def test_embedder_resolved_when_enabled(self, harness, monkeypatch):
+        """Flag on + master on -> gate passes, embedder+vector resolved AFTER
+        the gate (then the use case 404s on the missing source)."""
+        log = _install_resolvers(monkeypatch, embedder=HashingEmbedder(), vector=None)
+        original = _use_core(_core_with(enabled=True, related_documents=True))
+        try:
+            resp = harness.get(
+                f"{API}/related", params={"object_id": "obj:document:none"}
+            )
+            assert resp.status_code == 404  # source not found (gate passed)
+            assert "not found" in resp.json().get("detail", "").lower()
+            assert log == {"embedder": 1, "vector": 1}  # resolved after the gate
+        finally:
+            app.dependency_overrides[get_ai_core] = (
+                original or (lambda: build_ai_core(config_mod.settings))
+            )
+
+    def test_reuses_same_hashing_embedder_identity_as_search(self, harness, monkeypatch):
+        """The route calls the SAME get_embedder /search uses; with semantic
+        search off it resolves the HashingEmbedder (no second abstraction)."""
+        seen: list = []
+
+        def _embedder(core):
+            seen.append(core)
+            return HashingEmbedder()
+
+        monkeypatch.setattr("app.api.routes.ai.get_embedder", _embedder)
+        monkeypatch.setattr(
+            "app.api.routes.ai.get_vector_repository", lambda emb: None
+        )
+        original = _use_core(_core_with(enabled=True, related_documents=True))
+        try:
+            resp = harness.get(
+                f"{API}/related", params={"object_id": "obj:document:none"}
+            )
+            assert resp.status_code == 404
+            assert len(seen) == 1  # the shared resolver was used
+        finally:
+            app.dependency_overrides[get_ai_core] = (
+                original or (lambda: build_ai_core(config_mod.settings))
+            )
+
+
+class TestSearchUnchanged:
+    """M13.3.1: the related-route change must not affect /search."""
+
+    def test_search_still_responds(self, harness):
+        resp = harness.get("/api/v1/search", params={"text": "foo"})
+        assert resp.status_code == 200
+        assert "results" in resp.json()
 
 
 class TestErrorMapping:

@@ -1,0 +1,343 @@
+diff --git a/backend/app/api/routes/ai.py b/backend/app/api/routes/ai.py
+index 4d39a26..2fa1834 100644
+--- a/backend/app/api/routes/ai.py
++++ b/backend/app/api/routes/ai.py
+@@ -450,8 +450,6 @@ def related_documents(
+     core: AiCore = Depends(get_ai_core),
+     db: Session = Depends(get_db),
+     storage=Depends(get_storage),
+-    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+-    embedder: Embedder = Depends(get_embedder),
+     user: UniversalObject = Depends(get_current_user),
+ ):
+     """Documents semantically related to a source (M13.3).
+@@ -461,11 +459,23 @@ def related_documents(
+     permission on the source is enforced before its text is embedded; every
+     result is re-authorized against the authoritative object, and the source
+     is never returned. Feature-flagged (``AI_RELATED_DOCUMENTS_ENABLED``).
++
++    M13.3.1 (defect-1 fix): the feature gate runs BEFORE the embedder/vector
++    infrastructure is resolved. The embedder and vector repository are resolved
++    inline (after the gate) via the SAME functions ``/search`` uses, so a
++    disabled feature never resolves the AI embedder nor touches the
++    Qdrant/vector store.
+     """
+     # Configuration authority: the AI Core config is the single source of truth.
++    # Checked FIRST — before any embedder/vector resolution — so a disabled
++    # feature never resolves the AI embedder or queries the vector store.
+     if not core.config.enabled or not core.config.feature_flags.get("related_documents", False):
+         raise HTTPException(status_code=404)
+ 
++    # Resolved inline AFTER the gate (the same functions /search uses).
++    embedder = get_embedder(core)
++    vector_repository = get_vector_repository(embedder)
++
+     repo = SQLAlchemyObjectRepository(db)
+     annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+     evaluator = ObjectPermissionEvaluator()
+diff --git a/backend/app/application/use_cases/ai/related_documents.py b/backend/app/application/use_cases/ai/related_documents.py
+index 0546368..4673afa 100644
+--- a/backend/app/application/use_cases/ai/related_documents.py
++++ b/backend/app/application/use_cases/ai/related_documents.py
+@@ -58,7 +58,7 @@ from app.application.use_cases.search.search_objects import _RRF_K, _SCORE_DECIM
+ from app.domain.entities.object import UniversalObject
+ from app.domain.repositories.object_repository import ObjectRepository
+ from app.domain.repositories.vector_repository import VectorRepository
+-from app.domain.value_objects.enums import PermissionAction
++from app.domain.value_objects.enums import ObjectType, PermissionAction
+ from app.domain.value_objects.object_id import ObjectId
+ 
+ _DEFAULT_LIMIT = 10
+@@ -108,6 +108,15 @@ class RelatedDocumentsUseCase:
+                 f"User lacks READ permission on source document {source_id}."
+             )
+ 
++        # M13.3.1 (defect-2 fix): related documents are a document-to-document
++        # capability. The source must be a document (READ is checked first so
++        # the type of an unauthorized object is never leaked).
++        if source.object_type is not ObjectType.DOCUMENT:
++            raise ValidationError(
++                f"Source object {source_id} is not a document; related "
++                f"documents require a document source."
++            )
++
+         # 3. Authoritative source text (existing intake pipeline).
+         extraction = self._annotation_service.extracted_text(source_id, storage)
+         if extraction is None or not extraction.get("text"):
+@@ -160,6 +169,8 @@ class RelatedDocumentsUseCase:
+             obj = by_id.get(cid)
+             if obj is None:
+                 continue  # index row for a deleted object — never leak
++            if obj.object_type is not ObjectType.DOCUMENT:
++                continue  # M13.3.1: related results are documents only
+             if not self._permission_evaluator.can(
+                 principal=principal,
+                 scope=object_acl_scope(obj),
+diff --git a/backend/app/tests/integration/test_ai_related_api.py b/backend/app/tests/integration/test_ai_related_api.py
+index b1e7103..37eaeef 100644
+--- a/backend/app/tests/integration/test_ai_related_api.py
++++ b/backend/app/tests/integration/test_ai_related_api.py
+@@ -22,7 +22,6 @@ from sqlalchemy.pool import StaticPool
+ import app.core.config as config_mod
+ from app.api.dependencies.ai import get_ai_core
+ from app.api.dependencies.auth import get_current_user
+-from app.api.routes.search import get_embedder
+ from app.domain.entities.object import UniversalObject
+ from app.domain.value_objects.enums import ObjectStatus, ObjectType
+ from app.domain.value_objects.object_id import ObjectId
+@@ -134,73 +133,120 @@ class TestFeatureFlagAndAuth:
+                 app.dependency_overrides.pop(get_ai_core, None)
+ 
+ 
+-class TestMasterSwitchGate:
+-    """AI_ENABLED=false must block related docs even when the flag is on, and
+-    no embedding call may occur."""
++def _install_resolvers(monkeypatch, *, embedder=None, vector=None):
++    """Patch the inline get_embedder/get_vector_repository the /ai/related route
++    calls (M13.3.1: they are resolved AFTER the gate, not via Depends), and
++    return a call log so tests can prove whether they were resolved at all."""
++    log = {"embedder": 0, "vector": 0}
++
++    def _embedder(core):
++        log["embedder"] += 1
++        return embedder if embedder is not None else HashingEmbedder()
++
++    def _vector(emb):
++        log["vector"] += 1
++        return vector  # None by default -> use case degrades honestly
++
++    monkeypatch.setattr("app.api.routes.ai.get_embedder", _embedder)
++    monkeypatch.setattr("app.api.routes.ai.get_vector_repository", _vector)
++    return log
++
++
++def _use_core(core):
++    original = app.dependency_overrides.get(get_ai_core)
++    app.dependency_overrides[get_ai_core] = lambda: core
++    return original
++
++
++class TestFeatureGateResolutionOrder:
++    """M13.3.1 defect-1: the gate runs BEFORE get_embedder/get_vector_repository
++    can execute. A disabled feature must NOT resolve the AI embedder nor touch
++    the vector store."""
+ 
+     def test_ai_disabled_blocks_related_even_when_flag_on(self, harness):
+-        disabled_core = _core_with(enabled=False, related_documents=True)
+-        original = app.dependency_overrides.get(get_ai_core)
+-        app.dependency_overrides[get_ai_core] = lambda: disabled_core
++        original = _use_core(_core_with(enabled=False, related_documents=True))
+         try:
+             resp = harness.get(f"{API}/related", params={"object_id": "x"})
+             assert resp.status_code == 404
+         finally:
+-            if original is not None:
+-                app.dependency_overrides[get_ai_core] = original
+-            else:
+-                app.dependency_overrides.pop(get_ai_core, None)
+-
+-    def test_no_embedding_call_when_ai_disabled(self, harness):
+-        embed_calls: list[str] = []
+-
+-        class _TrackingEmbedder(HashingEmbedder):
+-            def embed(self, text):  # type: ignore[override]
+-                embed_calls.append(text)
+-                raise AssertionError("embed() must not be called when AI is disabled")
++            app.dependency_overrides[get_ai_core] = (
++                original or (lambda: build_ai_core(config_mod.settings))
++            )
+ 
+-        disabled_core = _core_with(enabled=False, related_documents=True)
+-        app.dependency_overrides[get_ai_core] = lambda: disabled_core
+-        app.dependency_overrides[get_embedder] = lambda: _TrackingEmbedder()
++    def test_embedder_not_resolved_when_flag_off(self, harness, monkeypatch):
++        log = _install_resolvers(monkeypatch)
++        original = _use_core(_core_with(enabled=True, related_documents=False))
+         try:
+             resp = harness.get(f"{API}/related", params={"object_id": "x"})
+             assert resp.status_code == 404
+-            assert embed_calls == []
++            assert log == {"embedder": 0, "vector": 0}  # gate short-circuited
+         finally:
+-            app.dependency_overrides.pop(get_embedder, None)
+-            app.dependency_overrides[get_ai_core] = lambda: build_ai_core(config_mod.settings)
++            app.dependency_overrides[get_ai_core] = (
++                original or (lambda: build_ai_core(config_mod.settings))
++            )
+ 
++    def test_embedder_not_resolved_when_master_off_flag_on(self, harness, monkeypatch):
++        log = _install_resolvers(monkeypatch)
++        original = _use_core(_core_with(enabled=False, related_documents=True))
++        try:
++            resp = harness.get(f"{API}/related", params={"object_id": "x"})
++            assert resp.status_code == 404
++            assert log == {"embedder": 0, "vector": 0}  # gate short-circuited
++        finally:
++            app.dependency_overrides[get_ai_core] = (
++                original or (lambda: build_ai_core(config_mod.settings))
++            )
+ 
+-class TestEmbedderIdentityReuse:
+-    def test_reuses_same_embedder_identity_as_semantic_search(self, harness):
+-        """When the related flag is on but semantic search is off, the route
+-        resolves the SAME embedder the /search route would (HashingEmbedder),
+-        never a different embedding abstraction."""
+-        original = config_mod.settings.ai_related_documents_enabled
+-        config_mod.settings.ai_related_documents_enabled = True
+-        captured: dict = {}
++    def test_embedder_resolved_when_enabled(self, harness, monkeypatch):
++        """Flag on + master on -> gate passes, embedder+vector resolved AFTER
++        the gate (then the use case 404s on the missing source)."""
++        log = _install_resolvers(monkeypatch, embedder=HashingEmbedder(), vector=None)
++        original = _use_core(_core_with(enabled=True, related_documents=True))
++        try:
++            resp = harness.get(
++                f"{API}/related", params={"object_id": "obj:document:none"}
++            )
++            assert resp.status_code == 404  # source not found (gate passed)
++            assert "not found" in resp.json().get("detail", "").lower()
++            assert log == {"embedder": 1, "vector": 1}  # resolved after the gate
++        finally:
++            app.dependency_overrides[get_ai_core] = (
++                original or (lambda: build_ai_core(config_mod.settings))
++            )
+ 
+-        class _CapturingEmbedder(HashingEmbedder):
+-            pass
++    def test_reuses_same_hashing_embedder_identity_as_search(self, harness, monkeypatch):
++        """The route calls the SAME get_embedder /search uses; with semantic
++        search off it resolves the HashingEmbedder (no second abstraction)."""
++        seen: list = []
+ 
+-        def _capture_embedder():
+-            e = _CapturingEmbedder()
+-            captured["embedder"] = e
+-            return e
++        def _embedder(core):
++            seen.append(core)
++            return HashingEmbedder()
+ 
+-        app.dependency_overrides[get_embedder] = _capture_embedder
++        monkeypatch.setattr("app.api.routes.ai.get_embedder", _embedder)
++        monkeypatch.setattr(
++            "app.api.routes.ai.get_vector_repository", lambda emb: None
++        )
++        original = _use_core(_core_with(enabled=True, related_documents=True))
+         try:
+-            # related flag on; /ai/related gate uses its own flag; the embedder
+-            # dep resolves to the same HashingEmbedder path as /search.
+             resp = harness.get(
+-                f"{API}/related",
+-                params={"object_id": "obj:document:none"},
++                f"{API}/related", params={"object_id": "obj:document:none"}
+             )
+-            assert resp.status_code in (200, 404)  # source not found -> 404
+-            assert isinstance(captured.get("embedder"), HashingEmbedder)
++            assert resp.status_code == 404
++            assert len(seen) == 1  # the shared resolver was used
+         finally:
+-            app.dependency_overrides.pop(get_embedder, None)
+-            config_mod.settings.ai_related_documents_enabled = original
++            app.dependency_overrides[get_ai_core] = (
++                original or (lambda: build_ai_core(config_mod.settings))
++            )
++
++
++class TestSearchUnchanged:
++    """M13.3.1: the related-route change must not affect /search."""
++
++    def test_search_still_responds(self, harness):
++        resp = harness.get("/api/v1/search", params={"text": "foo"})
++        assert resp.status_code == 200
++        assert "results" in resp.json()
+ 
+ 
+ class TestErrorMapping:
+diff --git a/backend/app/tests/unit/test_related_documents.py b/backend/app/tests/unit/test_related_documents.py
+index 8bb144e..b9ffb5c 100644
+--- a/backend/app/tests/unit/test_related_documents.py
++++ b/backend/app/tests/unit/test_related_documents.py
+@@ -108,13 +108,19 @@ def _restrict(obj, reader="obj:user:someone-else"):
+     return obj
+ 
+ 
+-def _vdoc(oid, title="Doc", version=1):
++def _vdoc(oid, title="Doc", version=1, object_type="document"):
+     return VectorDocument(
+-        object_id=oid, object_type="document", title=title,
++        object_id=oid, object_type=object_type, title=title,
+         metadata_text="", version=version, vector=(0.0,),
+     )
+ 
+ 
++def _project(oid, title="Project"):
++    return UniversalObject.create(
++        ObjectType.RESEARCH_PROJECT, title, created_by="system", object_id=ObjectId(oid),
++    )
++
++
+ def _rrf(rank):
+     return round(1.0 / (_RRF_K + rank + 1), _SCORE_DECIMALS)
+ 
+@@ -287,3 +293,61 @@ class TestEmbedderReuse:
+         _run(use_case)
+         assert len(emb.embed_calls) == 1
+         assert emb.embed_calls[0] == "source text"
++
++
++class TestDocumentTypeRestriction:
++    """M13.3.1 defect-2: related documents are documents only."""
++
++    def test_non_document_source_rejected(self):
++        use_case = _use_case(source=_project(SOURCE_ID))
++        with pytest.raises(ValidationError, match="not a document"):
++            _run(use_case)
++
++    def test_non_document_candidate_excluded(self):
++        proj = _project("obj:project:p1", "A Project")
++        doc = _doc("obj:document:a", "A Doc")
++        use_case = _use_case(
++            source=_doc(SOURCE_ID),
++            objects=[proj, doc],
++            vector_results=[
++                _vdoc("obj:project:p1", "A Project", object_type="research_project"),
++                _vdoc("obj:document:a", "A Doc"),
++            ],
++        )
++        result = _run(use_case)
++        assert [i.object_id for i in result.items] == ["obj:document:a"]
++
++    def test_document_candidate_returned_among_non_documents(self):
++        proj = _project("obj:project:p1", "P1")
++        doc = _doc("obj:document:a", "A")
++        use_case = _use_case(
++            source=_doc(SOURCE_ID),
++            objects=[proj, doc],
++            vector_results=[
++                _vdoc("obj:project:p1", "P1", object_type="research_project"),
++                _vdoc("obj:document:a", "A"),
++            ],
++        )
++        result = _run(use_case)
++        assert len(result.items) == 1
++        assert result.items[0].object_id == "obj:document:a"
++        assert result.items[0].object_type == "document"
++
++    def test_permission_and_source_exclusion_still_hold_with_type_filter(self):
++        # Mix: source (excluded), a restricted doc (filtered), a project
++        # (filtered by type), and a readable doc (kept).
++        readable = _doc("obj:document:keep", "Keep")
++        restricted = _restrict(_doc("obj:document:nope", "Nope"))
++        proj = _project("obj:project:p", "Proj")
++        use_case = _use_case(
++            source=_doc(SOURCE_ID),
++            objects=[readable, restricted, proj],
++            vector_results=[
++                _vdoc(SOURCE_ID),                       # self -> excluded
++                _vdoc("obj:document:nope", "Nope"),     # unreadable -> filtered
++                _vdoc("obj:project:p", "Proj", object_type="research_project"),  # non-doc
++                _vdoc("obj:document:keep", "Keep"),     # kept
++            ],
++        )
++        result = _run(use_case)
++        assert [i.object_id for i in result.items] == ["obj:document:keep"]

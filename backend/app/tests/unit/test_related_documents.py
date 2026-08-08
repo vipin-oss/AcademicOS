@@ -108,10 +108,16 @@ def _restrict(obj, reader="obj:user:someone-else"):
     return obj
 
 
-def _vdoc(oid, title="Doc", version=1):
+def _vdoc(oid, title="Doc", version=1, object_type="document"):
     return VectorDocument(
-        object_id=oid, object_type="document", title=title,
+        object_id=oid, object_type=object_type, title=title,
         metadata_text="", version=version, vector=(0.0,),
+    )
+
+
+def _project(oid, title="Project"):
+    return UniversalObject.create(
+        ObjectType.RESEARCH_PROJECT, title, created_by="system", object_id=ObjectId(oid),
     )
 
 
@@ -287,3 +293,61 @@ class TestEmbedderReuse:
         _run(use_case)
         assert len(emb.embed_calls) == 1
         assert emb.embed_calls[0] == "source text"
+
+
+class TestDocumentTypeRestriction:
+    """M13.3.1 defect-2: related documents are documents only."""
+
+    def test_non_document_source_rejected(self):
+        use_case = _use_case(source=_project(SOURCE_ID))
+        with pytest.raises(ValidationError, match="not a document"):
+            _run(use_case)
+
+    def test_non_document_candidate_excluded(self):
+        proj = _project("obj:project:p1", "A Project")
+        doc = _doc("obj:document:a", "A Doc")
+        use_case = _use_case(
+            source=_doc(SOURCE_ID),
+            objects=[proj, doc],
+            vector_results=[
+                _vdoc("obj:project:p1", "A Project", object_type="research_project"),
+                _vdoc("obj:document:a", "A Doc"),
+            ],
+        )
+        result = _run(use_case)
+        assert [i.object_id for i in result.items] == ["obj:document:a"]
+
+    def test_document_candidate_returned_among_non_documents(self):
+        proj = _project("obj:project:p1", "P1")
+        doc = _doc("obj:document:a", "A")
+        use_case = _use_case(
+            source=_doc(SOURCE_ID),
+            objects=[proj, doc],
+            vector_results=[
+                _vdoc("obj:project:p1", "P1", object_type="research_project"),
+                _vdoc("obj:document:a", "A"),
+            ],
+        )
+        result = _run(use_case)
+        assert len(result.items) == 1
+        assert result.items[0].object_id == "obj:document:a"
+        assert result.items[0].object_type == "document"
+
+    def test_permission_and_source_exclusion_still_hold_with_type_filter(self):
+        # Mix: source (excluded), a restricted doc (filtered), a project
+        # (filtered by type), and a readable doc (kept).
+        readable = _doc("obj:document:keep", "Keep")
+        restricted = _restrict(_doc("obj:document:nope", "Nope"))
+        proj = _project("obj:project:p", "Proj")
+        use_case = _use_case(
+            source=_doc(SOURCE_ID),
+            objects=[readable, restricted, proj],
+            vector_results=[
+                _vdoc(SOURCE_ID),                       # self -> excluded
+                _vdoc("obj:document:nope", "Nope"),     # unreadable -> filtered
+                _vdoc("obj:project:p", "Proj", object_type="research_project"),  # non-doc
+                _vdoc("obj:document:keep", "Keep"),     # kept
+            ],
+        )
+        result = _run(use_case)
+        assert [i.object_id for i in result.items] == ["obj:document:keep"]

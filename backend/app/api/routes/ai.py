@@ -450,8 +450,6 @@ def related_documents(
     core: AiCore = Depends(get_ai_core),
     db: Session = Depends(get_db),
     storage=Depends(get_storage),
-    vector_repository: VectorRepository | None = Depends(get_vector_repository),
-    embedder: Embedder = Depends(get_embedder),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Documents semantically related to a source (M13.3).
@@ -461,10 +459,22 @@ def related_documents(
     permission on the source is enforced before its text is embedded; every
     result is re-authorized against the authoritative object, and the source
     is never returned. Feature-flagged (``AI_RELATED_DOCUMENTS_ENABLED``).
+
+    M13.3.1 (defect-1 fix): the feature gate runs BEFORE the embedder/vector
+    infrastructure is resolved. The embedder and vector repository are resolved
+    inline (after the gate) via the SAME functions ``/search`` uses, so a
+    disabled feature never resolves the AI embedder nor touches the
+    Qdrant/vector store.
     """
     # Configuration authority: the AI Core config is the single source of truth.
+    # Checked FIRST — before any embedder/vector resolution — so a disabled
+    # feature never resolves the AI embedder or queries the vector store.
     if not core.config.enabled or not core.config.feature_flags.get("related_documents", False):
         raise HTTPException(status_code=404)
+
+    # Resolved inline AFTER the gate (the same functions /search uses).
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
 
     repo = SQLAlchemyObjectRepository(db)
     annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
