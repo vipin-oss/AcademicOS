@@ -43,7 +43,6 @@ from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
-from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
@@ -183,7 +182,11 @@ def summarize_document(
     and READ permission on the document. Returns a summary with truncation
     disclosure and an honest fallback when the gateway is unavailable.
     """
-    if not settings.ai_summarization_enabled:
+    # Configuration authority: the AI Core config is the single source of truth.
+    # When AI_ENABLED is false (the master switch) NO AI capability may invoke
+    # generate() — including summarization. The summarization feature flag is
+    # checked via the same config view, not a second source.
+    if not core.config.enabled or not core.config.feature_flags.get("summarization", False):
         raise HTTPException(status_code=404)
 
     repo = SQLAlchemyObjectRepository(db)

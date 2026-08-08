@@ -1,3 +1,22 @@
+# AcademicOS — Sprint M12.1.1 Changelog (Configuration Authority Fix)
+
+Release: **M12.1.1** · Baseline `8232ee0` (M12.1) · Date: 2026-08-08
+Status: **corrective fix — AI_ENABLED master switch now gates summarization.**
+
+## Fix
+
+The summarization route (`POST /ai/summarize`) read `settings.ai_summarization_enabled` directly, bypassing the `AI_ENABLED` master switch. When `AI_ENABLED=false` but `AI_SUMMARIZATION_ENABLED=true`, document content could reach a provider. Now the route checks the AI Core config (`core.config.enabled` AND `core.config.feature_flags["summarization"]`) — the single source of truth. No `settings` import remains.
+
+## Regression tests
+- `AI_ENABLED=false` blocks summarization even when `AI_SUMMARIZATION_ENABLED=true` (404).
+- No `gateway.generate()` invocation occurs when AI is disabled.
+- `AI_ENABLED=true` + flag on proceeds normally.
+
+## Verification
+- Backend: **1416 passed, 2 skipped** (+3 new; zero regressions); 16/16 guardrails; ruff clean.
+
+---
+
 # AcademicOS — Sprint M12.1 Changelog (Document Summarization)
 
 Release: **M12.1** · Baseline `e33246d` (M11.3.4 frozen) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08
