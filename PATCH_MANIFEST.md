@@ -1,25 +1,33 @@
-# AcademicOS M13.3.1 — Incremental Patch Manifest (Corrective — Related Documents Defects)
+# AcademicOS Full-System Audit (M11 → M13.3.1) — Remediation Manifest
 
-**Baseline:** `7d93a39` (M13.3) · **Commit:** `836d60d` · **Date:** 2026-08-08
-**Scope:** corrective only — two M13.3 audit defects. No new abstractions, no architecture change, no `/search` contract change.
+**Pre-remediation:** `efbf0c6` · **Remediation commit:** `039b8c1` · **Date:** 2026-08-08
 
-## Files Changed
+## Defect remediated
+**QA route late-gate** — `POST /ai/qa` and `POST /ai/qa/stream` resolved `get_embedder`/`get_vector_repository` (via `Depends()`) before the handler-body feature gate. A disabled QA feature still resolved the AI embedder and provisioned/queried the Qdrant/vector collection. Fix: inline resolution after the gate (same pattern as the M13.3.1 `/ai/related` fix; same `get_embedder`/`get_vector_repository` as `/search`).
 
+## Files changed
 | Path | Change |
 |---|---|
-| `backend/app/api/routes/ai.py` | DEFECT-1: `/ai/related` resolves `embedder`/`vector_repository` **inline after the gate** (removed from the `Depends()` signature) so a disabled feature never resolves the AI embedder nor touches the vector store. Uses the SAME `get_embedder`/`get_vector_repository` as `/search`. |
-| `backend/app/application/use_cases/ai/related_documents.py` | DEFECT-2: source must be `ObjectType.DOCUMENT` (`ValidationError` after READ); candidates filtered to documents via the authoritative object. |
-| `backend/app/tests/integration/test_ai_related_api.py` | DEFECT-1 regression: embedder/vector NOT resolved when `related_documents=false` or `AI_ENABLED=false`; resolved only when enabled; `/search`-unchanged smoke test. |
-| `backend/app/tests/unit/test_related_documents.py` | DEFECT-2 regression: non-document source rejected; non-document candidate excluded; document candidate returned; permission/self-exclusion/ordering intact with the type filter. |
+| `backend/app/api/routes/ai.py` | `/ai/qa` + `/ai/qa/stream` resolve embedder/vector inline after the gate (removed from `Depends()` signature). |
+| `backend/app/tests/integration/test_ai_qa_api.py` | +4 regression tests (`TestFeatureGateResolutionOrder`): embedder/vector not resolved when `qa=false` / `AI_ENABLED=false` / on the stream endpoint; resolved once when enabled. |
 
-## Defect mechanism
-- **Defect 1:** FastAPI resolves signature `Depends()` before the handler body, so the gate (in the body) ran after the embedder/vector were already resolved. Inline resolution after the gate is the smallest correct fix (plain `if … raise` precedes the calls; no dependency-ordering reliance).
-- **Defect 2:** `_select()` iterated all vector-index candidates regardless of type. The authoritative-object type check (`ObjectType.DOCUMENT`) excludes non-documents before result construction; the source document-type check is placed after READ to avoid leaking the type of an unauthorized object.
+## Files deleted (proven dead)
+| Path | Evidence |
+|---|---|
+| `MigrationFix/backend/alembic.ini` | unreferenced; `alembic.ini` identical to active `backend/alembic.ini` |
+| `MigrationFix/backend/alembic/env.py` | unreferenced; **differs** from active `backend/alembic/env.py` (stale) |
+| `MigrationFix/backend/alembic/script.py.mako` | unreferenced duplicate |
+| `MigrationFix/backend/alembic/versions/0001_initial.py` | unreferenced stale copy; active migrations live in `backend/alembic/versions/` |
 
-## Not changed
-`/search` route + response contract · AI Core authority · transport ownership · embedder/vector abstractions · permission filtering doctrine · architecture guardrails.
+Proof of safety: `grep -r MigrationFix` across `*.py/*.md/*.yml/*.ps1/*.sh/*.toml/*.ini/*.cfg` → 0 references; not in `docker-compose.yml`, `scripts/`, or CI; not imported; not required by tests/runtime.
+
+## Not changed (intentional)
+- `/search`, `/assistant`, `/intake` routes (always-on, graceful degradation — correctly unaffected).
+- Release artifacts under `releases/` and root `*.patch` (workflow-required / not proven dead).
+- Flaky intake test `test_pause_resume_completes_exactly_all_items` (pre-M11, timing-dependent, not a product defect; out of scope).
 
 ## Verification
-- Backend: **1534 passed, 2 skipped** (+7 new; zero regressions)
-- Frontend: **70 vitest passed** · `tsc --noEmit` clean
-- Architecture guardrails: **16/16** · ruff clean on changed files
+- Backend: **1538 passed, 2 skipped, 0 failed** (+4 new)
+- Architecture guardrails: **16/16**
+- Frontend: 70 vitest · `tsc --noEmit` exit 0 · `next build` success (unaffected)
+- Lint: clean on changed files

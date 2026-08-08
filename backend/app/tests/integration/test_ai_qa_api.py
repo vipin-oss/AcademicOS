@@ -12,11 +12,10 @@ pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("pydantic_settings")
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from fastapi.testclient import TestClient
 
 from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
@@ -25,6 +24,7 @@ from app.domain.value_objects.enums import ObjectStatus, ObjectType
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base, ObjectModel
 from app.infrastructure.db.session import get_db
+from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
 from app.main import app
 
 API = "/api/v1/ai"
@@ -149,3 +149,97 @@ class TestStreamingQA:
         app.dependency_overrides[get_ai_core] = lambda: core
         resp = harness.post(f"{API}/qa/stream", json={"question": "test"})
         assert resp.status_code == 404
+
+
+def _qa_core(enabled: bool, qa: bool):
+    """Build an AiCore with explicit master switch + qa flag."""
+    from app.application.ai.config import AiConfigView
+    from app.application.ai.core import AiCore
+    from app.application.ai.providers.registry import ProviderRegistry
+
+    return AiCore(
+        registry=ProviderRegistry(),
+        gateways={},
+        config=AiConfigView(
+            enabled=enabled,
+            default_provider="local",
+            default_model="",
+            temperature=0.0,
+            max_tokens=2048,
+            timeout_seconds=30.0,
+            streaming_enabled=True,
+            feature_flags={
+                "chat": False, "rag": False, "memory": False,
+                "agents": False, "document_understanding": False,
+                "streaming": True, "summarization": False,
+                "semantic_search": False, "enrichment": False,
+                "related_documents": False,
+                "qa": qa,
+            },
+        ),
+    )
+
+
+def _install_resolvers(monkeypatch):
+    """Patch the inline get_embedder/get_vector_repository the QA route calls
+    (resolved AFTER the gate) and return a call log."""
+    log = {"embedder": 0, "vector": 0}
+
+    def _embedder(core):
+        log["embedder"] += 1
+        return HashingEmbedder()
+
+    def _vector(emb):
+        log["vector"] += 1
+        return None
+
+    monkeypatch.setattr("app.api.routes.ai.get_embedder", _embedder)
+    monkeypatch.setattr("app.api.routes.ai.get_vector_repository", _vector)
+    return log
+
+
+class TestFeatureGateResolutionOrder:
+    """M13.3.1 full-system audit: a disabled QA feature must NOT resolve the
+    AI embedder nor touch the vector store (the gate runs first)."""
+
+    def test_embedder_not_resolved_when_qa_flag_off(self, harness, monkeypatch):
+        log = _install_resolvers(monkeypatch)
+        app.dependency_overrides[get_ai_core] = lambda: _qa_core(True, False)
+        try:
+            resp = harness.post(f"{API}/qa", json={"question": "x"})
+            assert resp.status_code == 404
+            assert log == {"embedder": 0, "vector": 0}
+        finally:
+            app.dependency_overrides.pop(get_ai_core, None)
+
+    def test_embedder_not_resolved_when_master_off(self, harness, monkeypatch):
+        log = _install_resolvers(monkeypatch)
+        app.dependency_overrides[get_ai_core] = lambda: _qa_core(False, True)
+        try:
+            resp = harness.post(f"{API}/qa", json={"question": "x"})
+            assert resp.status_code == 404
+            assert log == {"embedder": 0, "vector": 0}
+        finally:
+            app.dependency_overrides.pop(get_ai_core, None)
+
+    def test_embedder_not_resolved_when_qa_flag_off_stream(self, harness, monkeypatch):
+        log = _install_resolvers(monkeypatch)
+        app.dependency_overrides[get_ai_core] = lambda: _qa_core(True, False)
+        try:
+            resp = harness.post(f"{API}/qa/stream", json={"question": "x"})
+            assert resp.status_code == 404
+            assert log == {"embedder": 0, "vector": 0}
+        finally:
+            app.dependency_overrides.pop(get_ai_core, None)
+
+    def test_embedder_resolved_when_qa_enabled(self, harness, monkeypatch):
+        """Flag on + master on -> gate passes, embedder+vector resolved AFTER
+        the gate (then the QA pipeline runs; no real gateway -> fallback)."""
+        log = _install_resolvers(monkeypatch)
+        app.dependency_overrides[get_ai_core] = lambda: _qa_core(True, True)
+        try:
+            resp = harness.post(f"{API}/qa", json={"question": "anything"})
+            assert resp.status_code == 200  # honest fallback answer (available=False)
+            assert log == {"embedder": 1, "vector": 1}  # resolved after the gate
+        finally:
+            app.dependency_overrides.pop(get_ai_core, None)

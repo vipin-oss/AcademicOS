@@ -1,3 +1,26 @@
+# AcademicOS — Full-System Production Audit (M11 → M13.3.1) Remediation
+
+Release: **audit-remediation** · Baseline `efbf0c6` · Commit `039b8c1` · Date: 2026-08-08
+Status: **full-system audit remediation — one production defect fixed, one dead directory removed. No new features, no architecture change.**
+
+## Defect fixed — QA route late-gate (production)
+`POST /ai/qa` and `POST /ai/qa/stream` declared `get_embedder`/`get_vector_repository` as `Depends()`, so FastAPI resolved them **before** the handler-body feature gate. A disabled QA feature (`AI_QA_ENABLED` default OFF, or `AI_ENABLED=false`) still resolved the AI embedder and provisioned/queried the Qdrant/vector collection — the same defect class fixed for `/ai/related` in M13.3.1. **Fix:** resolve the embedder/vector **inline after the gate** via the same functions `/search` uses, so a disabled QA feature never resolves the AI embedder nor touches the vector store. (+4 regression tests.)
+
+## Dead code removed — `MigrationFix/`
+A partial stale duplicate of `alembic/` (4 files), unreferenced anywhere (code/tests/scripts/docker/CI), swept into the M11.1 commit. Removed with proof of safety.
+
+## Not changed (intentional)
+`/search`, `/assistant`, `/intake` routes (always-on, graceful degradation). Release artifacts. The pre-existing flaky intake test `test_pause_resume_completes_exactly_all_items` (timing-dependent, unrelated to AI) — documented for a separate scoped follow-up; not a product defect.
+
+## Verification
+- Backend: **1538 passed, 2 skipped, 0 failed**
+- Architecture guardrails: **16/16**
+- Frontend: 70 vitest · `tsc` clean · `next build` success (unaffected)
+
+**Verdict: FULL SYSTEM AUDIT — CLEAN (after remediation). M13 ready for freeze** subject to fresh confirmation of `039b8c1`.
+
+---
+
 # AcademicOS — Sprint M13.3.1 Changelog (Corrective — Related Documents Defects)
 
 Release: **M13.3.1** · Baseline `7d93a39` (M13.3) · Commit `836d60d` · Date: 2026-08-08

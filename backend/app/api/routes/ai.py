@@ -356,8 +356,6 @@ def grounded_qa(
     body: QABody,
     core: AiCore = Depends(get_ai_core),
     db: Session = Depends(get_db),
-    vector_repository: VectorRepository | None = Depends(get_vector_repository),
-    embedder: Embedder = Depends(get_embedder),
     storage=Depends(get_storage),
     user: UniversalObject = Depends(get_current_user),
 ):
@@ -369,6 +367,13 @@ def grounded_qa(
     """
     if not core.config.enabled or not core.config.feature_flags.get("qa", False):
         raise HTTPException(status_code=404)
+
+    # M13.3.1 full-system audit: resolve the embedder/vector AFTER the gate
+    # (the same get_embedder/get_vector_repository functions /search uses) so a
+    # disabled QA feature never resolves the AI embedder nor touches the
+    # vector store.
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
 
     repo = SQLAlchemyObjectRepository(db)
     retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
@@ -388,8 +393,6 @@ def grounded_qa_stream(
     body: QABody,
     core: AiCore = Depends(get_ai_core),
     db: Session = Depends(get_db),
-    vector_repository: VectorRepository | None = Depends(get_vector_repository),
-    embedder: Embedder = Depends(get_embedder),
     storage=Depends(get_storage),
     user: UniversalObject = Depends(get_current_user),
 ):
@@ -401,6 +404,13 @@ def grounded_qa_stream(
     """
     if not core.config.enabled or not core.config.feature_flags.get("qa", False):
         raise HTTPException(status_code=404)
+
+    # M13.3.1 full-system audit: resolve the embedder/vector AFTER the gate
+    # (the same get_embedder/get_vector_repository functions /search uses) so a
+    # disabled QA feature never resolves the AI embedder nor touches the
+    # vector store.
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
 
     repo = SQLAlchemyObjectRepository(db)
     retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
