@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 import { SearchBar } from "@/components/features/objects/SearchBar";
 import { Spinner } from "@/components/features/objects/Spinner";
 import { searchObjects, type SearchHit } from "@/lib/api/search";
-import { toErrorMessage } from "@/lib/api/client";
+import { isAbortError, toErrorMessage } from "@/lib/api/client";
 
 /**
  * Global search page (Sprint-5 M2). Queries the hybrid search API and
@@ -36,13 +36,24 @@ export default function SearchPage() {
     setError(null);
     try {
       const response = await searchObjects({ text, limit: 50 }, { signal: controller.signal });
+      // A newer request may have superseded this one while it was in flight
+      // (rapid typing). Only the LATEST request is allowed to publish results.
+      if (controllerRef.current !== controller) return;
       setHits(response.results);
       setSearched(true);
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
+      // A superseded/unmounted request is aborted by the client as an
+      // ApiError("Request cancelled.", { kind: "aborted" }) — or, when the
+      // fetch itself is interrupted, a DOMException named "AbortError". Both
+      // are INTENTIONAL cancellations, not failures: they must stay silent and
+      // must never surface "Request cancelled." to the user.
+      if (isAbortError(err)) return;
+      if (controllerRef.current !== controller) return;
       setError(toErrorMessage(err, "Search failed."));
     } finally {
-      setLoading(false);
+      // Only the latest request clears the loading spinner — a superseded
+      // request's finally must not clobber the active request's loading state.
+      if (controllerRef.current === controller) setLoading(false);
     }
   }, []);
 

@@ -1,33 +1,25 @@
-# AcademicOS Full-System Audit (M11 → M13.3.1) — Remediation Manifest
+# AcademicOS M14 — Incremental Patch Manifest (Search Reliability)
 
-**Pre-remediation:** `efbf0c6` · **Remediation commit:** `039b8c1` · **Date:** 2026-08-08
+**Parent commit:** `3401be6` (post-audit HEAD) · **Commit:** `2eb8341` · **Date:** 2026-08-08
+**Scope:** search reliability — frontend-only. No backend/search-infra change, no new abstractions.
 
-## Defect remediated
-**QA route late-gate** — `POST /ai/qa` and `POST /ai/qa/stream` resolved `get_embedder`/`get_vector_repository` (via `Depends()`) before the handler-body feature gate. A disabled QA feature still resolved the AI embedder and provisioned/queried the Qdrant/vector collection. Fix: inline resolution after the gate (same pattern as the M13.3.1 `/ai/related` fix; same `get_embedder`/`get_vector_repository` as `/search`).
+## Files Added
+| Path | Purpose |
+|---|---|
+| `frontend/src/components/features/search/SearchPage.test.tsx` | 6 component regression tests: matching query, clean empty state, abort suppressed (ApiError + DOMException shapes), latest-query-wins (stale-result discarded), genuine error shown. |
 
-## Files changed
+## Files Modified
 | Path | Change |
 |---|---|
-| `backend/app/api/routes/ai.py` | `/ai/qa` + `/ai/qa/stream` resolve embedder/vector inline after the gate (removed from `Depends()` signature). |
-| `backend/app/tests/integration/test_ai_qa_api.py` | +4 regression tests (`TestFeatureGateResolutionOrder`): embedder/vector not resolved when `qa=false` / `AI_ENABLED=false` / on the stream endpoint; resolved once when enabled. |
+| `frontend/src/components/features/search/SearchPage.tsx` | `run()` uses `isAbortError()` (both abort shapes) instead of `err.name === "AbortError"`; state updates guarded by `controllerRef.current === controller` (latest-query-wins). +14/−3. |
 
-## Files deleted (proven dead)
-| Path | Evidence |
-|---|---|
-| `MigrationFix/backend/alembic.ini` | unreferenced; `alembic.ini` identical to active `backend/alembic.ini` |
-| `MigrationFix/backend/alembic/env.py` | unreferenced; **differs** from active `backend/alembic/env.py` (stale) |
-| `MigrationFix/backend/alembic/script.py.mako` | unreferenced duplicate |
-| `MigrationFix/backend/alembic/versions/0001_initial.py` | unreferenced stale copy; active migrations live in `backend/alembic/versions/` |
+## Root cause
+`SearchPage` misclassified the client's abort error. The shared client throws `ApiError("Request cancelled.", { kind: "aborted" })` (`name === "ApiError"`) on a caller-aborted request; `SearchPage` only checked the `DOMException` shape (`name === "AbortError"`), so the abort leaked to `setError` and displayed **"Request cancelled."** The client already exported a correct `isAbortError()` helper — `SearchPage` simply didn't use it.
 
-Proof of safety: `grep -r MigrationFix` across `*.py/*.md/*.yml/*.ps1/*.sh/*.toml/*.ini/*.cfg` → 0 references; not in `docker-compose.yml`, `scripts/`, or CI; not imported; not required by tests/runtime.
-
-## Not changed (intentional)
-- `/search`, `/assistant`, `/intake` routes (always-on, graceful degradation — correctly unaffected).
-- Release artifacts under `releases/` and root `*.patch` (workflow-required / not proven dead).
-- Flaky intake test `test_pause_resume_completes_exactly_all_items` (pre-M11, timing-dependent, not a product defect; out of scope).
+## Reuse (constraints honoured)
+No second search system / embedding abstraction / vector repository / provider / transport owner / AI Core / persistence. AiCore remains configuration authority. M11/M12 architecture guardrails unchanged (16/16). Backend `/search` contract unchanged.
 
 ## Verification
-- Backend: **1538 passed, 2 skipped, 0 failed** (+4 new)
-- Architecture guardrails: **16/16**
-- Frontend: 70 vitest · `tsc --noEmit` exit 0 · `next build` success (unaffected)
-- Lint: clean on changed files
+- Frontend Vitest: **76 passed** (+6)
+- TypeScript `tsc --noEmit`: **exit 0** · `next build`: success
+- Backend: **1538 passed, 2 skipped** (unchanged) · Architecture: **16/16**

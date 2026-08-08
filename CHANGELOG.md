@@ -1,3 +1,34 @@
+# AcademicOS — Sprint M14 Changelog (Search Reliability — Cancellation & Latest-Query-Wins)
+
+Release: **M14** · Baseline `3401be6` (post-audit) · Commit `2eb8341` · Date: 2026-08-08
+Status: **search reliability fix — frontend-only, smallest correct fix. No backend/search-infra change, no new abstractions.**
+
+## Root cause
+The reported **"Request cancelled."** symptom was a frontend misclassification. On a superseded (or unmounted) request, the shared API client throws `ApiError("Request cancelled.", { kind: "aborted" })` — whose `name` is `"ApiError"`, **not** a `DOMException` named `"AbortError"`. `SearchPage`'s catch only checked `(err as Error).name === "AbortError"`, so the abort fell through to `setError(toErrorMessage(err))` and the literal **"Request cancelled."** was displayed. The empty-result path was already correct; this was purely the misclassified abort.
+
+A secondary race meant a superseded request's `finally { setLoading(false) }` could clobber the active request's loading spinner, and a stale resolved result could briefly overwrite the latest query's results.
+
+## Fix (minimal, frontend-only — `SearchPage.tsx`, +14/−3)
+- Use the client's existing `isAbortError()` helper (handles **both** the `ApiError` aborted-kind and the `DOMException` AbortError shapes) → intentional cancellations stay **silent**; "Request cancelled." can no longer leak.
+- Guard `setHits` / `setError` / `setLoading` with `controllerRef.current === controller` → only the **latest** request publishes state (latest-query-wins, no stale-result overwrite, no loading-spinner clobber).
+
+## Files changed
+| Path | Change |
+|---|---|
+| `frontend/src/components/features/search/SearchPage.tsx` | `isAbortError()` + latest-request guard in `run()`. |
+| `frontend/src/components/features/search/SearchPage.test.tsx` | **new** — 6 component regression tests. |
+
+## Not changed (by design)
+Backend `/search`, `SearchObjectsUseCase`, embedder/vector/Qdrant, AiCore, M11/M12/M13 — all untouched. No second search system, embedder, vector repo, or provider. Architecture guardrails unchanged.
+
+## Verification
+- Frontend Vitest: **76 passed** (70 → 76; +6 SearchPage)
+- TypeScript `tsc --noEmit`: **exit 0** · `next build`: success
+- Backend: **1538 passed, 2 skipped** (unchanged) · Architecture: **16/16**
+- One added test **fails on the pre-fix code** (the abort-leak repro), proving the regression is real and fixed.
+
+---
+
 # AcademicOS — Full-System Production Audit (M11 → M13.3.1) Remediation
 
 Release: **audit-remediation** · Baseline `efbf0c6` · Commit `039b8c1` · Date: 2026-08-08
