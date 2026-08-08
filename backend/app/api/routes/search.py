@@ -83,8 +83,11 @@ def get_embedder(ai_core: AiCore = Depends(get_ai_core)) -> Embedder:
     AI Core has no embedding provider), the deterministic ``HashingEmbedder``
     fallback is used - identical to pre-M12 behavior.
     """
-    from app.core.config import settings
-    if not settings.ai_semantic_search_enabled:
+    # Configuration authority (M12.3.1): the AI Core config is the single
+    # source of truth. When AI_ENABLED is false (master switch) no AI
+    # capability may resolve — including the embedder. The semantic-search
+    # feature flag is checked via the same config view, not a second source.
+    if not ai_core.config.enabled or not ai_core.config.feature_flags.get("semantic_search", False):
         return HashingEmbedder()
     try:
         return ai_core.embedder()

@@ -1,3 +1,21 @@
+# AcademicOS — Sprint M12.3.1 Changelog (Semantic Search Configuration Authority Fix)
+
+Release: **M12.3.1** · Baseline `f0238c6` (M12.3) · Date: 2026-08-08
+
+## Fix
+
+The search route's `get_embedder()` read `settings.ai_semantic_search_enabled` directly, bypassing the `AI_ENABLED` master switch. Now checks `ai_core.config.enabled` (master) AND `ai_core.config.feature_flags["semantic_search"]` — single source of truth.
+
+## Regression tests
+- `AI_ENABLED=false` blocks semantic embedding even when flag is on.
+- No AI embedder resolution occurs when master switch is off.
+- Existing flag on/off behaviour unchanged.
+
+## Verification
+- Backend: **1444 passed, 2 skipped** (+3 new; zero regressions); 16/16 guardrails; ruff clean.
+
+---
+
 # AcademicOS — Sprint M12.3 Changelog (Semantic Search Activation)
 
 Release: **M12.3** · Baseline `70500b6` (M12.2.1) · Date: 2026-08-08

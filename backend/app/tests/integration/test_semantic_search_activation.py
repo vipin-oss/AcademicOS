@@ -164,3 +164,77 @@ class _StubCore:
 
     def embedder(self):
         return self._embedder
+
+
+class TestMasterSwitchGate:
+    """AI_ENABLED=false must block semantic embedding even when
+    AI_SEMANTIC_SEARCH_ENABLED=true. No AI embedder resolution occurs."""
+
+    def test_ai_disabled_blocks_semantic_even_when_flag_on(self, harness):
+        """When AI_ENABLED=false, the search endpoint falls back to
+        HashingEmbedder even if AI_SEMANTIC_SEARCH_ENABLED=true."""
+        from app.application.ai.config import AiConfigView
+        from app.application.ai.core import AiCore
+        from app.application.ai.providers.registry import ProviderRegistry
+
+        class _TrackingEmbedder:
+            embed_called = False
+            def embed(self, text):
+                _TrackingEmbedder.embed_called = True
+                return [0.0] * 8
+            @property
+            def dimensions(self):
+                return 8
+
+        disabled_core = AiCore(
+            registry=ProviderRegistry(),
+            gateways={},
+            config=AiConfigView(
+                enabled=False,  # master switch OFF
+                default_provider="local", default_model="",
+                temperature=0.0, max_tokens=2048, timeout_seconds=30.0,
+                streaming_enabled=True,
+                feature_flags={
+                    "chat": False, "rag": False, "memory": False,
+                    "agents": False, "document_understanding": False,
+                    "streaming": True,
+                    "summarization": False,
+                    "semantic_search": True,  # flag ON
+                },
+            ),
+            embedder=_TrackingEmbedder(),
+        )
+        original = app.dependency_overrides.get(get_ai_core)
+        app.dependency_overrides[get_ai_core] = lambda: disabled_core
+        try:
+            resp = harness.get(f"{API}?text=test")
+            assert resp.status_code == 200  # search works (lexical)
+            assert not _TrackingEmbedder.embed_called  # AI embedder never called
+        finally:
+            if original is not None:
+                app.dependency_overrides[get_ai_core] = original
+            else:
+                app.dependency_overrides.pop(get_ai_core, None)
+
+    def test_ai_enabled_and_flag_on_resolves_embedder(self, harness):
+        """When both AI_ENABLED=true and AI_SEMANTIC_SEARCH_ENABLED=true,
+        the AI Core embedder is resolved (existing behaviour unchanged)."""
+        original = app.dependency_overrides.get(get_ai_core)
+        app.dependency_overrides[get_ai_core] = lambda: _StubCore(_FakeEmbedder())
+        config_mod.settings.ai_semantic_search_enabled = True
+        try:
+            resp = harness.get(f"{API}?text=test")
+            assert resp.status_code == 200  # search works with real embedder
+        finally:
+            config_mod.settings.ai_semantic_search_enabled = False
+            if original is not None:
+                app.dependency_overrides[get_ai_core] = original
+            else:
+                app.dependency_overrides.pop(get_ai_core, None)
+
+    def test_ai_enabled_flag_off_uses_hashing(self, harness):
+        """When AI_ENABLED=true but AI_SEMANTIC_SEARCH_ENABLED=false,
+        HashingEmbedder is used (existing behaviour unchanged)."""
+        config_mod.settings.ai_semantic_search_enabled = False
+        resp = harness.get(f"{API}?text=test")
+        assert resp.status_code == 200  # lexical search works

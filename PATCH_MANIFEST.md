@@ -1,21 +1,13 @@
-# AcademicOS M12.3 — Incremental Patch Manifest (Semantic Search Activation)
+# AcademicOS M12.3.1 — Incremental Patch Manifest (Semantic Search Config Authority Fix)
 
-**Baseline:** `70500b6` (M12.2.1) · **Commit:** `4fcf5ca` · **Date:** 2026-08-08
-
-## Files Added
-
-| Path | Purpose |
-|---|---|
-| `backend/app/tests/integration/test_semantic_search_activation.py` | 4 integration tests (flag off/on, AI Core resolution, graceful fallback). |
+**Baseline:** `f0238c6` (M12.3) · **Commit:** `01c1a6f` · **Date:** 2026-08-08
 
 ## Files Modified
 
 | Path | Change |
 |---|---|
-| `backend/app/core/config.py` | `ai_semantic_search_enabled: bool = False`. |
-| `backend/app/application/ai/config.py` | `"semantic_search"` feature flag in `AiConfigView`. |
-| `backend/app/api/routes/search.py` | `get_embedder()` resolves AI Core; `get_vector_repository()` uses same embedder; sync inherits via DI. |
-| `backend/app/tests/unit/test_ai_config_view.py` | Expected flags include `"semantic_search"`. |
+| `backend/app/api/routes/search.py` | `get_embedder()`: `settings.ai_semantic_search_enabled` → `ai_core.config.enabled and ai_core.config.feature_flags["semantic_search"]`. |
+| `backend/app/tests/integration/test_semantic_search_activation.py` | +3 master-switch regression tests. |
 
 ## Verification
-- Backend: **1441 passed, 2 skipped** · Frontend: **70 vitest + tsc clean** · Architecture: **16/16** · ruff clean.
+- Backend: **1444 passed, 2 skipped** · Architecture: **16/16** · ruff clean.
