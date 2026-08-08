@@ -49,15 +49,20 @@ class _MockEvaluator:
 
 
 class _MockGateway:
-    def __init__(self, text="A concise summary.", raise_exc=None):
+    provider_id = "test-provider"
+
+    def __init__(self, text="A concise summary.", raise_exc=None, result=None):
         self._text = text
         self._raise = raise_exc
+        self._result = result
         self.last_prompt = None
 
     def generate(self, prompt):
         self.last_prompt = prompt
         if self._raise:
             raise self._raise
+        if self._result is not None:
+            return self._result
         return GenerationResult(
             text=self._text, model="test-model", usage=TokenUsage(estimated=True)
         )
@@ -184,3 +189,56 @@ class TestGatewayFallback:
         assert result.available is False
         assert "unavailable" in result.summary.lower()
         assert result.chars_total == len("Some text.")
+
+
+class TestProvenance:
+    """M13.3 — provenance contract retrofitted into summarization."""
+
+    def test_success_provenance_from_generation_result(self):
+        gw = _MockGateway(result=GenerationResult(
+            text="A summary.", model="gpt-4o-mini",
+            usage=TokenUsage(input_tokens=5, output_tokens=7, estimated=False),
+            latency_ms=42,
+        ))
+        use_case = SummarizeDocumentUseCase(
+            _MockRepo(_doc()), _MockAnnotationService({"text": "doc text"}),
+            _MockEvaluator(allow=True), _MockAiCore(gw),
+        )
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.available is True
+        assert result.provider_id == "test-provider"
+        assert result.model == "gpt-4o-mini"
+        assert result.prompt_id == "ai.summarize"
+        assert result.prompt_version == 1
+        assert result.input_tokens == 5
+        assert result.output_tokens == 7
+        assert result.token_usage_estimated is False
+        assert result.latency_ms == 42
+
+    def test_estimated_usage_when_provider_reports_none(self):
+        gw = _MockGateway()  # default TokenUsage(estimated=True), 0 tokens
+        use_case = SummarizeDocumentUseCase(
+            _MockRepo(_doc()), _MockAnnotationService({"text": "doc text"}),
+            _MockEvaluator(allow=True), _MockAiCore(gw),
+        )
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.token_usage_estimated is True
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+
+    def test_fallback_provenance_internally_consistent(self):
+        gw = _MockGateway(raise_exc=RuntimeError("down"))
+        use_case = SummarizeDocumentUseCase(
+            _MockRepo(_doc()), _MockAnnotationService({"text": "doc text"}),
+            _MockEvaluator(allow=True), _MockAiCore(gw),
+        )
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.available is False
+        # Honest: no provider/model produced output.
+        assert result.provider_id == ""
+        assert result.model == ""
+        # But the prompt identity is still recorded (self-consistent).
+        assert result.prompt_id == "ai.summarize"
+        assert result.prompt_version == 1
+        assert result.input_tokens == 0
+        assert result.latency_ms == 0

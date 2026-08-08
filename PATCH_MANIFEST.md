@@ -1,35 +1,45 @@
-# AcademicOS M13.2.1 — Incremental Patch Manifest (Corrective — Structured-Output Contract Hardening)
+# AcademicOS M13.3 — Incremental Patch Manifest (Provenance Retrofit + Related Documents)
 
-**Baseline:** `0377aec` (M13.2) · **Commit:** `fc40127` · **Date:** 2026-08-08
-**Scope:** corrective only — two M13.2 audit defects. No new features, no gateway change, no new abstraction, no new dependency.
+**Baseline:** `0d93094` (M13.2.1) · **Commit:** `97da723` · **Date:** 2026-08-08
+**Scope:** final M13 sprint — two Blueprint capabilities. Reuse-only: no new retrieval/embedding/vector/provider/transport/AI Core/prompt framework, no persistence, no RAG/agents/memory.
 
-## Files Changed
+## Files Added
+
+| Path | Purpose |
+|---|---|
+| `backend/app/application/use_cases/ai/related_documents.py` | `RelatedDocumentsUseCase` — semantic related documents reusing the existing embedder + vector repository + permission gate. |
+| `backend/app/tests/unit/test_related_documents.py` | 16 unit tests (source handling, honest degradation, result contract, embedder reuse). |
+| `backend/app/tests/integration/test_ai_related_api.py` | 8 integration tests (flag, auth, master-switch gate, error mapping, embedder identity). |
+
+## Files Modified
 
 | Path | Change |
 |---|---|
-| `backend/app/application/use_cases/ai/enrich_document.py` | Removed permissive `_coerce()`. Added stdlib-only, schema-driven `_validate_against_schema()` (+ helpers). `_ENRICHMENT_SCHEMA` gains `additionalProperties: false` and is the single source of truth (asserted to the model AND used for validation). Invalid structured output → `available=False` fallback; never reaches the success path. |
-| `backend/app/tests/unit/test_enrich_document.py` | Permissive-coercion tests rewritten to assert **rejection**; full 21-point audit regression matrix (#1–#19 use-case level; #20–#21 in the existing integration suite). |
+| `backend/app/application/dtos/ai.py` | M13.1 provenance contract retrofitted onto `SummarizeResult`; new `RelatedDocumentItem`, `RelatedDocumentsResult`, `related_documents_result_dict`; `__all__` updated. |
+| `backend/app/application/use_cases/ai/summarize_document.py` | Populate provenance from the actual `GenerationResult` (success); consistent fallback provenance; prompt identity `ai.summarize` v1. |
+| `backend/app/api/routes/ai.py` | `SummarizeResponseModel` provenance fields; `GET /ai/related` + `RelatedDocumentItemModel`/`RelatedDocumentsResponseModel`; `Query` import. |
+| `backend/app/core/config.py` | `ai_related_documents_enabled: bool = False`. |
+| `backend/app/application/ai/config.py` | `"related_documents"` projected onto `AiConfigView.feature_flags`. |
+| `backend/app/tests/unit/test_summarize_document.py` | +3 provenance tests; `provider_id` on the mock gateway. |
+| `backend/app/tests/unit/test_ai_config_view.py` | `related_documents` in stub + expected flag dict. |
 
-## Exact validation mechanism
-- **Location:** enrichment-specific, immediately after `structured_generate()` (the audit's endorsed fallback; keeps the frozen M11 transport owner untouched).
-- **Mechanism:** stdlib `isinstance` checks driven by the JSON-Schema subset the enrichment schema uses (`type`, `required`, `properties`, `items.type`, `additionalProperties`). No coercion.
-- **Single schema:** `_ENRICHMENT_SCHEMA` — asserted to the model via `StructuredGenerationPrompt.schema` AND used to validate output. No second definition.
-- **Not used:** `pydantic` (forbidden in `app.application` by the M11 architecture guardrail); `jsonschema` (not a dependency); `OpenAIProvider.structured_generate()` (unchanged).
+## Reuse map (constraints honoured)
+- **AiCore** = single composition authority (route constructs no providers/embedders/httpx clients).
+- **Embedder port** reused (resolved via the same `get_embedder` dep as `/search` → identical identity + dimensions). No second embedding abstraction.
+- **VectorRepository.search** reused (existing cosine NN + deterministic ordering). No new vector pipeline/client.
+- **DocumentAnnotationService** + intake pipeline (source text). **PermissionEvaluator** (R4 READ gate). **Existing search RRF scoring** (no new ranking algorithm).
+- Architecture guardrails: **16/16** (incl. application framework-free — the related use case uses the domain `VectorRepository`/`Embedder` ports only).
 
-## Enrichment contract (enforced)
-`title`/`summary`: required `string` · `tags`/`categories`/`keywords`: required `array<string>` · extra fields: rejected (`additionalProperties: false`). Violations → `available=False`, empty fields, consistent provenance.
-
-## Audit regression matrix (21 points)
-| # | Coverage | Location |
-|---|---|---|
-| 1 valid passes · 2–6 missing each field · 7–8 None · 9 scalar-for-array · 10 wrong type · 11 non-string item · 13 invalid JSON · 14 arbitrary object | `test_invalid_output_is_rejected` (parametrized) + `test_valid_enrichment_passes` + `test_invalid_json_is_rejected` | unit |
-| 12 extra-field policy | `test_invalid_output_is_rejected[extra_field]` + `test_schema_is_strict_no_additional_properties` | unit |
-| 15 invalid→available=False · 16 invalid skips success path | `TestInvalidOutputContract` | unit |
-| 17 provider failure → fallback | `TestGatewayFallback` | unit |
-| 18 valid provenance · 19 fallback provenance consistent | `TestProvenance` | unit |
-| 20 AI_ENABLED blocks · 21 AI_ENRICHMENT_ENABLED blocks | `test_ai_disabled_blocks_enrichment_even_when_flag_on`, `test_enrich_404_when_flag_off` | integration |
+## Configuration authority
+`related_documents` flag (default OFF), gated via `core.config.enabled AND feature_flags["related_documents"]`. `AI_ENABLED=false` (+ flag on) and flag off both disable with no embedding call. `settings` is never read directly.
 
 ## Verification
-- Backend: **1500 passed, 2 skipped** (zero failures)
+- Backend: **1527 passed, 2 skipped** (+27 new; zero regressions)
 - Frontend: **70 vitest passed** · `tsc --noEmit` clean
 - Architecture guardrails: **16/16** · ruff clean on changed files
+- App boots, 269 routes (`/ai/related` registered)
+
+## Limitations (for the fresh audit)
+- Related documents reuses the embedder resolved by the `semantic_search` flag (via the shared `get_embedder` dependency): when semantic search is off, related docs use the `HashingEmbedder` fallback (deterministic, non-semantic) — the honest degradation already used by `/search`.
+- Scores reuse the search reciprocal-rank-fusion convention applied to the semantic rank (the vector repository does not expose raw cosine similarity); ordering is the existing vector-search order.
+- Summarization provenance is read-only metadata; the existing summarization behaviour is unchanged.

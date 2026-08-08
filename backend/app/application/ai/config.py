@@ -64,6 +64,9 @@ class AiConfigView:
                 "semantic_search": bool(getattr(settings, "ai_semantic_search_enabled", False)),
                 "qa": bool(getattr(settings, "ai_qa_enabled", False)),
                 "enrichment": bool(getattr(settings, "ai_enrichment_enabled", False)),
+                "related_documents": bool(
+                    getattr(settings, "ai_related_documents_enabled", False)
+                ),
             },
         )
 

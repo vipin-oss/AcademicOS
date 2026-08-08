@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -37,6 +37,7 @@ from app.application.dtos.ai import (
     models_summary_dict,
     provider_record_dict,
     qa_result_dict,
+    related_documents_result_dict,
     summarize_result_dict,
 )
 from app.application.exceptions import (
@@ -55,6 +56,7 @@ from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
+from app.application.use_cases.ai.related_documents import RelatedDocumentsUseCase
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
@@ -184,6 +186,15 @@ class SummarizeResponseModel(BaseModel):
     truncated: bool = False
     chars_used: int = 0
     chars_total: int = 0
+    # Provenance contract (M13.1; retrofitted in M13.3).
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
 
 
 @router.post("/summarize", response_model=SummarizeResponseModel)
@@ -416,6 +427,62 @@ def grounded_qa_stream(
 
 
 
+class RelatedDocumentItemModel(BaseModel):
+    """One related document (GET /ai/related)."""
+
+    object_id: str
+    object_type: str
+    title: str
+    score: float
+    version: int = 0
+
+
+class RelatedDocumentsResponseModel(BaseModel):
+    """Related documents result (GET /ai/related)."""
+
+    items: list[RelatedDocumentItemModel] = Field(default_factory=list)
+
+
+@router.get("/related", response_model=RelatedDocumentsResponseModel)
+def related_documents(
+    object_id: str = Query(..., description="The source document/object id."),
+    limit: int = Query(10, ge=1, le=50),
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Documents semantically related to a source (M13.3).
+
+    Reuses the existing embedding/vector-search infrastructure (the SAME
+    resolved embedder and vector repository as semantic search). READ
+    permission on the source is enforced before its text is embedded; every
+    result is re-authorized against the authoritative object, and the source
+    is never returned. Feature-flagged (``AI_RELATED_DOCUMENTS_ENABLED``).
+    """
+    # Configuration authority: the AI Core config is the single source of truth.
+    if not core.config.enabled or not core.config.feature_flags.get("related_documents", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    evaluator = ObjectPermissionEvaluator()
+    use_case = RelatedDocumentsUseCase(
+        repo, annotation_service, evaluator, vector_repository, embedder,
+    )
+    try:
+        result = use_case.execute(object_id, user, storage, limit=limit)
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return RelatedDocumentsResponseModel(**related_documents_result_dict(result))
+
+
 __all__ = [
     "AiHealthResponseModel",
     "AiModelResponseModel",
@@ -426,6 +493,8 @@ __all__ = [
     "SummarizeResponseModel",
     "EnrichBody",
     "EnrichmentResponseModel",
+    "RelatedDocumentItemModel",
+    "RelatedDocumentsResponseModel",
     "QABody",
     "QAResponseModel",
     "router",

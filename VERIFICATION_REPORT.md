@@ -1,156 +1,123 @@
-# Verification Report — Sprint M13.2.1 (Corrective — Structured-Output Contract Hardening)
+# Verification Report — Sprint M13.3 (Provenance Retrofit + Related Documents)
 
-**Baseline:** `0377aec` (M13.2) · **Commit:** `fc40127` · **Date:** 2026-08-08
-**Branch:** `feature/m11-ai-workspace` · **Runtime:** Python 3.13 · **Scope:** corrective only.
+**Baseline:** `0d93094` (M13.2.1) · **Commit:** `97da723` · **Date:** 2026-08-08
+**Branch:** `feature/m11-ai-workspace` · **Runtime:** Python 3.13 · **Scope:** final M13 sprint (two capabilities, reuse-only).
 
 ---
 
-## 1. Design decision — where to enforce the schema
+## 1. Part A — summarization provenance retrofit
 
-The audit offered two acceptable locations: validate at the structured-generation
-boundary, or enrichment-specific immediately after `structured_generate()`.
+### What was missing
+`SummarizeResult` carried only `summary`, `available`, `truncated`, `chars_used`, `chars_total`. The M13.1 contract (`provider_id`, `model`, `prompt_id`, `prompt_version`, `input_tokens`, `output_tokens`, `token_usage_estimated`, `latency_ms`) was absent.
 
-**Chosen: enrichment-specific validation immediately after `structured_generate()`.**
+### Fix
+`SummarizeDocumentUseCase` already held the real `GenerationResult`; provenance is now populated from it (never fabricated):
+- **Success:** `provider_id` from `gateway.provider_id`, `model`/`usage`/`latency` from the result; `prompt_id="ai.summarize"`, `prompt_version=1` (the use case owns this prompt template — honest identity).
+- **Fallback:** records only `prompt_id`/`prompt_version`; claims **no** provider/model (none produced one) — internally consistent.
+- The summarization safety contract is **unchanged** (master switch, flag, READ, extracted text, 12k truncation, disclosure, untrusted delimiters, honest fallback, non-persistent). `SummarizeResponseModel` exposes the new fields (additive — backward compatible).
 
-Rationale:
-1. **Frozen transport owner.** `OpenAIProvider` is the single M11 transport owner.
-   Embedding enrichment-specific validation (or a generic JSON-Schema validator +
-   new dependency) inside it changes the frozen M11 structured-generation
-   contract. The sprint forbids touching the transport owner / redesigning the
-   AI Core. The gateway is therefore **unchanged** — zero regression risk for
-   the shared `structured_generate()` contract.
-2. **Contract ownership.** The enrichment shape (field names, types, extra-field
-   policy) is owned by the enrichment use case, not the generic gateway.
-3. **Endorsed fallback.** The audit explicitly permits enrichment-specific
-   validation "immediately after `structured_generate()`" when a shared-contract
-   change is risky.
-
-This satisfies DEFECT 1: the schema **is** enforced (just at the use-case
-boundary), using the same `_ENRICHMENT_SCHEMA` asserted to the model.
-
-## 2. Validation mechanism
-
-- **Stdlib-only**, schema-driven: `_validate_against_schema(value, schema)` +
-  `_validate_property` + `_check_type` use only `isinstance`. They interpret the
-  JSON-Schema *subset* the enrichment schema declares: `type` (object/string/
-  array), `required`, `properties`, `items.type`, `additionalProperties`.
-- **Single source of truth.** `_ENRICHMENT_SCHEMA` is asserted to the model via
-  `StructuredGenerationPrompt.schema` **and** used to validate the output. There
-  is no second, hardcoded copy of the field rules.
-- **Strict, no coercion.** `123` for a `string` field is rejected (not coerced
-  to `"123"`); `None` rejected; `"physics"` for an array rejected; non-string
-  array items rejected; missing required fields rejected; unexpected fields
-  rejected (`additionalProperties: false`). `bool` is guarded against `int`.
-- **Not used:** `pydantic` — the M11 guardrail
-  `test_application_depends_only_on_domain_and_stdlib` forbids framework imports
-  in `app.application` (the DTOs use stdlib `dataclasses`, not pydantic). This
-  was caught and corrected during the sprint. `jsonschema` is not a dependency.
-  A focused stdlib validator is the smallest correct, safe implementation.
-
-## 3. DEFECT 1 — schema now enforced
-
-| Before | After |
+### Provenance tests (`test_summarize_document.py::TestProvenance`, 3)
+| Test | Asserts |
 |---|---|
-| `structured_generate()` parsed JSON and checked only `isinstance(value, dict)`; `prompt.schema` was ignored. | The use case validates `result.value` against `_ENRICHMENT_SCHEMA` (the same schema sent to the model). Arbitrary objects / wrong shapes are rejected → `available=False`. |
+| `test_success_provenance_from_generation_result` | provider/model/prompt-id/token-usage/latency all from the real result; `available=True`. |
+| `test_estimated_usage_when_provider_reports_none` | `token_usage_estimated=True` when the provider reports no counts. |
+| `test_fallback_provenance_internally_consistent` | fallback: no provider/model claimed; prompt identity recorded; tokens/latency 0. |
 
-## 4. DEFECT 2 — permissive coercion removed
+## 2. Part B — `GET /api/v1/ai/related`
 
-| Before (`_coerce`) | After (`_validate_against_schema`) |
+### Design (reuse-only)
+`RelatedDocumentsUseCase` composes existing components — it constructs **nothing** new:
+1. Load + verify source; **READ** on the source before loading/embedding its text.
+2. Authoritative source text via `DocumentAnnotationService.extracted_text`.
+3. Embed via the **same** `get_embedder` dependency `/search` uses → identical embedder identity + M12 dimensions.
+4. `VectorRepository.search` (existing cosine NN, deterministic ordering).
+5. Re-authorize every candidate via the **R4** `PermissionEvaluator` gate; exclude the source; cap at `limit`; reuse the existing RRF score convention.
+
+### Contract guarantees
+- Source never sent to the embedder without READ; results never returned merely for similarity (READ-filtered); source excluded from its own results; `limit` bounded `[1,50]` (invalid → 422); zero results valid; embedding/vector failures → honest empty; stale index rows never leak; deterministic ordering; no LLM provenance fabricated.
+
+### Configuration authority
+`AI_RELATED_DOCUMENTS_ENABLED` (default OFF); gate = `core.config.enabled AND feature_flags["related_documents"]`. `settings` never read directly.
+
+### Related-documents unit tests (`test_related_documents.py`, 16)
+| Class | Coverage |
 |---|---|
-| `title=123 → "123"`, `summary=None → ""`, `tags="physics" → ("physics",)`, `categories=42 → ()`, missing keys → defaults, extra keys ignored. Result: `available=True`. | Any violation raises `_SchemaValidationError` → `available=False` with empty fields. No coercion. Invalid output never reaches the success path. |
+| `TestSourceHandling` | not found (404); READ denied (403); no extracted text (422). |
+| `TestHonestDegradation` | no vector repo / no embedder / embed failure / search failure → empty. |
+| `TestResultContract` | success fields + score; self-exclusion; unreadable filtered (real evaluator, ACL-restricted obj); stale row never leaks; limit + `limit+1` fetch; limit bounded/clamped; zero results; deterministic ordering. |
+| `TestEmbedderReuse` | source text embedded exactly once. |
 
-Required contract now enforced: `title`/`summary` required `string`; `tags`/
-`categories`/`keywords` required `array<string>`; extra fields rejected.
+### Related-documents integration tests (`test_ai_related_api.py`, 8)
+| Test | Asserts |
+|---|---|
+| flag off → 404 · auth required → 401 · flag on proceeds (404 from missing source) | feature gate + auth |
+| master switch off (+flag on) → 404 · **no embedding call when disabled** (tracking embedder) | config authority |
+| reuses same `HashingEmbedder` identity as `/search` | embedder reuse |
+| missing `object_id` → 422 · `limit=0` → 422 | param validation |
 
-## 5. Audit regression matrix (21 points)
+## 3. Architecture verification
 
-| # | Test | Result |
-|---|---|---|
-| 1 | valid enrichment passes | ✅ `test_valid_enrichment_passes` |
-| 2–6 | missing title / summary / tags / categories / keywords | ✅ parametrized |
-| 7–8 | `title=None`, `summary=None` | ✅ parametrized |
-| 9 | `tags="physics"` (scalar) | ✅ parametrized |
-| 10 | `categories=42` | ✅ parametrized |
-| 11 | `keywords=["ok",7]` (non-string item) | ✅ parametrized |
-| 12 | extra-field policy (reject) | ✅ `[extra_field]` + `test_schema_is_strict_no_additional_properties` |
-| 13 | invalid JSON | ✅ `test_invalid_json_is_rejected` (gateway raises → fallback) |
-| 14 | arbitrary JSON object | ✅ `[arbitrary_object]`, `[empty_object]` |
-| 15 | invalid → `available=False` | ✅ `test_invalid_output_returns_available_false` |
-| 16 | invalid skips success path | ✅ `test_invalid_output_does_not_reach_success_path` (a valid-in-isolation field stays empty) |
-| 17 | provider failure → fallback | ✅ `test_provider_failure_returns_honest_fallback` |
-| 18 | valid provenance preserved | ✅ `test_valid_provenance_preserved` |
-| 19 | fallback provenance consistent | ✅ `test_fallback_provenance_internally_consistent` |
-| 20 | `AI_ENABLED` master switch blocks | ✅ integration `test_ai_disabled_blocks_enrichment_even_when_flag_on` |
-| 21 | `AI_ENRICHMENT_ENABLED` blocks | ✅ integration `test_enrich_404_when_flag_off` |
+| Constraint | Status |
+|---|---|
+| AI Core = single composition authority | ✓ route constructs no providers |
+| Route constructs no OpenAI/httpx clients | ✓ |
+| Route constructs no embedding adapters | ✓ reuses `get_embedder` |
+| Existing `Embedder` port reused (no second abstraction) | ✓ |
+| Existing `VectorRepository` reused (no new client/pipeline) | ✓ |
+| Permission filtering stays in the application layer (R4 gate) | ✓ |
+| No duplicate search pipeline | ✓ |
+| Application layer framework-free (no pydantic/httpx in `app.application`) | ✓ 16/16 guardrails |
 
-Existing permissive-coercion tests (`test_missing_keys_default_to_empty`,
-`test_wrong_types_coerced`, `test_extra_keys_ignored`,
-`test_malformed_structured_response_is_handled`) were **rewritten to assert
-rejection**, not weakened.
+## 4. Test execution
 
-## 6. Test execution
-
-### 6.1 Targeted (enrichment + shared structured_generate + config)
+### 4.1 Targeted (related + summarize provenance + dtos + config)
 ```
-$ python -m pytest app/tests/unit/test_enrich_document.py app/tests/integration/test_ai_enrich_api.py \
-    app/tests/unit/test_openai_adapter_hardening.py app/tests/unit/test_ai_placeholders.py \
-    app/tests/unit/test_ai_dtos.py app/tests/unit/test_ai_config_view.py -q
-103 passed in 3.48s
+$ python -m pytest app/tests/unit/test_related_documents.py app/tests/integration/test_ai_related_api.py \
+    app/tests/unit/test_summarize_document.py app/tests/unit/test_ai_config_view.py app/tests/unit/test_ai_dtos.py -q
+58 passed in 3.97s
 ```
 
-### 6.2 Architecture guardrails
+### 4.2 Architecture guardrails
 ```
 $ python -m pytest app/tests/architecture/ -q
-16 passed in 4.05s
+16 passed in 4.12s
 ```
 
-### 6.3 Full backend regression
+### 4.3 Full backend regression
 ```
 $ python -m pytest app/tests/ -q
-1500 passed, 2 skipped in 381.98s
+1527 passed, 2 skipped in 372.79s
 ```
-1484 → **1500** (permissive tests replaced by strict-rejection + the full audit
-matrix; **0 failures**). The gateway is unchanged — every existing structured-
-generation test passes.
+1500 → **1527** (+3 summarize provenance, +16 related unit, +8 related integration; **0 failures**). M13.1/M13.2/M13.2.1/M12/M11 all green.
 
-### 6.4 Frontend (unaffected)
+### 4.4 Frontend (unaffected)
 ```
 $ npx vitest run        → 70 passed (15 files)
 $ npx tsc --noEmit      → exit 0
 ```
 
-### 6.5 Lint
+### 4.5 Lint
 ```
-$ ruff check app/application/use_cases/ai/enrich_document.py app/tests/unit/test_enrich_document.py
-All checks passed!
+$ ruff check <all changed files>   → clean
 ```
+(`ai.py`: only the pre-existing FastAPI `B008 Depends()` idiom; integration test: only the accepted `pytest.importorskip` `E402` pattern — both consistent with the rest of the codebase.)
 
-## 7. Constraints honoured
+## 5. Repository integrity
+- Changed files: 7 modified + 3 new — **all M13.3-scoped**; no unrelated files.
+- No stray artifacts (`*.db`, `__pycache__`, `node_modules`).
+- `/ai/related` registered (app boots, **269 routes**).
+- `ai_related_documents_enabled` defaults **OFF**; wired `config.py → AiConfigView.feature_flags["related_documents"] → route gate`.
+- No missing imports/exports (app builds; full suite green).
 
-| Constraint | Status |
-|---|---|
-| No new features / redesign / persistence | ✓ only the two defects |
-| Do NOT change search/embedding/QA/M13.3 | ✓ untouched |
-| Do NOT introduce a new transport owner | ✓ gateway unchanged |
-| Do NOT introduce a new provider | ✓ |
-| Maintain architecture guardrails | ✓ 16/16 (incl. application framework-free) |
-| No second schema definition | ✓ `_ENRICHMENT_SCHEMA` is the single source |
-| No permissive coercion / no fabrication | ✓ strict validation |
-| Do not weaken existing tests | ✓ permissive tests rewritten to assert rejection |
+## 6. Limitations (for the fresh audit)
+- Related-docs embedder follows the `semantic_search` flag (shared `get_embedder` dep): with semantic search off, it uses the `HashingEmbedder` fallback (deterministic, non-semantic) — the same honest degradation `/search` uses.
+- Scores reuse the search RRF convention on the semantic rank (the vector repository exposes no raw cosine); ordering is the existing vector-search order.
+- Summarization provenance is read-only metadata; existing summarization behaviour is unchanged.
 
-## 8. Remaining limitations (for the fresh audit)
-- Validation covers the JSON-Schema subset the enrichment schema uses
-  (`type`/`required`/`properties`/`items`/`additionalProperties`). It is not a
-  general JSON Schema implementation — by design (smallest correct, scope-bound).
-- Schema enforcement is enrichment-specific, not at the gateway boundary (the
-  audit's endorsed fallback; keeps the transport owner frozen). A future second
-  structured-generation caller must validate its own contract at its boundary.
-- The gateway still sends `response_format: {"type": "json_object"}` only (JSON
-  Schema is not pushed to the provider wire) — consistent with the M11 design;
-  the schema is enforced in-application.
-
-## 9. Deliverables
-- **Patch ZIP:** `releases/m13.2.1/m13.2.1-patch.zip`
-- **Patch diff:** `releases/m13.2.1/m13.2.1.patch`
+## 7. Deliverables
+- **Patch ZIP:** `releases/m13.3/m13.3-patch.zip`
+- **Patch diff:** `releases/m13.3/m13.3.patch`
 - **Manifest:** `PATCH_MANIFEST.md`
-- **Changelog:** `CHANGELOG.md` (M13.2.1 entry prepended)
+- **Changelog:** `CHANGELOG.md` (M13.3 entry prepended)
+
+The implementation is left ready for a completely fresh independent audit; M13 final approval is not claimed by this report.

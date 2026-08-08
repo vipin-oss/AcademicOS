@@ -333,6 +333,12 @@ class SummarizeResult:
     (not configured or provider error) — the ``summary`` field carries an
     honest fallback message. ``truncated`` / ``chars_used`` / ``chars_total``
     disclose whether the source text was truncated before generation.
+
+    M13.3 retrofits the M13.1 provenance contract (provider, model, prompt
+    version, tokens, latency) so every summary is observable and auditable,
+    mirroring ``QAResult`` / ``EnrichmentResult``. Provenance is sourced from
+    the actual ``GenerationResult`` (never fabricated); the fallback path
+    records only the prompt identity (no provider/model — none produced one).
     """
 
     summary: str
@@ -340,12 +346,25 @@ class SummarizeResult:
     truncated: bool = False
     chars_used: int = 0
     chars_total: int = 0
+    # Provenance contract (M13.1; retrofitted in M13.3).
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
 
     def __post_init__(self) -> None:
         if self.chars_used < 0 or self.chars_total < 0:
             raise ValueError("SummarizeResult char counts must be >= 0.")
         if self.chars_used > self.chars_total:
             raise ValueError("SummarizeResult chars_used must be <= chars_total.")
+        if self.latency_ms < 0:
+            raise ValueError("SummarizeResult latency_ms must be >= 0.")
+        if self.input_tokens < 0 or self.output_tokens < 0:
+            raise ValueError("SummarizeResult token counts must be >= 0.")
 
 
 
@@ -424,6 +443,37 @@ class EnrichmentResult:
             raise ValueError("EnrichmentResult token counts must be >= 0.")
 
 
+@dataclass(frozen=True)
+class RelatedDocumentItem:
+    """One related document (M13.3) — semantic-similarity nearest neighbour.
+
+    Carries ONLY fields already supported by the existing search/vector result
+    contract (object identity, type, title, version) plus a deterministic
+    score derived with the existing search scoring convention (reciprocal-rank
+    fusion). No content is exposed and no LLM provenance is fabricated
+    (related documents is an embedding/search capability, not generation).
+    """
+
+    object_id: str
+    object_type: str
+    title: str
+    score: float
+    version: int = 0
+
+
+@dataclass(frozen=True)
+class RelatedDocumentsResult:
+    """Related documents for one source (M13.3).
+
+    ``items`` is ordered by descending semantic similarity (deterministic,
+    ``object_id`` tie-breaks inherited from the vector repository). An empty
+    tuple is a valid response (no readable related documents, or the
+    embedding/search backend is unavailable).
+    """
+
+    items: tuple[RelatedDocumentItem, ...] = ()
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (deterministic, shared by routes and tests)
 # ---------------------------------------------------------------------------
@@ -473,6 +523,29 @@ def summarize_result_dict(result: SummarizeResult) -> dict:
         "truncated": result.truncated,
         "chars_used": result.chars_used,
         "chars_total": result.chars_total,
+        "provider_id": result.provider_id,
+        "model": result.model,
+        "prompt_id": result.prompt_id,
+        "prompt_version": result.prompt_version,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "token_usage_estimated": result.token_usage_estimated,
+        "latency_ms": result.latency_ms,
+    }
+
+
+def related_documents_result_dict(result: RelatedDocumentsResult) -> dict:
+    return {
+        "items": [
+            {
+                "object_id": item.object_id,
+                "object_type": item.object_type,
+                "title": item.title,
+                "score": item.score,
+                "version": item.version,
+            }
+            for item in result.items
+        ]
     }
 
 
@@ -528,6 +601,8 @@ __all__ = [
     "AiHealthSummary",
     "AiModelsSummary",
     "EnrichmentResult",
+    "RelatedDocumentItem",
+    "RelatedDocumentsResult",
     "GenerationEvent",
     "GenerationPrompt",
     "GenerationResult",
@@ -564,5 +639,6 @@ __all__ = [
     "summarize_result_dict",
     "qa_result_dict",
     "enrichment_result_dict",
+    "related_documents_result_dict",
     "provider_record_dict",
 ]

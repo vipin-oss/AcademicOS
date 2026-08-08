@@ -1,3 +1,50 @@
+# AcademicOS — Sprint M13.3 Changelog (Provenance Retrofit + Related Documents)
+
+Release: **M13.3** · Baseline `0d93094` (M13.2.1) · Commit `97da723` · Date: 2026-08-08
+Status: **final M13 sprint — two Blueprint capabilities. Reuse-only: no new retrieval/embedding/vector/provider/transport/AI Core/prompt framework, no persistence, no RAG/agents/memory.**
+
+## Part A — M12.1 summarization provenance retrofit
+
+`SummarizeResult` now carries the M13.1 provenance contract (`provider_id`, `model`, `prompt_id`, `prompt_version`, `input_tokens`, `output_tokens`, `token_usage_estimated`, `latency_ms`), sourced from the actual `GenerationResult` — never fabricated. The summarization prompt identity (`ai.summarize` v1) is recorded on both success and fallback paths; the fallback claims no provider/model (internally consistent). The summarization safety contract (master switch, flag, READ, extracted text, 12k truncation, truncation disclosure, untrusted delimiters, honest fallback, non-persistent) is **unchanged**.
+
+## Part B — `GET /api/v1/ai/related` (semantic related documents)
+
+Documents semantically related to a source, reusing the existing infrastructure end-to-end:
+
+| Reused component | How |
+|---|---|
+| `AiCore.embedder()` / `Embedder` port | Resolved via the **same** `get_embedder` dependency the `/search` route uses → identical embedder identity + M12 collection dimensions. No second embedding abstraction. |
+| `VectorRepository.search` | Existing nearest-neighbour (cosine) behaviour + deterministic ordering. No new vector pipeline/client. |
+| `DocumentAnnotationService.extracted_text` | Existing intake source-text pipeline (same as summarize/enrich). |
+| `PermissionEvaluator` (R4 gate) | READ on the source before embedding its text; every result re-authorized against the authoritative object. |
+| Search scoring | Existing reciprocal-rank-fusion convention reused for the deterministic score (no new ranking algorithm). |
+
+**Contract:** source is permission-checked before its text is embedded; results are READ-filtered; the source is excluded from its own results; `limit` is bounded (`[1, 50]`, invalid → 422); zero results is valid; embedding/vector failures degrade honestly to empty results; no LLM provenance fabricated. New `RelatedDocumentItem` / `RelatedDocumentsResult` DTOs carry only fields already in the search result contract (`object_id`, `object_type`, `title`, `score`, `version`).
+
+**Feature flag:** `AI_RELATED_DOCUMENTS_ENABLED` (default **OFF**), gated exclusively via `core.config.enabled AND feature_flags["related_documents"]` — settings is never read directly. `AI_ENABLED=false` (+ flag on) and flag off both disable the feature with **no embedding call**.
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/application/dtos/ai.py` | Provenance fields on `SummarizeResult`; new `RelatedDocumentItem`, `RelatedDocumentsResult`, `related_documents_result_dict`. |
+| `backend/app/application/use_cases/ai/summarize_document.py` | Populate provenance (success + fallback); prompt identity constants. |
+| `backend/app/application/use_cases/ai/related_documents.py` | **new** — `RelatedDocumentsUseCase`. |
+| `backend/app/api/routes/ai.py` | `SummarizeResponseModel` provenance fields; `GET /ai/related` + response models. |
+| `backend/app/core/config.py` | `ai_related_documents_enabled: bool = False`. |
+| `backend/app/application/ai/config.py` | `"related_documents"` feature flag. |
+| `backend/app/tests/unit/test_summarize_document.py` | +3 provenance tests. |
+| `backend/app/tests/unit/test_related_documents.py` | **new** — 16 unit tests. |
+| `backend/app/tests/integration/test_ai_related_api.py` | **new** — 8 integration tests. |
+| `backend/app/tests/unit/test_ai_config_view.py` | flag in expected dict. |
+
+## Verification
+- Backend: **1527 passed, 2 skipped** (1500 → 1527; +27 new; zero failures)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean (backend-only)
+- Architecture guardrails: **16/16** · ruff clean on changed files (route: accepted `B008`; integration: accepted `E402`)
+- App boots, 269 routes (`/ai/related` registered)
+
+---
+
 # AcademicOS — Sprint M13.2.1 Changelog (Corrective — Structured-Output Contract Hardening)
 
 Release: **M13.2.1** · Baseline `0377aec` (M13.2) · Commit `fc40127` · Date: 2026-08-08
