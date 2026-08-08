@@ -5,6 +5,8 @@ auth) are composed here; API routers expose them. No business logic lives here.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -41,12 +43,28 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifecycle: on shutdown, release AI Core gateway resources
+    exactly once (M11.3.3). The AI Core owns the gateway lifecycle; this wires
+    that ownership into the FastAPI shutdown so httpx clients are closed
+    gracefully. Best-effort - cleanup never blocks shutdown."""
+    yield
+    try:
+        from app.api.dependencies.ai import reset_ai_core_cache
+
+        reset_ai_core_cache()
+    except Exception:  # noqa: BLE001 - cleanup must never break shutdown
+        logger.exception("AI Core shutdown cleanup failed")
+
+
 def create_app() -> FastAPI:
     _bootstrap_admin()
     app = FastAPI(
         title=settings.app_name,
         version=settings.version,
         description="AcademicOS — Object-Centric Knowledge Graph API",
+        lifespan=lifespan,
     )
 
     app.add_middleware(

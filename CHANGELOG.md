@@ -1,3 +1,30 @@
+# AcademicOS — Sprint M11.3.3 Changelog (Final Runtime Hardening)
+
+Release: **M11.3.3** · Baseline `f8d7b2e` (M11.3.2) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08
+Status: **final runtime hardening — no architecture redesign, no new capabilities. M11 freeze-ready.**
+
+Closes the last verified production runtime findings. Non-executable providers
+cannot become runtime primaries; the AI Core lifecycle is wired into the FastAPI
+shutdown; and the singleton is thread-safe.
+
+## Fixes
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | Assistant readiness used `.configured` (declared), not `.executable` (can run) | `_gateway_ready` now checks `.executable`; a declared-but-non-executable provider degrades to rules — never becomes the primary. |
+| 2 | No graceful shutdown for AI Core resources | A FastAPI `lifespan` handler calls `reset_ai_core_cache()` on shutdown, closing owned httpx clients exactly once. |
+| 3 | Singleton initialization not thread-safe | Double-checked locking (`threading.Lock`) on `get_ai_core`; `reset_ai_core_cache` is locked and idempotent. |
+| 4 | Runtime guardrails | 7 new behaviour tests: non-executable never primary, lifecycle shutdown, singleton concurrency, idempotent reset. |
+
+## Verification
+
+- Backend: **1392 passed, 2 skipped** (+7 new; 2 pre-existing flaky productivity tests pass in isolation)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16**
+- `ruff --select F401,I001` clean; app boots with lifespan (264 routes)
+
+---
+
 # AcademicOS — Sprint M11.3.2 Changelog (Final Production Contract Hardening)
 
 Release: **M11.3.2** · Baseline `0afde47` (M11.3.1) · Branch `feature/m11-ai-workspace` · Date: 2026-08-07

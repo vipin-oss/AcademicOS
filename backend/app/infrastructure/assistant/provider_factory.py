@@ -45,8 +45,14 @@ def build_assistant_provider(
 
 
 def _gateway_ready(gateway: LanguageModelGateway) -> bool:
-    """True when the gateway has a wired, configured transport."""
+    """True when the gateway can actually EXECUTE (real adapter + endpoint).
+
+    Readiness is executability, not mere declaration (M11.3.3): a declared
+    but non-executable provider (e.g. a placeholder with a config entry, or a
+    provider with no base_url) must never become the assistant's primary
+    runtime provider — the deterministic rules provider is used instead.
+    """
     try:
-        return bool(gateway.health().configured)
+        return bool(gateway.health().executable)
     except Exception:  # noqa: BLE001 — a broken gateway degrades to rules
         return False

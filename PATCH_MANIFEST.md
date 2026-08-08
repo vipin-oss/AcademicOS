@@ -1,34 +1,27 @@
-# AcademicOS M11.3.2 — Incremental Patch Manifest (Final Production Contract Hardening)
+# AcademicOS M11.3.3 — Incremental Patch Manifest (Final Runtime Hardening)
 
-**Milestone:** M11.3.2 (unified runtime identity, three-state health, AI Core lifecycle ownership)
-**Baseline:** `0afde47` (M11.3.1)
+**Milestone:** M11.3.3 (assistant executable readiness, thread-safe singleton, FastAPI lifecycle)
+**Baseline:** `f8d7b2e` (M11.3.2)
 **Branch:** `feature/m11-ai-workspace`
-**Patch commit:** `341b743`
-**Date:** 2026-08-07
+**Patch commit:** `e09c944`
+**Date:** 2026-08-08
 
-**Scope:** Production-contract hardening only. No architecture redesign, no new
-capabilities, no new SDKs. Backward compatible (additive health fields; no
-schema/dependency/required-settings change).
+**Scope:** Final runtime hardening. No architecture redesign, no new capabilities.
+Backward compatible (no API/schema/deps change).
 
 ## Files Modified
 
 | Path | Change |
 |---|---|
-| `backend/app/application/ai/core.py` | `model_records` uses effective default; `executable` readiness; `AiCore.close()` lifecycle ownership. |
-| `backend/app/application/dtos/ai.py` | `ProviderHealth`/`ProviderRecord` add `executable` + `operational`; serialization. |
-| `backend/app/infrastructure/ai/llm/openai.py`, `placeholders.py` | `health()` reports configured(declared)/executable/operational. |
-| `backend/app/api/routes/ai.py` | `AiProviderResponseModel` exposes `executable` + `operational`. |
-| `backend/app/api/dependencies/ai.py` | `get_ai_core` lazy singleton (consistent lifecycle) + `reset_ai_core_cache()`. |
-| `backend/app/infrastructure/ai/provider_factory.py`, `infrastructure/llm/llm_provider.py` | Deprecation notes on the isolated compatibility seam. |
-| `backend/app/tests/...` | three-state health + lifecycle + identity-agreement tests; fake updated. |
-| `frontend/src/types/index.ts`, `AiSettingsView.tsx(.test)` | `executable`/`operational`; readiness badge uses `executable`. |
-| `README.md`, `AI_DEVELOPER_GUIDE.md` | Corrected to match the implementation. |
+| `backend/app/infrastructure/assistant/provider_factory.py` | `_gateway_ready` uses `.executable` (can run), not `.configured` (declared). |
+| `backend/app/api/dependencies/ai.py` | Thread-safe singleton (double-checked locking); locked + idempotent `reset_ai_core_cache`. |
+| `backend/app/main.py` | FastAPI `lifespan` handler: shutdown closes AI Core gateway resources via `reset_ai_core_cache()`. |
 
 ## Files Added
-*(none — tests appended to existing files)*
 
-## Database Migrations / Dependencies / Settings
-*(none required)*
+| Path | Purpose |
+|---|---|
+| `backend/app/tests/unit/test_m11_3_3_runtime_guardrails.py` | 7 behaviour tests: non-executable never primary, lifecycle shutdown, singleton concurrency, idempotent reset. |
 
 ## Post-Apply
 ```powershell
@@ -36,4 +29,4 @@ cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## Verification
-- Backend: **1387 passed, 2 skipped** · Frontend: **70 vitest + tsc clean** · Architecture: **16/16** · ruff clean.
+- Backend: **1392 passed, 2 skipped** · Frontend: **70 vitest + tsc clean** · Architecture: **16/16** · ruff clean.
