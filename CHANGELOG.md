@@ -1,3 +1,37 @@
+# AcademicOS — Sprint M13.2.1 Changelog (Corrective — Structured-Output Contract Hardening)
+
+Release: **M13.2.1** · Baseline `0377aec` (M13.2) · Commit `fc40127` · Date: 2026-08-08
+Status: **corrective sprint only — two production-critical M13.2 audit defects. No new features, no gateway change, no new abstraction, no new dependency.**
+
+## Defects fixed
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | `StructuredGenerationPrompt.schema` was ignored beyond "is the top-level value a dict" — the supplied JSON Schema was never enforced | `_ENRICHMENT_SCHEMA` is now the **single source of truth**: the same schema asserted to the model (`StructuredGenerationPrompt.schema`) is used to validate `structured_generate()` output. No second schema. Validation is enrichment-specific (immediately after `structured_generate()`) so the frozen M11 transport owner (`OpenAIProvider`) stays untouched — zero regression risk for the shared structured-generation contract. |
+| 2 | `_coerce()` converted invalid provider output (`123→"123"`, `tags="physics"→("physics",)`, `None→""`, extra fields ignored) into apparently-valid enrichment with `available=True` | The permissive `_coerce()` is **removed**. The gateway's JSON object is now **strictly validated** against the enrichment contract (stdlib-only `_validate_against_schema`, driven by the schema). Missing required fields, `null`, wrong scalar types, scalar-for-array, non-string array items, and unexpected fields (`additionalProperties: false`) are all **rejected**. Invalid output returns the honest `available=False` fallback and never reaches the successful-response path. |
+
+## Exact validation mechanism
+- **Stdlib-only**, schema-driven (`isinstance` checks over the JSON-Schema *subset* the enrichment schema uses: `type`, `required`, `properties`, `items.type`, `additionalProperties`).
+- `pydantic` is **not** used in `app.application` — the M11 architecture guardrail (`test_application_depends_only_on_domain_and_stdlib`) forbids framework imports there. `jsonschema` is not a dependency. A focused stdlib validator is therefore the smallest correct, safe implementation.
+- The `OpenAIProvider` gateway / `structured_generate()` is **unchanged**.
+
+## Required enrichment contract (now enforced, not coerced)
+`title`, `summary`: required `string` · `tags`, `categories`, `keywords`: required `array` of `string` · extra fields: **rejected** (`additionalProperties: false`).
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/application/use_cases/ai/enrich_document.py` | Replaced permissive `_coerce()` with strict `_validate_against_schema()`; `_ENRICHMENT_SCHEMA` gains `additionalProperties: false` and becomes the single source of truth; invalid output → `available=False` fallback. |
+| `backend/app/tests/unit/test_enrich_document.py` | Permissive-coercion tests changed to assert **rejection**; full 21-point audit regression matrix added (#1–#19 use-case level). |
+
+## Verification
+- Backend: **1500 passed, 2 skipped** (1484 → 1500; +net regression coverage; zero failures)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean (unaffected — backend-only)
+- Architecture guardrails: **16/16** (incl. the application framework-free guardrail) · ruff clean
+- Shared structured-generation tests (openai hardening / placeholders / dtos): all green (gateway unchanged)
+
+---
+
 # AcademicOS — Sprint M13.2 Changelog (Document Enrichment)
 
 Release: **M13.2** · Baseline `96599be` (M13.1.1) · Commit `b52f7f0` · Date: 2026-08-08

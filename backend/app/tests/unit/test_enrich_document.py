@@ -1,9 +1,11 @@
-"""Unit tests: EnrichDocumentUseCase (Sprint M13.2).
+"""Unit tests: EnrichDocumentUseCase (Sprint M13.2 / M13.2.1).
 
-Behaviour-focused: permission enforcement, extracted-text requirement,
-truncation disclosure, untrusted-content delimiters, structured-response
-validation, honest gateway fallback, and provenance. The first production
-use of ``structured_generate``. All dependencies mocked — no network, no db.
+M13.2.1 — structured-output contract hardening (corrective). The enrichment
+contract is now STRICTLY validated (pydantic strict mode, ``extra="forbid"``);
+invalid provider output is REJECTED (``available=False``), never normalized.
+
+Covers the audit's 21-point regression matrix (#1-#19 at the use-case level;
+#20-#21 — master switch / flag gates — are in test_ai_enrich_api.py).
 """
 from __future__ import annotations
 
@@ -53,7 +55,8 @@ class _MockEvaluator:
 
 
 class _MockGateway:
-    """Records the structured prompt; returns a fixed structured value."""
+    """Records the structured prompt; returns a fixed structured value, or
+    raises (to simulate a gateway-level failure such as invalid JSON)."""
 
     provider_id = "test-provider"
 
@@ -77,7 +80,7 @@ class _MockGateway:
             latency_ms=88,
         )
 
-    def generate(self, prompt):  # must NOT be used by enrichment
+    def generate(self, prompt):  # enrichment must NOT use generate()
         self.generate_called = True
         raise AssertionError("enrichment must use structured_generate, not generate")
 
@@ -114,6 +117,23 @@ def _use_case(gateway, *, allow=True, extraction=None, doc=None):
     )
 
 
+def _enrich(gateway, text="Long paper text."):
+    """Run enrichment with a readable document; return the EnrichmentResult."""
+    return _use_case(gateway, extraction={"text": text}).execute(
+        "obj:document:doc1", _user(), storage=None
+    )
+
+
+def _assert_rejected(result):
+    """An invalid-output result must be the honest fallback, never success."""
+    assert result.available is False
+    assert result.title == ""
+    assert result.summary == ""
+    assert tuple(result.tags) == ()
+    assert tuple(result.categories) == ()
+    assert tuple(result.keywords) == ()
+
+
 _GOOD_VALUE = {
     "title": "On Quantum Entanglement",
     "summary": "A study of entangled particles.",
@@ -123,7 +143,7 @@ _GOOD_VALUE = {
 }
 
 
-# --------------------------------------------------------------------------- tests
+# --------------------------------------------------------------------------- permission & text
 
 
 class TestPermission:
@@ -147,22 +167,25 @@ class TestPermission:
 class TestExtractedText:
     def test_no_extraction_raises_validation(self):
         gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction=None)
         with pytest.raises(ValidationError, match="No extracted text"):
-            use_case.execute("obj:document:doc1", _user(), storage=None)
+            _use_case(gw, extraction=None).execute(
+                "obj:document:doc1", _user(), storage=None
+            )
 
     def test_empty_text_raises_validation(self):
         gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": ""})
         with pytest.raises(ValidationError, match="No extracted text"):
-            use_case.execute("obj:document:doc1", _user(), storage=None)
+            _use_case(gw, extraction={"text": ""}).execute(
+                "obj:document:doc1", _user(), storage=None
+            )
+
+
+# --------------------------------------------------------------------------- success
 
 
 class TestSuccessfulEnrichment:
-    def test_returns_structured_fields(self):
-        gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": "Long paper text."})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+    def test_valid_enrichment_passes(self):  # audit #1
+        result = _enrich(_MockGateway(_GOOD_VALUE))
         assert result.available is True
         assert result.title == "On Quantum Entanglement"
         assert result.summary == "A study of entangled particles."
@@ -172,26 +195,102 @@ class TestSuccessfulEnrichment:
 
     def test_uses_structured_generate_not_generate(self):
         gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": "Some text."})
-        use_case.execute("obj:document:doc1", _user(), storage=None)
+        _enrich(gw)
         assert gw.structured_called is True
         assert gw.generate_called is False
         # The prompt carries the JSON schema (structured-generation contract).
         assert gw.last_prompt.schema["type"] == "object"
         assert "title" in gw.last_prompt.schema["properties"]
 
+    def test_schema_is_strict_no_additional_properties(self):
+        """The schema asserted to the model forbids extra fields (single
+        source of truth with the validator)."""
+        gw = _MockGateway(_GOOD_VALUE)
+        _enrich(gw)
+        assert gw.last_prompt.schema.get("additionalProperties") is False
+
     def test_untrusted_content_delimiters_in_prompt(self):
         gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": "Secret doc."})
-        use_case.execute("obj:document:doc1", _user(), storage=None)
+        _enrich(gw, text="Secret doc.")
         assert "<<<DOCUMENT>>>" in gw.last_prompt.user
         assert "<<<END>>>" in gw.last_prompt.user
         assert "DATA" in gw.last_prompt.system or "data" in gw.last_prompt.system
 
-    def test_provenance_present(self):
-        gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": "Text."})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+
+# --------------------------------------------------------------------------- strict validation (audit #2-#14)
+
+
+def _drop(key):
+    return {k: v for k, v in _GOOD_VALUE.items() if k != key}
+
+
+# Each case is one audit point; all must be REJECTED (available=False), not
+# normalized into apparently-valid enrichment.
+_REJECTION_CASES = [
+    ("missing_title", _drop("title")),                                # #2
+    ("missing_summary", _drop("summary")),                            # #3
+    ("missing_tags", _drop("tags")),                                  # #4
+    ("missing_categories", _drop("categories")),                      # #5
+    ("missing_keywords", _drop("keywords")),                          # #6
+    ("title_none", {**_GOOD_VALUE, "title": None}),                   # #7
+    ("summary_none", {**_GOOD_VALUE, "summary": None}),               # #8
+    ("tags_scalar", {**_GOOD_VALUE, "tags": "physics"}),              # #9
+    ("categories_int", {**_GOOD_VALUE, "categories": 42}),            # #10
+    ("keywords_non_string_item", {**_GOOD_VALUE, "keywords": ["ok", 7]}),  # #11
+    ("extra_field", {**_GOOD_VALUE, "unexpected": "x"}),              # #12
+    ("arbitrary_object", {"foo": "bar", "answer": 42}),               # #14
+    ("empty_object", {}),                                             # arbitrary
+    ("title_int_coercion", {**_GOOD_VALUE, "title": 123}),            # no 123->"123"
+    ("tags_with_null", {**_GOOD_VALUE, "tags": ["a", None]}),         # null item
+]
+
+
+class TestStrictValidationRejectsInvalidOutput:
+    @pytest.mark.parametrize("name,value", _REJECTION_CASES, ids=[c[0] for c in _REJECTION_CASES])
+    def test_invalid_output_is_rejected(self, name, value):
+        result = _enrich(_MockGateway(value))
+        _assert_rejected(result)  # audit #2-#12, #14 (+ hardening extras)
+
+    def test_invalid_json_is_rejected(self):  # audit #13
+        # The real gateway raises on invalid JSON (covered by
+        # test_openai_adapter_hardening); the use case converts any gateway
+        # error into the honest fallback.
+        result = _enrich(_MockGateway(raise_exc=RuntimeError("not valid JSON")))
+        _assert_rejected(result)
+
+
+# --------------------------------------------------------------------------- invalid-output contract (audit #15-#16)
+
+
+class TestInvalidOutputContract:
+    def test_invalid_output_returns_available_false(self):  # audit #15
+        result = _enrich(_MockGateway({"only": "this"}))
+        assert result.available is False
+
+    def test_invalid_output_does_not_reach_success_path(self):  # audit #16
+        """A schema-violating value must never populate the result fields —
+        even fields that happened to be valid in the bad payload stay empty."""
+        result = _enrich(_MockGateway({
+            "title": "Looks Fine",       # valid on its own...
+            "summary": "",               # ...but tags/categories/keywords missing
+        }))
+        assert result.available is False
+        assert result.title == ""  # NOT "Looks Fine" — success path was not taken
+
+
+# --------------------------------------------------------------------------- fallback & provenance
+
+
+class TestGatewayFallback:
+    def test_provider_failure_returns_honest_fallback(self):  # audit #17
+        result = _enrich(_MockGateway(raise_exc=RuntimeError("provider down")))
+        _assert_rejected(result)
+        assert result.chars_total == len("Long paper text.")
+
+
+class TestProvenance:
+    def test_valid_provenance_preserved(self):  # audit #18
+        result = _enrich(_MockGateway(_GOOD_VALUE))
         assert result.provider_id == "test-provider"
         assert result.model == "test-model"
         assert result.prompt_id == "ai.enrich"
@@ -200,82 +299,29 @@ class TestSuccessfulEnrichment:
         assert result.output_tokens == 23
         assert result.latency_ms == 88
 
+    def test_fallback_provenance_internally_consistent(self):  # audit #19
+        """Fallback claims no provider/model (none produced output) but still
+        records the prompt identity — self-consistent, never fabricated."""
+        result = _enrich(_MockGateway(raise_exc=RuntimeError("down")))
+        assert result.available is False
+        assert result.provider_id == ""   # honest: no provider produced output
+        assert result.model == ""         # honest: no model produced output
+        assert result.prompt_id == "ai.enrich"
+        assert result.prompt_version == 1
 
-class TestStructuredValidation:
-    """The model's JSON is coerced + validated; bad shapes degrade gracefully."""
 
-    def test_missing_keys_default_to_empty(self):
-        gw = _MockGateway({"title": "Only Title"})
-        use_case = _use_case(gw, extraction={"text": "x"})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
-        assert result.available is True
-        assert result.title == "Only Title"
-        assert result.summary == ""
-        assert tuple(result.tags) == ()
-        assert tuple(result.categories) == ()
-        assert tuple(result.keywords) == ()
-
-    def test_wrong_types_coerced(self):
-        gw = _MockGateway({
-            "title": 123,           # non-string -> stringified
-            "summary": None,        # -> empty
-            "tags": "physics",      # not a list -> empty
-            "categories": 42,       # not a list -> empty
-            "keywords": ["a", 7, "b"],  # list with non-strings -> coerced to str
-        })
-        use_case = _use_case(gw, extraction={"text": "x"})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
-        assert result.title == "123"
-        assert result.summary == ""
-        assert tuple(result.tags) == ()
-        assert tuple(result.categories) == ()
-        assert tuple(result.keywords) == ("a", "7", "b")
-
-    def test_extra_keys_ignored(self):
-        gw = _MockGateway({**_GOOD_VALUE, "malicious": "ignored", "foo": ["bar"]})
-        use_case = _use_case(gw, extraction={"text": "x"})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
-        assert tuple(result.tags) == ("physics", "quantum")
-        assert result.available is True
+# --------------------------------------------------------------------------- truncation
 
 
 class TestTruncation:
     def test_long_text_truncated_with_disclosure(self):
         long_text = "x" * 20000  # exceeds _MAX_DOC_CHARS (12000)
-        gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": long_text})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        result = _enrich(_MockGateway(_GOOD_VALUE), text=long_text)
         assert result.truncated is True
         assert result.chars_total == 20000
         assert result.chars_used == 12000
 
     def test_short_text_not_truncated(self):
-        gw = _MockGateway(_GOOD_VALUE)
-        use_case = _use_case(gw, extraction={"text": "Short."})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        result = _enrich(_MockGateway(_GOOD_VALUE), text="Short.")
         assert result.truncated is False
         assert result.chars_used == result.chars_total == len("Short.")
-
-
-class TestGatewayFallback:
-    def test_gateway_failure_returns_honest_fallback(self):
-        gw = _MockGateway(raise_exc=RuntimeError("provider down"))
-        use_case = _use_case(gw, extraction={"text": "Some text."})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
-        assert result.available is False
-        assert result.title == ""
-        assert result.summary == ""
-        assert tuple(result.tags) == ()
-        assert result.chars_total == len("Some text.")
-        # Provenance identity still recorded (no provider/model on fallback).
-        assert result.prompt_id == "ai.enrich"
-
-    def test_malformed_structured_response_is_handled(self):
-        """structured_generate itself parses JSON; but a gateway that returns
-        a non-object value dict is coerced, not crashed."""
-        gw = _MockGateway({})  # empty object — all fields default
-        use_case = _use_case(gw, extraction={"text": "x"})
-        result = use_case.execute("obj:document:doc1", _user(), storage=None)
-        assert result.available is True
-        assert result.title == ""  # coerced, not crashed
-
