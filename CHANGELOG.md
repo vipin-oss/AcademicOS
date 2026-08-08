@@ -1,3 +1,31 @@
+# AcademicOS — Sprint M13.1 Changelog (Grounded Question Answering)
+
+Release: **M13.1** · Baseline `0a0c0c7` (M12.3.1) · Date: 2026-08-08
+Status: **flagship AI feature — grounded QA with citations + provenance.**
+
+## What was built
+
+| Component | Detail |
+|---|---|
+| `POST /ai/qa` | Stateless grounded QA: retrieve → context → prompt → generate → verify → return with citations. |
+| `POST /ai/qa/stream` | SSE streaming variant: token events → completion event with verified answer + provenance. |
+| `GroundedQAUseCase` | Composes existing retrieval/context/citation/prompt/verification pipeline — zero duplication. |
+| `QAResult` DTO | answer, available, citations, retrieved_count, truncated + **provenance** (provider_id, model, prompt_id/version, tokens, latency). |
+| Provenance contract | Defined in M13.1; all gateway metadata surfaced in the response. |
+
+## Reused components (no modifications)
+`AssistantRetrievalService`, `AssistantContextBuilder`, `CitationBuilder`, `AssistantPromptBuilder`, `AnswerVerifier`, `LanguageModelGateway.generate/stream()`, `PermissionEvaluator`.
+
+## Guardrail update
+AI use cases (`application/use_cases/ai/`) may import from `application/assistant/` (compose existing services). Only the AI Core (`application/ai/`) stays pure.
+
+## Verification
+- Backend: **1444 passed, 2 skipped** (+5 new integration; zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16** · ruff clean · app boots (267 routes)
+
+---
+
 # AcademicOS — Sprint M12.3.1 Changelog (Semantic Search Configuration Authority Fix)
 
 Release: **M12.3.1** · Baseline `f0238c6` (M12.3) · Date: 2026-08-08

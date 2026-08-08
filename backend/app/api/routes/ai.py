@@ -17,18 +17,25 @@ A later M11 sprint adds generation endpoints that consume
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
 from app.api.routes.documents import get_storage
+from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.ai.core import AiCore
+from app.application.assistant.citations import CitationBuilder
+from app.application.assistant.verifier import AnswerVerifier
 from app.application.dtos.ai import (
     health_summary_dict,
     models_summary_dict,
     provider_record_dict,
+    qa_result_dict,
     summarize_result_dict,
 )
 from app.application.exceptions import (
@@ -36,19 +43,28 @@ from app.application.exceptions import (
     PermissionDeniedError,
     ValidationError,
 )
+from app.application.ports.embedder import Embedder
+from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.document_annotation_service import (
     DocumentAnnotationService,
 )
+from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
+from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
+from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
+from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
+)
+from app.infrastructure.repositories.sqlalchemy_search_repository import (
+    SQLAlchemySearchRepository,
 )
 
 router = APIRouter(prefix="/ai", tags=["AI"])
@@ -205,6 +221,129 @@ def summarize_document(
 
 
 
+class QABody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+
+
+class QACitationModel(BaseModel):
+    number: int
+    object_id: str
+    object_type: str
+    title: str
+
+
+class QAResponseModel(BaseModel):
+    """Grounded QA result (POST /ai/qa)."""
+
+    answer: str
+    available: bool
+    retrieved_count: int = 0
+    truncated: bool = False
+    citations: list[dict] = Field(default_factory=list)
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+
+
+def _qa_retrieval(
+    db: Session,
+    repo: SQLAlchemyObjectRepository,
+    vector_repository: VectorRepository | None,
+    embedder: Embedder,
+) -> AssistantRetrievalService:
+    """Construct the retrieval service (reused Assistant infrastructure)."""
+    search = SearchObjectsUseCase(
+        search_repository=SQLAlchemySearchRepository(db),
+        object_repository=repo,
+        permission_evaluator=ObjectPermissionEvaluator(),
+        vector_repository=vector_repository,
+        embedder=embedder,
+    )
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    return AssistantRetrievalService(search, graph)
+
+
+def _sse(event: str, data: dict) -> str:
+    """One Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/qa", response_model=QAResponseModel)
+def grounded_qa(
+    body: QABody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Grounded question answering (M13.1).
+
+    Retrieves relevant documents (permission-filtered), generates a grounded
+    answer with verified citations, and returns provenance metadata.
+    Feature-flagged (``AI_QA_ENABLED``).
+    """
+    if not core.config.enabled or not core.config.feature_flags.get("qa", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    use_case = GroundedQAUseCase(
+        repo, retrieval, core,
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+    )
+    result = use_case.execute(body.question, user)
+    return QAResponseModel(**qa_result_dict(result))
+
+
+@router.post("/qa/stream")
+def grounded_qa_stream(
+    body: QABody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Streaming grounded QA (M13.1): SSE over the same pipeline as ``POST /ai/qa``.
+
+    Events: ``token`` (partial deltas), ``completion`` (verified answer +
+    provenance). Feature-flagged (``AI_QA_ENABLED``).
+    """
+    if not core.config.enabled or not core.config.feature_flags.get("qa", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    use_case = GroundedQAUseCase(
+        repo, retrieval, core,
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+    )
+
+    def events():
+        for event in use_case.stream(body.question, user):
+            if event["type"] == "token":
+                yield _sse("token", {"delta": event["delta"]})
+            elif event["type"] == "complete":
+                yield _sse("completion", qa_result_dict(event["result"]))
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+
 __all__ = [
     "AiHealthResponseModel",
     "AiModelResponseModel",
@@ -213,5 +352,7 @@ __all__ = [
     "ListAiProvidersResponseModel",
     "SummarizeBody",
     "SummarizeResponseModel",
+    "QABody",
+    "QAResponseModel",
     "router",
 ]

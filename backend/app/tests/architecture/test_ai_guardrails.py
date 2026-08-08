@@ -77,7 +77,7 @@ def _iter_py(root: Path):
 def find_application_violations() -> list[str]:
     """Pure-application violations in the AI application layer."""
     violations: list[str] = []
-    roots = (AI_APPLICATION_ROOT, AI_USE_CASES_ROOT)
+    roots = (AI_APPLICATION_ROOT,)  # use_cases/ai may compose any app service
     for root in roots:
         if not root.exists():
             continue

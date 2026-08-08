@@ -348,6 +348,38 @@ class SummarizeResult:
             raise ValueError("SummarizeResult chars_used must be <= chars_total.")
 
 
+
+@dataclass(frozen=True)
+class QAResult:
+    """The result of a grounded question-answering call (M13.1).
+
+    Includes provenance metadata (provider, model, prompt version, tokens,
+    latency) so every AI answer is observable and auditable. ``available``
+    is False when the gateway could not produce an answer — the ``answer``
+    field carries an honest fallback.
+    """
+
+    answer: str
+    available: bool = True
+    retrieved_count: int = 0
+    truncated: bool = False
+    citations: tuple[dict, ...] = ()
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+
+    def __post_init__(self) -> None:
+        if self.retrieved_count < 0:
+            raise ValueError("QAResult retrieved_count must be >= 0.")
+        if self.latency_ms < 0:
+            raise ValueError("QAResult latency_ms must be >= 0.")
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (deterministic, shared by routes and tests)
 # ---------------------------------------------------------------------------
@@ -400,6 +432,24 @@ def summarize_result_dict(result: SummarizeResult) -> dict:
     }
 
 
+def qa_result_dict(result: QAResult) -> dict:
+    return {
+        "answer": result.answer,
+        "available": result.available,
+        "retrieved_count": result.retrieved_count,
+        "truncated": result.truncated,
+        "citations": list(result.citations),
+        "provider_id": result.provider_id,
+        "model": result.model,
+        "prompt_id": result.prompt_id,
+        "prompt_version": result.prompt_version,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "token_usage_estimated": result.token_usage_estimated,
+        "latency_ms": result.latency_ms,
+    }
+
+
 def models_summary_dict(summary: AiModelsSummary) -> dict:
     return {
         "default_provider": summary.default_provider,
@@ -439,10 +489,12 @@ __all__ = [
     "StructuredGenerationPrompt",
     "StructuredGenerationResult",
     "SummarizeResult",
+    "QAResult",
     "TokenUsage",
     "health_summary_dict",
     "model_info_dict",
     "models_summary_dict",
     "summarize_result_dict",
+    "qa_result_dict",
     "provider_record_dict",
 ]

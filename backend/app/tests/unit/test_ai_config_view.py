@@ -17,6 +17,7 @@ class _StubSettings:
     ai_chat_enabled = False
     ai_summarization_enabled = False
     ai_semantic_search_enabled = False
+    ai_qa_enabled = False
     ai_rag_enabled = False
     ai_memory_enabled = False
     ai_agents_enabled = False
@@ -45,6 +46,7 @@ class TestAiConfigView:
             "streaming": True,
             "summarization": False,
             "semantic_search": False,
+            "qa": False,
         }
 
     def test_custom_values_projected(self):
