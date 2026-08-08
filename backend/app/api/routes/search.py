@@ -163,6 +163,19 @@ def search_objects(
     vector_repository: VectorRepository | None = Depends(get_vector_repository),
     embedder: Embedder = Depends(get_embedder),
 ) -> SearchResponseModel:
+    # M14.1 read-time repair: drain pending outbox events into the derived
+    # search projection BEFORE querying, so it reflects all committed writes.
+    # The system ships no always-on outbox relay; without this, newly created
+    # objects are invisible to search until a manual ``/search/index/sync``.
+    # Idempotent and bounded (drains only pending events); best-effort — a
+    # drain failure must never break search.
+    try:
+        SearchIndexApplier(
+            db, vector_repository=vector_repository, embedder=embedder
+        ).apply_pending()
+        db.commit()
+    except Exception:  # noqa: BLE001 — search must never fail because of repair
+        db.rollback()
     try:
         hits = _search_use_case(db, vector_repository, embedder).execute(
             user=user,

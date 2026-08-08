@@ -233,10 +233,19 @@ def test_commit_to_searchable_and_delete_to_unsearchable(harness):
     assert _search(client, object_type="document") == []
 
 
-def test_update_reflects_new_version_after_sync(harness):
+def test_update_reflects_new_version_via_read_repair(harness):
+    """M14.1: GET /search drains pending outbox events (read-time repair)
+    before querying, so the index reflects a committed update IMMEDIATELY —
+    the object is found at v2 without a manual /search/index/sync.
+
+    The previous "stale until sync" assertion was the root cause of the
+    reported "no results" symptom: an un-drained index stayed empty, so
+    search returned nothing. Read-repair makes search reflect committed
+    writes, which is the contract this test now proves.
+    """
     client, session, _ = harness
     doc_id = _create_object(client, title="Original Title")
-    _sync(client)
+    _sync(client)  # index the initial version (v1)
 
     res = client.put(
         f"{API}/objects/{doc_id}",
@@ -245,13 +254,14 @@ def test_update_reflects_new_version_after_sync(harness):
     assert res.status_code == 200, res.text
     assert res.json()["version"] == 2
 
-    # Index still reflects v1 until the relay runs (eventual consistency).
-    assert _search(client, title="Original Title")[0]["version"] == 1
-    _sync(client)
+    # Read-time repair: search now reflects v2 immediately (no manual sync).
     hits = _search(client, title="Original Title")
     assert len(hits) == 1
     assert hits[0]["version"] == 2
     assert hits[0]["object_id"] == doc_id
+    # /search/index/sync remains available (admin/rebuild) and is now a no-op
+    # here — read-repair already drained the status-change event.
+    assert _sync(client) == {"applied": 0}
 
 
 def test_replay_sync_is_idempotent(harness):

@@ -1,25 +1,26 @@
-# AcademicOS M14 — Incremental Patch Manifest (Search Reliability)
+# AcademicOS M14.1 — Incremental Patch Manifest (Search Results — Read-Time Index Repair)
 
-**Parent commit:** `3401be6` (post-audit HEAD) · **Commit:** `2eb8341` · **Date:** 2026-08-08
-**Scope:** search reliability — frontend-only. No backend/search-infra change, no new abstractions.
+**Parent commit:** `2561cb8` (M14) · **Commit:** `aeaaa8f` · **Date:** 2026-08-08
+**Scope:** search reliability — backend-only. No new abstractions, no architecture change.
 
 ## Files Added
 | Path | Purpose |
 |---|---|
-| `frontend/src/components/features/search/SearchPage.test.tsx` | 6 component regression tests: matching query, clean empty state, abort suppressed (ApiError + DOMException shapes), latest-query-wins (stale-result discarded), genuine error shown. |
+| `backend/app/tests/integration/test_search_read_repair.py` | 5 tests proving a newly created document is searchable via `GET /search` with NO manual sync; clean empty state; repeated stability; no-op on empty outbox. |
 
 ## Files Modified
 | Path | Change |
 |---|---|
-| `frontend/src/components/features/search/SearchPage.tsx` | `run()` uses `isAbortError()` (both abort shapes) instead of `err.name === "AbortError"`; state updates guarded by `controllerRef.current === controller` (latest-query-wins). +14/−3. |
+| `backend/app/api/routes/search.py` | `GET /search` drains pending outbox events (existing `SearchIndexApplier`) before querying — read-time repair. +13 lines. |
+| `backend/app/tests/integration/test_search_api.py` | `test_update_reflects_new_version_*` updated: the old "stale until sync" assertion encoded the bug; now asserts read-repair (search reflects committed writes immediately). |
 
 ## Root cause
-`SearchPage` misclassified the client's abort error. The shared client throws `ApiError("Request cancelled.", { kind: "aborted" })` (`name === "ApiError"`) on a caller-aborted request; `SearchPage` only checked the `DOMException` shape (`name === "AbortError"`), so the abort leaked to `setError` and displayed **"Request cancelled."** The client already exported a correct `isAbortError()` helper — `SearchPage` simply didn't use it.
+The lexical search projection (`search_documents`) is derived from durable outbox events, but the system ships **no always-on outbox relay** — only intake-commit and manual `/search/index/sync` drain it. So the projection stayed empty in normal operation and `/search` returned no results for every query. (Reproduced: document invisible until drain; found after.)
 
 ## Reuse (constraints honoured)
-No second search system / embedding abstraction / vector repository / provider / transport owner / AI Core / persistence. AiCore remains configuration authority. M11/M12 architecture guardrails unchanged (16/16). Backend `/search` contract unchanged.
+Existing `SearchIndexApplier` + outbox relay + the same embedder/vector the semantic leg uses. No second search system / embedding abstraction / vector repo / provider / transport owner / AI Core / persistence. AiCore remains configuration authority. M11/M12/M13 + architecture guardrails unchanged (16/16). `/search` response shape, permission model, and semantic/lexical behaviour unchanged.
 
 ## Verification
-- Frontend Vitest: **76 passed** (+6)
-- TypeScript `tsc --noEmit`: **exit 0** · `next build`: success
-- Backend: **1538 passed, 2 skipped** (unchanged) · Architecture: **16/16**
+- Backend: **1543 passed, 2 skipped** (+5 new; zero regressions)
+- Architecture guardrails: **16/16** · ruff clean
+- Frontend Vitest: **76 passed** · `tsc --noEmit` exit 0 (backend-only — unaffected)

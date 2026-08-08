@@ -1,3 +1,33 @@
+# AcademicOS — Sprint M14.1 Changelog (Search Results — Read-Time Index Repair)
+
+Release: **M14.1** · Baseline `2561cb8` (M14) · Commit `aeaaa8f` · Date: 2026-08-08
+Status: **search reliability — backend-only. Fixes the "no results" root cause. No new abstractions, no architecture change.**
+
+## Root cause
+M14 fixed the "Request cancelled." misclassification, but search still returned no results. The true root cause (reproduced end-to-end): the lexical search projection (`search_documents`) is a **derived table populated only by draining the outbox**, and the system **ships no always-on outbox relay** — only intake-commit and a manual `POST /search/index/sync` drain it. In normal operation the projection stayed **empty**, so `GET /search` returned nothing for every query even though objects existed. The search use case, permission filter, and serializer were all correct; only the projection was unpopulated.
+
+Reproduction: a freshly created document is invisible to search until the outbox is drained; immediately after draining it is found.
+
+## Fix (smallest correct — backend-only, `search.py`, +13 lines)
+**Read-time repair:** `GET /search` drains pending outbox events via the **existing** `SearchIndexApplier` *before* querying, so the projection reflects all committed writes. Idempotent and bounded — events are marked `delivered`, so once caught up each search's drain is a no-op (verified empirically: undelivered count → 0 after the first drain). Best-effort (`try/except` + `rollback`) so a drain failure never breaks search.
+
+Reuses existing infrastructure only (SearchIndexApplier + outbox relay; the same embedder/vector the semantic leg uses). No second search system, no new abstraction, no AiCore / permission / search-response-contract change.
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/api/routes/search.py` | `GET /search` drains pending outbox events before querying (read-time repair). |
+| `backend/app/tests/integration/test_search_read_repair.py` | **new** — 5 tests: searchable without manual sync, title match, clean empty state, repeated stability, no-op on empty outbox. |
+| `backend/app/tests/integration/test_search_api.py` | Updated `test_update_reflects_new_version_*` — the old "stale until sync" assertion encoded the bug; now asserts read-repair (search reflects committed writes immediately). |
+
+## Verification
+- Backend: **1543 passed, 2 skipped** (1538 → 1543; +5 new; **0 failures**)
+- Architecture guardrails: **16/16** · ruff clean (only accepted `B008`/`E402`)
+- Frontend Vitest: **76 passed** · `tsc --noEmit` exit 0 (backend-only — unaffected)
+- Direct backend `/search` test (no manual sync): newly created document **found**
+
+---
+
 # AcademicOS — Sprint M14 Changelog (Search Reliability — Cancellation & Latest-Query-Wins)
 
 Release: **M14** · Baseline `3401be6` (post-audit) · Commit `2eb8341` · Date: 2026-08-08
