@@ -322,6 +322,30 @@ class AiModelsSummary:
     models: tuple[ModelInfo, ...] = ()
 
 
+
+@dataclass(frozen=True)
+class SummarizeResult:
+    """The result of an on-demand document summarization (M12.1).
+
+    ``available`` is False when the gateway could not produce a summary
+    (not configured or provider error) — the ``summary`` field carries an
+    honest fallback message. ``truncated`` / ``chars_used`` / ``chars_total``
+    disclose whether the source text was truncated before generation.
+    """
+
+    summary: str
+    available: bool = True
+    truncated: bool = False
+    chars_used: int = 0
+    chars_total: int = 0
+
+    def __post_init__(self) -> None:
+        if self.chars_used < 0 or self.chars_total < 0:
+            raise ValueError("SummarizeResult char counts must be >= 0.")
+        if self.chars_used > self.chars_total:
+            raise ValueError("SummarizeResult chars_used must be <= chars_total.")
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (deterministic, shared by routes and tests)
 # ---------------------------------------------------------------------------
@@ -364,6 +388,16 @@ def health_summary_dict(summary: AiHealthSummary) -> dict:
     }
 
 
+def summarize_result_dict(result: SummarizeResult) -> dict:
+    return {
+        "summary": result.summary,
+        "available": result.available,
+        "truncated": result.truncated,
+        "chars_used": result.chars_used,
+        "chars_total": result.chars_total,
+    }
+
+
 def models_summary_dict(summary: AiModelsSummary) -> dict:
     return {
         "default_provider": summary.default_provider,
@@ -402,9 +436,11 @@ __all__ = [
     "STATUS_NOT_CONFIGURED",
     "StructuredGenerationPrompt",
     "StructuredGenerationResult",
+    "SummarizeResult",
     "TokenUsage",
     "health_summary_dict",
     "model_info_dict",
     "models_summary_dict",
+    "summarize_result_dict",
     "provider_record_dict",
 ]

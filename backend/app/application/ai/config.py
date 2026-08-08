@@ -60,6 +60,7 @@ class AiConfigView:
                     settings.ai_document_understanding_enabled
                 ),
                 "streaming": bool(settings.ai_streaming_enabled),
+                "summarization": bool(getattr(settings, "ai_summarization_enabled", False)),
             },
         )
 

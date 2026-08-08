@@ -5,6 +5,7 @@ Read-only health surface over the composed AI Core:
     GET /ai/health      aggregate status (public, like /api/v1/health)
     GET /ai/providers   provider catalogue with configuration status
     GET /ai/models      aggregated model catalogue + defaults
+    POST /ai/summarize  on-demand document summary (M12.1, feature-flagged)
 
 All three are JSON-only and deterministic. The routes stay
 orchestration-free: each endpoint delegates to the matching use case.
@@ -16,20 +17,40 @@ A later M11 sprint adds generation endpoints that consume
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
+from app.api.routes.documents import get_storage
 from app.application.ai.core import AiCore
 from app.application.dtos.ai import (
     health_summary_dict,
     models_summary_dict,
     provider_record_dict,
+    summarize_result_dict,
+)
+from app.application.exceptions import (
+    ObjectNotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
+from app.application.services.document_annotation_service import (
+    DocumentAnnotationService,
 )
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
+from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
+from app.core.config import settings
+from app.domain.entities.object import UniversalObject
+from app.infrastructure.db.session import get_db
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+from app.infrastructure.repositories.sqlalchemy_object_repository import (
+    SQLAlchemyObjectRepository,
+)
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -132,11 +153,62 @@ def list_ai_models(
     return AiModelsResponseModel(**models_summary_dict(summary))
 
 
+class SummarizeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_id: str
+
+
+class SummarizeResponseModel(BaseModel):
+    """Document summary result (POST /ai/summarize)."""
+
+    summary: str
+    available: bool
+    truncated: bool = False
+    chars_used: int = 0
+    chars_total: int = 0
+
+
+@router.post("/summarize", response_model=SummarizeResponseModel)
+def summarize_document(
+    body: SummarizeBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Generate an on-demand summary of a document (M12.1).
+
+    Feature-flagged (``AI_SUMMARIZATION_ENABLED``). Requires authentication
+    and READ permission on the document. Returns a summary with truncation
+    disclosure and an honest fallback when the gateway is unavailable.
+    """
+    if not settings.ai_summarization_enabled:
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    evaluator = ObjectPermissionEvaluator()
+    use_case = SummarizeDocumentUseCase(repo, annotation_service, evaluator, core)
+    try:
+        result = use_case.execute(body.object_id, user, storage)
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return SummarizeResponseModel(**summarize_result_dict(result))
+
+
+
 __all__ = [
     "AiHealthResponseModel",
     "AiModelResponseModel",
     "AiModelsResponseModel",
     "AiProviderResponseModel",
     "ListAiProvidersResponseModel",
+    "SummarizeBody",
+    "SummarizeResponseModel",
     "router",
 ]

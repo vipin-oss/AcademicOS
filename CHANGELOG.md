@@ -1,3 +1,26 @@
+# AcademicOS — Sprint M12.1 Changelog (Document Summarization)
+
+Release: **M12.1** · Baseline `e33246d` (M11.3.4 frozen) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08
+Status: **first user-facing AI capability on the M11 AI Core. No embedding work, no semantic search, no RAG.**
+
+## What was built
+
+| Component | Detail |
+|---|---|
+| `POST /api/v1/ai/summarize` | On-demand document summarization, feature-flagged (`AI_SUMMARIZATION_ENABLED`, default off). |
+| `SummarizeDocumentUseCase` | Orchestrates: permission check → extracted text → truncation → safe prompt → `generate()` → result. |
+| `SummarizeResult` DTO | `summary`, `available`, `truncated`, `chars_used`, `chars_total`. |
+| `PermissionDeniedError` | Application-layer 403 error (new). |
+| Safety contract | READ permission enforced; untrusted-content delimiters; truncation disclosed; honest fallback. |
+
+## Verification
+
+- Backend: **1413 passed, 2 skipped** (+13 new; zero regressions)
+- Architecture guardrails: **16/16**
+- `ruff --select F401,I001` clean; app boots (265 routes)
+
+---
+
 # AcademicOS — Sprint M11.3.4 Changelog (Final Production Runtime Contract Fixes)
 
 Release: **M11.3.4** · Baseline `72248be` (M11.3.3) · Branch `feature/m11-ai-workspace` · Date: 2026-08-08

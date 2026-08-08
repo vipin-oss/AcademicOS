@@ -15,6 +15,7 @@ class _StubSettings:
     ai_timeout_seconds = 30.0
     ai_streaming_enabled = True
     ai_chat_enabled = False
+    ai_summarization_enabled = False
     ai_rag_enabled = False
     ai_memory_enabled = False
     ai_agents_enabled = False
@@ -41,6 +42,7 @@ class TestAiConfigView:
             "agents": False,
             "document_understanding": False,
             "streaming": True,
+            "summarization": False,
         }
 
     def test_custom_values_projected(self):

@@ -1,32 +1,35 @@
-# AcademicOS M11.3.4 — Incremental Patch Manifest (Final Production Runtime Contract Fixes)
+# AcademicOS M12.1 — Incremental Patch Manifest (Document Summarization)
 
-**Milestone:** M11.3.4 (health overclaim fix + streaming enforcement)
-**Baseline:** `72248be` (M11.3.3)
+**Milestone:** M12.1 (POST /ai/summarize — on-demand document summary)
+**Baseline:** `e33246d` (M11.3.4 frozen)
 **Branch:** `feature/m11-ai-workspace`
-**Patch commit:** `a50516f`
+**Patch commit:** `e1e445c`
 **Date:** 2026-08-08
-
-## Files Modified
-
-| Path | Change |
-|---|---|
-| `backend/app/application/dtos/ai.py` | `HEALTH_CONFIGURED = "configured"` added; `HEALTH_OK` reserved (never used without probe). |
-| `backend/app/application/ai/core.py` | `health_summary` status: `HEALTH_OK` → `HEALTH_CONFIGURED` (honest: executable, not verified). |
-| `backend/app/infrastructure/ai/llm/openai.py` | `stream()` raises `LlmProviderError` when `streaming_enabled` is False. |
-| `backend/app/infrastructure/ai/provider_factory.py` | `build_ai_core` ANDs global `AI_STREAMING_ENABLED` with per-provider configs. |
-| `backend/app/tests/unit/test_ai_core.py`, `test_ai_runtime_contract.py` | Status assertions updated to `configured`. |
-| `frontend/src/types/index.ts`, `AiSettingsView.tsx` | Health status type + badge updated for `configured`. |
 
 ## Files Added
 
 | Path | Purpose |
 |---|---|
-| `backend/app/tests/unit/test_m11_3_4_contract_fixes.py` | 6 regression tests: health overclaim, streaming enforcement, sync unaffected. |
+| `backend/app/application/use_cases/ai/summarize_document.py` | `SummarizeDocumentUseCase` (permission, text, truncation, prompt, generate, fallback). |
+| `backend/app/tests/unit/test_summarize_document.py` | 9 unit tests (permission, text, truncation, delimiters, fallback). |
+| `backend/app/tests/integration/test_ai_summarize_api.py` | 4 integration tests (flag, auth, 404, 422). |
+
+## Files Modified
+
+| Path | Change |
+|---|---|
+| `backend/app/core/config.py` | `ai_summarization_enabled: bool = False`. |
+| `backend/app/application/ai/config.py` | `"summarization"` feature flag in `AiConfigView`. |
+| `backend/app/application/exceptions.py` | `PermissionDeniedError(ApplicationError)`. |
+| `backend/app/application/dtos/ai.py` | `SummarizeResult` DTO + `summarize_result_dict` serializer. |
+| `backend/app/api/routes/ai.py` | `POST /ai/summarize` endpoint + `SummarizeBody` / `SummarizeResponseModel`. |
+| `backend/app/tests/unit/test_ai_config_view.py` | Expected flags include `"summarization"`. |
 
 ## Post-Apply
 ```powershell
 cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
+# Enable: set AI_SUMMARIZATION_ENABLED=true in .env
 ```
 
 ## Verification
-- Backend: **1400 passed, 2 skipped** · Frontend: **70 vitest + tsc clean** · Architecture: **16/16** · ruff clean.
+- Backend: **1413 passed, 2 skipped** · Architecture: **16/16** · ruff clean.

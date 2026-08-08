@@ -33,5 +33,9 @@ class AuthenticationError(ApplicationError):
     code = "authentication_error"
 
 
+class PermissionDeniedError(ApplicationError):
+    """The user lacks permission for the requested operation (403)."""
+
+
 class ObjectNotFoundError(ApplicationError):
     code = "object_not_found"
