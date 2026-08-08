@@ -156,3 +156,36 @@ and the health API require zero changes — they all speak the port.
   identity, multi-provider distinguishability, selection precedence,
   `AI_DEFAULT_MODEL` influence, health/runtime default consistency.
 - Frontend: `AiSettingsView.test.tsx` (mocked API client).
+
+## 7. Local / Free AI (no paid key required)
+
+The core product never requires a paid cloud subscription. Any
+OpenAI-compatible **local** model works through the same `LanguageModelGateway`
+boundary — set `AI_PROVIDERS_JSON` to a local endpoint with an **empty**
+`api_key` and the adapter sends **no** `Authorization` header (local servers
+such as Ollama, vLLM and LM Studio do not need one). Application use cases are
+provider-neutral, so local → cloud (or cloud → local) is a configuration
+change, never a code change.
+
+### Example: Ollama (free, local)
+```bash
+# 1. Run a local model (one-time)
+ollama pull llama3.1
+ollama serve                      # serves OpenAI-compatible API at :11434/v1
+```
+```dotenv
+# .env — point AcademicOS at the local model (NO API key)
+AI_ENABLED=true
+AI_PROVIDERS_JSON=[{"provider_id":"local-llama","kind":"openai","model":"llama3.1","base_url":"http://localhost:11434/v1","api_key":"","temperature":0.0,"max_tokens":2048,"streaming_enabled":true}]
+AI_DEFAULT_PROVIDER=local-llama
+# Then enable the capabilities you want, e.g.:
+AI_SUMMARIZATION_ENABLED=true
+AI_QA_ENABLED=true
+AI_ENRICHMENT_ENABLED=true
+```
+
+### No provider at all
+With no provider configured (or `AI_ENABLED=false`), every AI endpoint
+degrades honestly to an `available=false` fallback and **`POST /ai/handoff`**
+returns a self-contained, grounded prompt bundle the user can paste into any
+external AI — AcademicOS makes no provider call and incurs no charge.

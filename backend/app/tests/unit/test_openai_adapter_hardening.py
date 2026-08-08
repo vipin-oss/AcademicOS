@@ -184,3 +184,38 @@ class TestCapabilityReporting:
         caps = OpenAIProvider().capabilities
         assert "chat" in caps and "stream" in caps and "structured_output" in caps
         assert "tools" not in caps  # function-calling is NOT implemented
+
+
+class TestLocalFreeProvider:
+    """M16.1 — the core must work with a LOCAL / FREE model and no paid key."""
+
+    def test_generates_without_api_key_and_no_auth_header(self):
+        """A local OpenAI-compatible server (Ollama, vLLM, LM Studio) needs no
+        API key. The gateway must generate with ``api_key=''`` and send NO
+        ``Authorization`` header (local endpoints reject/ignore it)."""
+        captured: dict = {}
+
+        def h(req):
+            captured["auth"] = req.headers.get("authorization")
+            captured["body"] = json.loads(req.content)
+            return httpx.Response(200, json=_ok("local-reply"))
+
+        p = _provider(
+            h, config=_cfg(api_key="", base_url="http://localhost:11434/v1"),
+        )
+        res = p.generate(GenerationPrompt(user="hi"))
+
+        assert res.text == "local-reply"
+        assert captured["auth"] is None  # no Authorization header for local/free
+        assert captured["body"]["model"] == "gpt-4o-mini"  # request well-formed
+
+    def test_structured_generate_works_without_api_key(self):
+        """Structured generation (enrichment) also works on a local/free model."""
+        def h(req):
+            return httpx.Response(200, json=_ok(json.dumps({"title": "T", "summary": "S",
+                                                            "tags": [], "categories": [], "keywords": []})))
+        p = _provider(h, config=_cfg(api_key="", base_url="http://localhost:11434/v1"))
+        res = p.structured_generate(
+            StructuredGenerationPrompt(user="extract", schema={"type": "object"})
+        )
+        assert res.value["title"] == "T"

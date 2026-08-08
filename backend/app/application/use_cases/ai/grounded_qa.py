@@ -174,6 +174,21 @@ class GroundedQAUseCase:
         except Exception:  # noqa: BLE001 — streaming must degrade gracefully
             yield {"type": "complete", "result": self._fallback(context, prompt)}
 
+    def prepare_prompt(self, question: str, user: UniversalObject):
+        """Build the grounded generation prompt WITHOUT invoking the gateway.
+
+        The external-AI handoff path (M16): the no-provider / no-cost option.
+        Reuses the full grounding pipeline (retrieve → context → authoritative
+        source-text injection) so an external model receives exactly the
+        evidence an internal generation would — but AcademicOS makes no
+        provider call (no key, no cost). Returns
+        ``(generation_prompt, citations, truncated)``.
+        """
+        context, citations, prompt = self._prepare(question, user)
+        gen_prompt, source_truncated = self._build_prompt(prompt, context, citations)
+        truncated = (context.truncated if context else False) or source_truncated
+        return gen_prompt, citations, truncated
+
     # ------------------------------------------------------------- shared
     def _prepare(self, question: str, user: UniversalObject, conversation=None):
         """Steps 1-4: retrieve → context → citations → prompt.

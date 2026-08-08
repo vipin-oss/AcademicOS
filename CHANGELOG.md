@@ -1,3 +1,54 @@
+# AcademicOS — Sprint M16.1 Changelog (Local/Free AI Verification + Documentation)
+
+Release: **M16.1** · Baseline `cda5f58` (M16) · Commit `801941a` · Date: 2026-08-08
+Status: **closes the provider/cost requirement with evidence + usability docs. No behavior change.**
+
+## What & why
+The task mandates "the core application must NOT require paid API usage" and local/free AI support. The architecture already supports it (`ProviderConfig.api_key` defaults to `""`; the adapter sends no `Authorization` header for a keyless provider, so any OpenAI-compatible local server — Ollama, vLLM, LM Studio — works). This sprint adds the **evidence** (regression tests) and the **usability documentation** that were missing.
+
+## Changes
+- **Test:** `test_openai_adapter_hardening.py::TestLocalFreeProvider` — proves the gateway generates (chat + structured) with `api_key=""` and sends **no** `Authorization` header (the local/free path). Provider-neutral use cases mean local↔cloud is config, not code.
+- **Docs:** `AI_DEVELOPER_GUIDE.md §7 Local/Free AI` — concrete `AI_PROVIDERS_JSON` Ollama example (no key) + the no-provider `POST /ai/handoff` fallback.
+
+## Verification
+- OpenAI adapter hardening suite: **15 passed** (13 + 2 new) · architecture **16/16** · backend full suite green (final run below).
+
+---
+
+# AcademicOS — Sprint M16 Changelog (External-AI Handoff + AI Retrieval Read-Repair)
+
+Release: **M16** · Baseline `7eeed40` (M15) · Commit `65b3f20` · Date: 2026-08-08
+Status: **the no-provider / no-cost AI path + a pre-existing retrieval-currency defect fix. Reuse-only; no new abstractions.**
+
+## Capability — External-AI Handoff (`POST /ai/handoff`)
+The core product must remain useful with **no AI provider configured**. `POST /ai/handoff` builds a self-contained, copyable, **grounded** prompt bundle the user pastes into any external AI. AcademicOS makes **no provider call** (no key, no charge). The bundle is grounded in the caller's READ-permission-filtered documents exactly like grounded QA (system prompt + user prompt with retrieved context and authoritative source text + readable source list + expected format + a no-cost note).
+
+**Deliberately NOT gated on `AI_ENABLED`** — it IS the free fallback (authentication + READ permission still apply; lexical retrieval when AI is off). Reuses the existing `GroundedQAUseCase` via an additive `prepare_prompt` (no generation).
+
+## Defect fix — AI retrieval read-repair (pre-existing, surfaced here)
+The AI routes (`/ai/qa`, `/ai/chat`, `/ai/handoff`) retrieve over the `search_documents` projection, but — unlike `GET /search` (M14.1 read-repair) — **they never drained the outbox**, so retrieval could return empty/stale results for freshly created objects. Read-time repair is added to the shared `_qa_retrieval` helper (drain pending events before retrieval), fixing QA + chat + handoff consistently. Best-effort; idempotent; a no-op once drained.
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/application/use_cases/ai/handoff.py` | **new** — `HandoffUseCase`, `SUPPORTED_TASKS`. |
+| `backend/app/application/use_cases/ai/grounded_qa.py` | Additive `prepare_prompt` (builds the grounded prompt without generating). |
+| `backend/app/application/dtos/ai.py` | `HandoffSource`, `HandoffBundle`, `handoff_bundle_dict`. |
+| `backend/app/api/routes/ai.py` | `POST /ai/handoff`; read-repair in shared `_qa_retrieval` (QA + chat + handoff). |
+| `backend/app/tests/unit/test_handoff.py` | **new** — 8 unit tests. |
+| `backend/app/tests/integration/test_ai_handoff_api.py` | **new** — 7 integration tests. |
+
+## Not introduced
+new provider/embedder/vector/persistence/prompt framework · paid-AI dependency · AI flag for the handoff (free path). Architecture guardrails unchanged (16/16); application framework-free (`handoff.py`).
+
+## Verification
+- Backend: **1575 passed, 2 skipped** (1560 → 1575; +15; **0 failures**)
+- Architecture guardrails: **16/16** · ruff clean (only accepted `B008`/`E402`)
+- Frontend Vitest: **76 passed** · `tsc --noEmit` exit 0 (backend-only — unaffected)
+- App boots, **272 routes** (`/ai/handoff` registered)
+
+---
+
 # AcademicOS — Sprint M15 Changelog (AI Chat over All Documents — F17)
 
 Release: **M15** · Baseline `bfa0124` (M14.1) · Commit `bb561d3` · Date: 2026-08-08

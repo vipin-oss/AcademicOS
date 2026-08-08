@@ -474,6 +474,43 @@ class RelatedDocumentsResult:
     items: tuple[RelatedDocumentItem, ...] = ()
 
 
+@dataclass(frozen=True)
+class HandoffSource:
+    """One readable source document included in an external-AI handoff (M16).
+
+    Carries only identity + type + title (already exposed to a caller with READ
+    via the search/citation contract); no content, no extra metadata.
+    """
+
+    number: int
+    object_id: str
+    object_type: str
+    title: str
+
+
+@dataclass(frozen=True)
+class HandoffBundle:
+    """A self-contained, copyable prompt bundle for an external AI (M16).
+
+    The no-provider / no-cost path: AcademicOS builds the grounded prompt
+    (system + user, with retrieved context and authoritative source text) and
+    hands it to the user to run in ANY external tool. No gateway is invoked,
+    no key is required, no charge is incurred. Only READ-permission-filtered
+    documents appear.
+    """
+
+    task: str
+    system_prompt: str
+    user_prompt: str
+    combined_prompt: str
+    sources: tuple[HandoffSource, ...] = ()
+    source_count: int = 0
+    truncated: bool = False
+    expected_format: str = ""
+    instructions: str = ""
+    note: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (deterministic, shared by routes and tests)
 # ---------------------------------------------------------------------------
@@ -531,6 +568,29 @@ def summarize_result_dict(result: SummarizeResult) -> dict:
         "output_tokens": result.output_tokens,
         "token_usage_estimated": result.token_usage_estimated,
         "latency_ms": result.latency_ms,
+    }
+
+
+def handoff_bundle_dict(bundle: HandoffBundle) -> dict:
+    return {
+        "task": bundle.task,
+        "system_prompt": bundle.system_prompt,
+        "user_prompt": bundle.user_prompt,
+        "combined_prompt": bundle.combined_prompt,
+        "sources": [
+            {
+                "number": s.number,
+                "object_id": s.object_id,
+                "object_type": s.object_type,
+                "title": s.title,
+            }
+            for s in bundle.sources
+        ],
+        "source_count": bundle.source_count,
+        "truncated": bundle.truncated,
+        "expected_format": bundle.expected_format,
+        "instructions": bundle.instructions,
+        "note": bundle.note,
     }
 
 
@@ -603,6 +663,8 @@ __all__ = [
     "EnrichmentResult",
     "RelatedDocumentItem",
     "RelatedDocumentsResult",
+    "HandoffSource",
+    "HandoffBundle",
     "GenerationEvent",
     "GenerationPrompt",
     "GenerationResult",
@@ -640,5 +702,6 @@ __all__ = [
     "qa_result_dict",
     "enrichment_result_dict",
     "related_documents_result_dict",
+    "handoff_bundle_dict",
     "provider_record_dict",
 ]

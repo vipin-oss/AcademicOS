@@ -34,6 +34,7 @@ from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.dtos.ai import (
     enrichment_result_dict,
+    handoff_bundle_dict,
     health_summary_dict,
     models_summary_dict,
     provider_record_dict,
@@ -56,6 +57,7 @@ from app.application.use_cases.ai.chat import CHAT_SYSTEM_INSTRUCTIONS, ChatTurn
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
+from app.application.use_cases.ai.handoff import SUPPORTED_TASKS, HandoffUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
 from app.application.use_cases.ai.related_documents import RelatedDocumentsUseCase
@@ -72,6 +74,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
+from app.infrastructure.search.index_applier import SearchIndexApplier
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -336,7 +339,21 @@ def _qa_retrieval(
     vector_repository: VectorRepository | None,
     embedder: Embedder,
 ) -> AssistantRetrievalService:
-    """Construct the retrieval service (reused Assistant infrastructure)."""
+    """Construct the retrieval service (reused Assistant infrastructure).
+
+    Read-time repair (M16): drain pending outbox events first so retrieval
+    sees current documents — the same contract as ``GET /search`` (M14.1).
+    Without this, freshly created objects are invisible to QA/chat/handoff
+    until a separate search drains the index. Best-effort: a drain failure
+    must never block retrieval.
+    """
+    try:
+        SearchIndexApplier(
+            db, vector_repository=vector_repository, embedder=embedder
+        ).apply_pending()
+        db.commit()
+    except Exception:  # noqa: BLE001 — retrieval must never fail on repair
+        db.rollback()
     search = SearchObjectsUseCase(
         search_repository=SQLAlchemySearchRepository(db),
         object_repository=repo,
@@ -617,6 +634,78 @@ def ai_chat_stream(
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+class HandoffBody(BaseModel):
+    """External-AI handoff request (POST /ai/handoff)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task: str = "qa"
+    question: str
+
+
+class HandoffSourceModel(BaseModel):
+    number: int
+    object_id: str
+    object_type: str
+    title: str
+
+
+class HandoffResponseModel(BaseModel):
+    """A copyable grounded prompt bundle for an external AI (POST /ai/handoff)."""
+
+    task: str
+    system_prompt: str
+    user_prompt: str
+    combined_prompt: str
+    sources: list[HandoffSourceModel] = Field(default_factory=list)
+    source_count: int = 0
+    truncated: bool = False
+    expected_format: str = ""
+    instructions: str = ""
+    note: str = ""
+
+
+@router.post("/handoff", response_model=HandoffResponseModel)
+def ai_handoff(
+    body: HandoffBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """External-AI handoff (M16) — the no-provider / no-cost path.
+
+    Builds a self-contained, grounded prompt bundle the caller can paste into
+    any external AI. NO gateway is invoked (no key, no charge). The prompt is
+    grounded in the caller's readable documents exactly like grounded QA.
+
+    Deliberately NOT gated on ``AI_ENABLED``: the handoff is the free fallback
+    for environments with no AI provider — its purpose is to work *without* AI.
+    Authentication and READ permission still apply (retrieval is permission
+    filtered; with AI off it degrades to lexical search).
+    """
+    task = (body.task or "qa").strip()
+    if task not in SUPPORTED_TASKS:
+        raise HTTPException(status_code=422, detail=f"Unsupported task: {task!r}")
+    if not (body.question or "").strip():
+        raise HTTPException(status_code=422, detail="A non-empty question is required.")
+
+    repo = SQLAlchemyObjectRepository(db)
+    # Retrieval uses the resolved embedder/vector (lexical HashingEmbedder
+    # fallback when AI is off); NO gateway is constructed or called.
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
+    retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    grounded = GroundedQAUseCase(
+        repo, retrieval, core,
+        citation_builder=CitationBuilder(),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        storage=storage,
+    )
+    use_case = HandoffUseCase(grounded)
+    bundle = use_case.execute(task, body.question, user)
+    return HandoffResponseModel(**handoff_bundle_dict(bundle))
+
 __all__ = [
     "AiHealthResponseModel",
     "AiModelResponseModel",
@@ -633,5 +722,7 @@ __all__ = [
     "QAResponseModel",
     "ChatBody",
     "ChatResponseModel",
+    "HandoffBody",
+    "HandoffResponseModel",
     "router",
 ]
