@@ -1,3 +1,33 @@
+# AcademicOS — Sprint M13.2 Changelog (Document Enrichment)
+
+Release: **M13.2** · Baseline `96599be` (M13.1.1) · Commit `b52f7f0` · Date: 2026-08-08
+Status: **first production use of structured generation — document enrichment. No new retrieval/persistence/embedding/search/transport/provider/AI Core/prompt framework.**
+
+## What was built
+
+`POST /api/v1/ai/enrich` extracts production-useful metadata (title, summary, tags, categories, keywords) from a document's authoritative extracted text via the AI Core's `LanguageModelGateway.structured_generate()` (the M11.3 capability activated for the first time), returning a validated structured object plus the M13.1 provenance contract.
+
+| Component | Detail |
+|---|---|
+| `POST /api/v1/ai/enrich` | On-demand document enrichment, feature-flagged (`AI_ENRICHMENT_ENABLED`, default off). READ permission + extracted-text required. |
+| `EnrichDocumentUseCase` | Mirrors the summarization safety contract but routes through `structured_generate()`. Coerces + validates the model JSON to the enrichment shape. |
+| `EnrichmentResult` DTO | title, summary, tags, categories, keywords, available, truncation disclosure + **provenance** (provider_id, model, prompt_id/version, tokens, latency). |
+| Structured validation | Missing/extra/wrong-type JSON fields degrade to honest defaults — never crash. |
+| Feature flag | `AI_ENRICHMENT_ENABLED` (default off); routed exclusively through `AiCore.config` (master switch AND feature flag). |
+
+## Reused components (no new abstractions)
+`AiCore`, `LanguageModelGateway.structured_generate()`, `DocumentAnnotationService` + `GetIntakeExtractedTextUseCase` (intake pipeline), `PermissionEvaluator` (READ), the existing document-loading + extracted-text pipeline, existing DTO patterns (`StructuredGenerationPrompt`/`StructuredGenerationResult`), existing error handling (404/403/422), existing permission handling, existing AI fallback behaviour. AI Core authority, transport ownership and all 16 architecture guardrails unchanged.
+
+## What did NOT change
+No new retrieval pipeline · no new persistence model · no new embedding system · no new search implementation · no new transport owner · no new provider abstraction · no new AI Core · no new prompt framework. The frontend is untouched (backend-only, additive endpoint + additive flag).
+
+## Verification
+- Backend: **1484 passed, 2 skipped** (+22 new; zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean (unaffected)
+- Architecture guardrails: **16/16** · ruff clean on changed files (route carries only the pre-existing FastAPI `B008` idiom)
+
+---
+
 # AcademicOS — Sprint M13.1.1 Changelog (Corrective — QA Defect Fixes)
 
 Release: **M13.1.1** · Baseline `4f079a8` (M13.1) · Commit `ae55aeb` · Date: 2026-08-08

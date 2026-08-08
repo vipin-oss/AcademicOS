@@ -63,6 +63,7 @@ class AiConfigView:
                 "summarization": bool(getattr(settings, "ai_summarization_enabled", False)),
                 "semantic_search": bool(getattr(settings, "ai_semantic_search_enabled", False)),
                 "qa": bool(getattr(settings, "ai_qa_enabled", False)),
+                "enrichment": bool(getattr(settings, "ai_enrichment_enabled", False)),
             },
         )
 

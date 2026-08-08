@@ -1,153 +1,141 @@
-# Verification Report — Sprint M13.1.1 (Corrective — QA Defect Fixes)
+# Verification Report — Sprint M13.2 (Document Enrichment)
 
-**Baseline:** `4f079a8` (M13.1) · **Commit:** `ae55aeb` · **Date:** 2026-08-08
-**Branch:** `feature/m11-ai-workspace` · **Runtime:** Python 3.13 · **Scope:** corrective only.
+**Baseline:** `96599be` (M13.1.1) · **Commit:** `b52f7f0` · **Date:** 2026-08-08
+**Branch:** `feature/m11-ai-workspace` · **Runtime:** Python 3.13 · **Scope:** first production use of structured generation.
 
 ---
 
-## 1. Defect-1 — Streaming QA leaks partial answers
+## 1. Capability
 
-### Root cause
-`GroundedQAUseCase.stream()` yielded `{"type": "token", ...}` events *immediately*
-as each chunk arrived. Two contract violations followed:
-1. A gateway failure after some tokens had been emitted returned an
-   `available=False` completion — but the partial answer had already leaked.
-2. A stream that terminated **without** a `complete` event fell through to a
-   post-loop branch that assembled the buffered chunks and returned them as a
-   successful (`available=True`) result.
+`POST /api/v1/ai/enrich` extracts structured metadata (title, summary, tags,
+categories, keywords) from a document's authoritative extracted text using the
+AI Core's `LanguageModelGateway.structured_generate()` — the M11.3 capability
+activated for the first production use. The endpoint follows the six required
+steps:
 
-### Fix
-Tokens are now **buffered** during iteration and **flushed only after a
-confirmed `complete` event** (in arrival order). A stream that ends without a
-`complete` event — or that raises — is a **generation failure**: the buffer is
-discarded and the shared honest `available=False` fallback is yielded. No token
-event is emitted until success is confirmed. The streaming fallback reuses the
-**same** `_fallback()` helper as synchronous QA, so both report an identical
-honesty contract.
+1. **Verify READ permission** — `PermissionEvaluator.can(READ)` before loading
+   text; failure → 403 `PermissionDeniedError`.
+2. **Load authoritative extracted text** — `DocumentAnnotationService.extracted_text`
+   (the existing intake pipeline; the same source the viewer and summarization use).
+3. **Reject documents without extracted text** — `None`/empty → 422 `ValidationError`.
+4. **Build a structured-generation prompt** — `StructuredGenerationPrompt` with a
+   JSON Schema; document text wrapped in `<<<DOCUMENT>>>`/`<<<END>>>` delimiters.
+5. **Use `structured_generate()`** — the gateway returns a parsed JSON object
+   (JSON-object response mode); not `generate()`.
+6. **Return structured enrichment** — `EnrichmentResult` (title, summary, tags,
+   categories, keywords) + truncation disclosure + M13.1 provenance.
 
-### Regression tests (`TestStreamingLeak`, 4)
-| Test | Asserts |
+## 2. Safety contract (mirrors summarization)
+
+| Concern | Implementation |
 |---|---|
-| `test_successful_stream_emits_tokens_then_completion` | Success → token events (in order) THEN one `available=True` completion. |
-| `test_gateway_failure_mid_stream_leaks_no_tokens` | Raise after 2 tokens → **no token events**, single `available=False` fallback. |
-| `test_stream_without_completion_event_is_generation_failure` | Stream ends with no completion → **no token events**, single `available=False`. |
-| `test_streaming_fallback_matches_sync_honesty_contract` | Sync + streaming fallback return identical `available=False` + identical message. |
+| Permission | READ enforced before any text is loaded (403 on failure). |
+| Text source | Existing intake pipeline; none/empty → explicit 422 (never an empty enrichment). |
+| Truncation | Text > `_MAX_DOC_CHARS` (12000) is truncated AND disclosed (`truncated`, `chars_used`, `chars_total`). |
+| Untrusted content | Document text delimited; system instruction says treat as DATA. |
+| Structured validation | Model JSON coerced + validated; missing/extra/wrong-type → honest defaults, never crash. |
+| Fallback | Gateway unavailable/malformed → `available=False`, empty fields. No crash. |
+| Provenance | provider_id, model, prompt_id (`ai.enrich` v1), tokens, latency. |
+| Non-persistent | Returned on-demand, never stored. |
 
----
+## 3. Configuration authority
 
-## 2. Defect-2 — QA is not actually grounded
-
-### Root cause
-The grounded context rendered only `RetrievedItem` metadata
-(`title`, `object_id`, `version`, `sources`, `score`). No document content or
-search passages reached the model, so it answered from titles, not evidence.
-
-### Fix
-For each retrieved item, the use case now loads its **authoritative extracted
-text** through the **existing** intake-extraction pipeline
-(`DocumentAnnotationService.extracted_text` → `GetIntakeExtractedTextUseCase`
-— the same source the document viewer and summarization consume) and injects
-it into the generation prompt as a delimited, untrusted `SOURCE CONTENT`
-section. Each passage is marked with the **same** citation number that appears
-in the `RETRIEVED CONTEXT` section (`citations[index].number`), so the model
-can cite it. Missing text (non-documents, un-extracted items) is skipped —
-non-fatal. Per-item text exceeding the budget is truncated and disclosed via
-the `truncated` flag. **No new retrieval pipeline; `AssistantContextBuilder`
-and `AssistantPromptBuilder` are reused unchanged** — only the QA use case
-enriches the prompt it owns.
-
-### Regression tests (`TestGrounding`, 5)
-| Test | Asserts |
-|---|---|
-| `test_authoritative_source_text_reaches_prompt` | Both documents' real content + `<<<SOURCE TEXT>>>`/`<<<END>>>` delimiters present; intake pipeline was the source. |
-| `test_each_passage_carries_its_citation_number` | Passage block is `[1] <title>\n<<<SOURCE TEXT>>>\n<text>` (citeable). |
-| `test_missing_text_is_skipped_not_fatal` | Item without text produces no empty passage block; present items still injected. |
-| `test_long_source_text_truncated_and_disclosed` | 5000-char passage capped to `_MAX_SOURCE_CHARS_PER_ITEM`; `truncated=True`. |
-| `test_no_annotation_service_keeps_backward_compatible_prompt` | Without the text source the prompt is the pre-fix envelope (no `SOURCE CONTENT`). |
-
----
-
-## 3. Defect-3 — Provenance reports the wrong prompt identity
-
-### Root cause
-`QAResult.prompt_id` was hardcoded to `"ai.grounded_qa"` (6 sites), but the
-generated prompt is produced by `AssistantPromptBuilder` without a registry, so
-its true identity is `assistant.default` (`DEFAULT_PROMPT_ID`), version 1.
-
-### Fix
-Provenance now carries `prompt.prompt_id` / `prompt.prompt_version` — the
-values **actually produced by the prompt builder** — via the shared
-`_success_result()` and `_fallback()` helpers. The hardcoded
-`_QA_PROMPT_ID` / `_QA_PROMPT_VERSION` constants are removed. All four paths
-(sync success, sync fallback, streaming success, streaming fallback) report a
-consistent identity.
-
-### Regression tests (`TestProvenance`, 4)
-| Test | Asserts |
-|---|---|
-| `test_success_reports_builder_prompt_id_not_hardcoded` | `prompt_id == "assistant.default"`, `prompt_version == 1`, `!= "ai.grounded_qa"`. |
-| `test_sync_fallback_reports_consistent_provenance` | Sync fallback reports `assistant.default`. |
-| `test_streaming_success_reports_consistent_provenance` | Streaming success reports `assistant.default`. |
-| `test_streaming_fallback_reports_consistent_provenance` | Streaming fallback reports `assistant.default`. |
-
----
-
-## 4. Test execution
-
-### 4.1 Targeted QA tests
+Enablement is derived **exclusively** through `AiCore.config`:
+```python
+if not core.config.enabled or not core.config.feature_flags.get("enrichment", False):
+    raise HTTPException(status_code=404)
 ```
-$ python -m pytest app/tests/unit/test_grounded_qa.py app/tests/integration/test_ai_qa_api.py -q
-..................                                                       [100%]
-18 passed in 3.16s
+`settings` is never read directly (M12.1.1 / M12.3.1 pattern). New flag
+`AI_ENRICHMENT_ENABLED` (default off) in `config.py`, projected onto
+`AiConfigView.feature_flags["enrichment"]`.
+
+## 4. Regression tests
+
+### 4.1 Unit tests (`test_enrich_document.py`, 15)
+| Class | Coverage |
+|---|---|
+| `TestPermission` | permission denied (403, gateway untouched); document not found (404). |
+| `TestExtractedText` | no extraction → 422; empty text → 422. |
+| `TestSuccessfulEnrichment` | returns structured fields; uses `structured_generate` not `generate`; untrusted delimiters + schema in prompt; provenance present. |
+| `TestStructuredValidation` | missing keys → defaults; wrong types coerced; extra keys ignored. |
+| `TestTruncation` | long text truncated + disclosed; short text not truncated. |
+| `TestGatewayFallback` | gateway failure → `available=False` + empty fields; malformed value handled. |
+
+### 4.2 Integration tests (`test_ai_enrich_api.py`, 7)
+| Test | Asserts |
+|---|---|
+| `test_enrich_404_when_flag_off` | flag off → 404. |
+| `test_enrich_requires_auth` | no auth → 401. |
+| `test_unknown_document_404` | missing document → 404 (use case). |
+| `test_missing_object_id_field_422` | missing field → 422. |
+| `test_ai_disabled_blocks_enrichment_even_when_flag_on` | master OFF + flag ON → 404. |
+| `test_no_gateway_invocation_when_ai_disabled` | `structured_generate`/`generate` never called when disabled. |
+| `test_ai_enabled_and_flag_on_proceeds` | master ON + flag ON → proceeds (404 from missing doc, not the gate). |
+
+### 4.3 Config-view test
+`_StubSettings` + expected `feature_flags` dict updated to include `enrichment`.
+
+## 5. Test execution
+
+### 5.1 Targeted enrichment + config view
+```
+$ python -m pytest app/tests/unit/test_enrich_document.py app/tests/integration/test_ai_enrich_api.py app/tests/unit/test_ai_config_view.py -q
+...........................                                              [100%]
+27 passed in 3.52s
 ```
 
-### 4.2 Architecture guardrails
+### 5.2 Architecture guardrails
 ```
 $ python -m pytest app/tests/architecture/ -q
 ................                                                         [100%]
-16 passed in 3.71s
+16 passed in 4.11s
 ```
 
-### 4.3 Full backend regression
+### 5.3 Full backend regression
 ```
 $ python -m pytest app/tests/ -q
-1462 passed, 2 skipped in 304.85s
+1484 passed, 2 skipped in 359.54s
 ```
-Baseline 1444 → **1462** (+13 new regression tests, 2 pre-existing skips, **0 failures**).
+Baseline 1462 → **1484** (+22 new; **0 failures**). AI Core authority,
+transport ownership and the 16 architecture guardrails unchanged.
 
-### 4.4 Frontend regression (unaffected)
-Backend-only change with an unchanged `QAResult` shape; the frontend has no
-QA / `prompt_id` references. Confirmed:
+### 5.4 Frontend regression (unaffected)
+Backend-only, additive endpoint + additive flag; the `AiSettingsView` renders
+its own fixed `FLAG_LABELS` (unchanged since M11.1 — prior sprints M12.1/M12.3/
+M13.1 likewise did not extend it). Confirmed:
 ```
 $ npx vitest run
 Test Files  15 passed (15)
      Tests  70 passed (70)
 ```
 
-### 4.5 Lint
+### 5.5 Lint
 ```
-$ ruff check app/application/use_cases/ai/grounded_qa.py app/tests/unit/test_grounded_qa.py
+$ ruff check app/application/use_cases/ai/enrich_document.py app/tests/unit/test_enrich_document.py
 All checks passed!
 ```
-(`ai.py` carries only the pre-existing FastAPI `B008 Depends()` idiom shared by
-every route, including the existing summarize route — not introduced here.)
+`ai.py` carries only the pre-existing FastAPI `B008 Depends()` idiom shared by
+every route (not introduced here). Integration test E402 matches the existing
+`pytest.importorskip`-before-imports pattern used by all AI integration tests.
 
----
-
-## 5. Constraints honoured
+## 6. Constraints honoured
 
 | Constraint | Status |
 |---|---|
-| No scope expansion / new features | ✓ only the three defects + a latent double-verify bug |
-| Reuse existing M11/M12 components | ✓ `DocumentAnnotationService`, intake pipeline, all assistant builders |
-| AI Core = single composition authority | ✓ unchanged |
-| Transport ownership | ✓ httpx isolation guardrail passes |
-| Architecture guardrails | ✓ 16/16 |
-| Backward compatibility | ✓ `QAResult` shape unchanged; annotation/storage optional on the use case |
-| No new abstractions / endpoints / flags / persistence | ✓ |
+| No new retrieval pipeline | ✓ reuses intake pipeline |
+| No new persistence model | ✓ on-demand, never stored |
+| No new embedding system | ✓ |
+| No new search implementation | ✓ |
+| No new transport owner | ✓ httpx isolation guardrail passes |
+| No new provider abstraction | ✓ composition-authority guardrail passes |
+| No new AI Core | ✓ |
+| No new prompt framework | ✓ inline template + JSON Schema |
+| AI Core = single authority | ✓ unchanged |
+| Reuse existing DTO/error/permission/fallback | ✓ |
+| Backward compatibility | ✓ additive endpoint + flag; no existing shape changed |
 
-## 6. Deliverables
-- **Patch ZIP:** `releases/m13.1.1/m13.1.1-patch.zip`
-- **Patch diff:** `releases/m13.1.1/m13.1.1.patch`
+## 7. Deliverables
+- **Patch ZIP:** `releases/m13.2/m13.2-patch.zip`
+- **Patch diff:** `releases/m13.2/m13.2.patch`
 - **Manifest:** `PATCH_MANIFEST.md`
-- **Changelog:** `CHANGELOG.md` (M13.1.1 entry prepended)
+- **Changelog:** `CHANGELOG.md` (M13.2 entry prepended)

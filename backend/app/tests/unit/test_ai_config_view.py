@@ -18,6 +18,7 @@ class _StubSettings:
     ai_summarization_enabled = False
     ai_semantic_search_enabled = False
     ai_qa_enabled = False
+    ai_enrichment_enabled = False
     ai_rag_enabled = False
     ai_memory_enabled = False
     ai_agents_enabled = False
@@ -47,6 +48,7 @@ class TestAiConfigView:
             "summarization": False,
             "semantic_search": False,
             "qa": False,
+            "enrichment": False,
         }
 
     def test_custom_values_projected(self):

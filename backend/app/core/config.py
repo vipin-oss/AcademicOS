@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     ai_semantic_search_enabled: bool = False
     # M13.1: grounded question answering.
     ai_qa_enabled: bool = False
+    # M13.2: document enrichment (structured metadata extraction).
+    ai_enrichment_enabled: bool = False
     # Provider configuration: JSON list of entries, e.g.
     #   [{"provider_id": "openai", "kind": "openai", "model": "gpt-4o-mini",
     #     "base_url": "", "timeout_seconds": 30, "max_tokens": 2048,

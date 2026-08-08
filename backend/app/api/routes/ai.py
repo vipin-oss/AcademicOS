@@ -32,6 +32,7 @@ from app.application.ai.core import AiCore
 from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.dtos.ai import (
+    enrichment_result_dict,
     health_summary_dict,
     models_summary_dict,
     provider_record_dict,
@@ -49,6 +50,7 @@ from app.application.services.document_annotation_service import (
     DocumentAnnotationService,
 )
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
@@ -221,6 +223,69 @@ def summarize_document(
 
 
 
+class EnrichBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_id: str
+
+
+class EnrichmentResponseModel(BaseModel):
+    """Document enrichment result (POST /ai/enrich)."""
+
+    title: str = ""
+    summary: str = ""
+    tags: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    available: bool
+    truncated: bool = False
+    chars_used: int = 0
+    chars_total: int = 0
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+
+
+@router.post("/enrich", response_model=EnrichmentResponseModel)
+def enrich_document(
+    body: EnrichBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Extract structured enrichment metadata from a document (M13.2).
+
+    The first production use of ``structured_generate``: returns title,
+    summary, tags, categories and keywords derived from the document's
+    authoritative text, with provenance. Feature-flagged
+    (``AI_ENRICHMENT_ENABLED``). Requires authentication and READ permission.
+    """
+    # Configuration authority: the AI Core config is the single source of truth.
+    if not core.config.enabled or not core.config.feature_flags.get("enrichment", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    evaluator = ObjectPermissionEvaluator()
+    use_case = EnrichDocumentUseCase(repo, annotation_service, evaluator, core)
+    try:
+        result = use_case.execute(body.object_id, user, storage)
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return EnrichmentResponseModel(**enrichment_result_dict(result))
+
+
+
 class QABody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -359,6 +424,8 @@ __all__ = [
     "ListAiProvidersResponseModel",
     "SummarizeBody",
     "SummarizeResponseModel",
+    "EnrichBody",
+    "EnrichmentResponseModel",
     "QABody",
     "QAResponseModel",
     "router",

@@ -380,6 +380,50 @@ class QAResult:
             raise ValueError("QAResult latency_ms must be >= 0.")
 
 
+
+@dataclass(frozen=True)
+class EnrichmentResult:
+    """The result of an on-demand document enrichment (M13.2).
+
+    Structured metadata extracted from the document's authoritative text via
+    the AI Core's ``structured_generate`` (the first production use of M11
+    structured generation). ``available`` is False when the gateway could not
+    enrich (not configured or provider error) — the fields then carry honest
+    empty/fallback values. ``truncated`` / ``chars_used`` / ``chars_total``
+    disclose whether the source text was truncated before generation.
+    Includes the provenance contract from M13.1.
+    """
+
+    title: str = ""
+    summary: str = ""
+    tags: tuple[str, ...] = ()
+    categories: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+    available: bool = True
+    truncated: bool = False
+    chars_used: int = 0
+    chars_total: int = 0
+    # Provenance contract (M13.1).
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+
+    def __post_init__(self) -> None:
+        if self.chars_used < 0 or self.chars_total < 0:
+            raise ValueError("EnrichmentResult char counts must be >= 0.")
+        if self.chars_used > self.chars_total:
+            raise ValueError("EnrichmentResult chars_used must be <= chars_total.")
+        if self.latency_ms < 0:
+            raise ValueError("EnrichmentResult latency_ms must be >= 0.")
+        if self.input_tokens < 0 or self.output_tokens < 0:
+            raise ValueError("EnrichmentResult token counts must be >= 0.")
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (deterministic, shared by routes and tests)
 # ---------------------------------------------------------------------------
@@ -450,6 +494,28 @@ def qa_result_dict(result: QAResult) -> dict:
     }
 
 
+def enrichment_result_dict(result: EnrichmentResult) -> dict:
+    return {
+        "title": result.title,
+        "summary": result.summary,
+        "tags": list(result.tags),
+        "categories": list(result.categories),
+        "keywords": list(result.keywords),
+        "available": result.available,
+        "truncated": result.truncated,
+        "chars_used": result.chars_used,
+        "chars_total": result.chars_total,
+        "provider_id": result.provider_id,
+        "model": result.model,
+        "prompt_id": result.prompt_id,
+        "prompt_version": result.prompt_version,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "token_usage_estimated": result.token_usage_estimated,
+        "latency_ms": result.latency_ms,
+    }
+
+
 def models_summary_dict(summary: AiModelsSummary) -> dict:
     return {
         "default_provider": summary.default_provider,
@@ -461,6 +527,7 @@ def models_summary_dict(summary: AiModelsSummary) -> dict:
 __all__ = [
     "AiHealthSummary",
     "AiModelsSummary",
+    "EnrichmentResult",
     "GenerationEvent",
     "GenerationPrompt",
     "GenerationResult",
@@ -496,5 +563,6 @@ __all__ = [
     "models_summary_dict",
     "summarize_result_dict",
     "qa_result_dict",
+    "enrichment_result_dict",
     "provider_record_dict",
 ]
