@@ -24,8 +24,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
 from app.api.dependencies.db import get_db
+from app.application.ai.core import AiCore
 from app.application.exceptions import ValidationError
 from app.application.ports.embedder import Embedder
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
@@ -73,9 +75,25 @@ class IndexSyncResponseModel(BaseModel):
     applied: int
 
 
-def get_embedder() -> Embedder:
-    """The T0 deterministic embedder (CI-safe; a T2 encoder swaps in here)."""
-    return HashingEmbedder()
+def get_embedder(ai_core: AiCore = Depends(get_ai_core)) -> Embedder:
+    """Resolve the active embedder (M12.3).
+
+    When ``AI_SEMANTIC_SEARCH_ENABLED`` is on, the AI Core's embedder is used
+    (real OpenAI embeddings or the configured model). When off (or when the
+    AI Core has no embedding provider), the deterministic ``HashingEmbedder``
+    fallback is used - identical to pre-M12 behavior.
+    """
+    from app.core.config import settings
+    if not settings.ai_semantic_search_enabled:
+        return HashingEmbedder()
+    try:
+        return ai_core.embedder()
+    except Exception:  # noqa: BLE001 - semantic must never break search
+        _log.warning(
+            "AI Core embedder unavailable; falling back to HashingEmbedder.",
+            exc_info=True,
+        )
+        return HashingEmbedder()
 
 
 # The semantic stack is a process-lifetime lazy singleton: one client, one
@@ -88,7 +106,9 @@ _semantic_repository: VectorRepository | None = None
 _semantic_repository_ready = False
 
 
-def get_vector_repository() -> VectorRepository | None:
+def get_vector_repository(
+    embedder: Embedder = Depends(get_embedder),
+) -> VectorRepository | None:
     """The semantic index adapter, or ``None`` when unavailable.
 
     Graceful degradation seam: any failure (Qdrant unreachable or
@@ -103,7 +123,6 @@ def get_vector_repository() -> VectorRepository | None:
             return _semantic_repository
         try:
             client = get_qdrant_client()
-            embedder = HashingEmbedder()
             collection = VectorCollectionManager(
                 client, dimensions=embedder.dimensions
             ).ensure()

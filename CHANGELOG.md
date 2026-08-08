@@ -1,3 +1,26 @@
+# AcademicOS — Sprint M12.3 Changelog (Semantic Search Activation)
+
+Release: **M12.3** · Baseline `70500b6` (M12.2.1) · Date: 2026-08-08
+Status: **semantic search activated via existing /search — no new endpoint, no new abstractions.**
+
+## What was built
+
+The existing `GET /search` endpoint now automatically uses the AI Core's real embedder when `AI_SEMANTIC_SEARCH_ENABLED` is on, and the deterministic `HashingEmbedder` when off. No duplicate API; the response shape is unchanged.
+
+| Change | Detail |
+|---|---|
+| `get_embedder()` | Resolves AI Core embedder when flag on; `HashingEmbedder` when off. |
+| `get_vector_repository()` | Uses the SAME resolved embedder for Qdrant collection dimensions (one identity everywhere). |
+| `AI_SEMANTIC_SEARCH_ENABLED` | New config flag (default `false`); `AiConfigView.semantic_search` feature flag. |
+| Graceful degradation | AI Core embedder unavailable → `HashingEmbedder` (search never breaks). |
+
+## Verification
+- Backend: **1441 passed, 2 skipped** (+4 new; zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean
+- Architecture guardrails: **16/16** · ruff clean
+
+---
+
 # AcademicOS — Sprint M12.2.1 Changelog (Embedding Contract Hardening)
 
 Release: **M12.2.1** · Baseline `8ef3ac2` (M12.2) · Date: 2026-08-08

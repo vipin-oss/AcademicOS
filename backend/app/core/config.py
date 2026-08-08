@@ -98,6 +98,8 @@ class Settings(BaseSettings):
     ai_document_understanding_enabled: bool = False
     # M12.1: document summarization capability (off by default).
     ai_summarization_enabled: bool = False
+    # M12.3: semantic search (real embeddings in /search).
+    ai_semantic_search_enabled: bool = False
     # Provider configuration: JSON list of entries, e.g.
     #   [{"provider_id": "openai", "kind": "openai", "model": "gpt-4o-mini",
     #     "base_url": "", "timeout_seconds": 30, "max_tokens": 2048,

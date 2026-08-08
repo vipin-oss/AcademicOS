@@ -61,6 +61,7 @@ class AiConfigView:
                 ),
                 "streaming": bool(settings.ai_streaming_enabled),
                 "summarization": bool(getattr(settings, "ai_summarization_enabled", False)),
+                "semantic_search": bool(getattr(settings, "ai_semantic_search_enabled", False)),
             },
         )
 
