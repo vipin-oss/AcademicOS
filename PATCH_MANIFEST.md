@@ -1,26 +1,27 @@
-# AcademicOS M14.1 — Incremental Patch Manifest (Search Results — Read-Time Index Repair)
+# AcademicOS M15 — Incremental Patch Manifest (AI Chat over All Documents — F17)
 
-**Parent commit:** `2561cb8` (M14) · **Commit:** `aeaaa8f` · **Date:** 2026-08-08
-**Scope:** search reliability — backend-only. No new abstractions, no architecture change.
+**Parent commit:** `bfa0124` (M14.1) · **Commit:** `bb561d3` · **Date:** 2026-08-08
+**Scope:** F17 AI Chat — conversational, document-grounded chat. Reuse-only; no new abstractions.
 
 ## Files Added
 | Path | Purpose |
 |---|---|
-| `backend/app/tests/integration/test_search_read_repair.py` | 5 tests proving a newly created document is searchable via `GET /search` with NO manual sync; clean empty state; repeated stability; no-op on empty outbox. |
+| `backend/app/application/use_cases/ai/chat.py` | `ChatUseCase` (composes `GroundedQAUseCase`, synthesizes conversation from client history), `ChatTurn`, `CHAT_SYSTEM_INSTRUCTIONS`. |
+| `backend/app/tests/unit/test_chat.py` | 9 unit tests: history reaches prompt, grounding preserved, chat instructions, history cap, leak-proof streaming (success/failure/incomplete), fallback, real provenance. |
+| `backend/app/tests/integration/test_ai_chat_api.py` | 8 integration tests: flag off (404), master switch off (404), auth (401), validation (422 ×2), empty/turns history accepted, streaming gate. |
 
 ## Files Modified
 | Path | Change |
 |---|---|
-| `backend/app/api/routes/search.py` | `GET /search` drains pending outbox events (existing `SearchIndexApplier`) before querying — read-time repair. +13 lines. |
-| `backend/app/tests/integration/test_search_api.py` | `test_update_reflects_new_version_*` updated: the old "stale until sync" assertion encoded the bug; now asserts read-repair (search reflects committed writes immediately). |
+| `backend/app/application/use_cases/ai/grounded_qa.py` | Additive optional `conversation` param on `execute`/`stream`/`_prepare`; `context_builder.build(conversation, …)`. QA unchanged when `conversation=None` (preserved — QA tests green). |
+| `backend/app/api/routes/ai.py` | `POST /ai/chat` + `POST /ai/chat/stream`; `ChatBody`/`ChatMessageModel`/`ChatResponseModel`; `_build_chat_use_case` helper (gate → resolve embedder/vector → compose engine with chat instructions). |
 
-## Root cause
-The lexical search projection (`search_documents`) is derived from durable outbox events, but the system ships **no always-on outbox relay** — only intake-commit and manual `/search/index/sync` drain it. So the projection stayed empty in normal operation and `/search` returned no results for every query. (Reproduced: document invisible until drain; found after.)
-
-## Reuse (constraints honoured)
-Existing `SearchIndexApplier` + outbox relay + the same embedder/vector the semantic leg uses. No second search system / embedding abstraction / vector repo / provider / transport owner / AI Core / persistence. AiCore remains configuration authority. M11/M12/M13 + architecture guardrails unchanged (16/16). `/search` response shape, permission model, and semantic/lexical behaviour unchanged.
+## Reuse map (constraints honoured)
+- `GroundedQAUseCase` (the grounded-generation engine) — generalized additively, not duplicated.
+- `AssistantRetrievalService` (permission-filtered) · `AssistantContextBuilder` (reads `msg.<seq>` history) · `AssistantPromptBuilder` · `CitationBuilder` · `AnswerVerifier` · `DocumentAnnotationService` (authoritative source text) · `LanguageModelGateway.generate/stream` · `append_message` (history synthesis) · M13.1 provenance · M13.1.1 leak-proof streaming.
+- No new provider/embedder/vector/transport owner/AI Core/persistence/prompt framework. AiCore remains configuration authority. Application framework-free guardrail holds (`chat.py` imports only stdlib + app.application/app.domain). M11/M12/M13/M14 behaviour preserved (architecture 16/16).
 
 ## Verification
-- Backend: **1543 passed, 2 skipped** (+5 new; zero regressions)
+- Backend: **1560 passed, 2 skipped** (+17 new; zero regressions)
 - Architecture guardrails: **16/16** · ruff clean
 - Frontend Vitest: **76 passed** · `tsc --noEmit` exit 0 (backend-only — unaffected)

@@ -111,9 +111,14 @@ class GroundedQAUseCase:
         self._annotation_service = annotation_service
         self._storage = storage
 
-    def execute(self, question: str, user: UniversalObject) -> QAResult:
-        """Synchronous grounded QA: retrieve → context → prompt → generate → verify."""
-        context, citations, prompt = self._prepare(question, user)
+    def execute(self, question: str, user: UniversalObject, *, conversation=None) -> QAResult:
+        """Synchronous grounded QA: retrieve → context → prompt → generate → verify.
+
+        ``conversation`` (M15) optionally carries prior turns (read as
+        ``msg.<seq>`` history by the context builder); ``None`` keeps the
+        original stateless single-turn QA behaviour.
+        """
+        context, citations, prompt = self._prepare(question, user, conversation)
         try:
             gateway = self._ai_core.gateway()
             gen_prompt, source_truncated = self._build_prompt(prompt, context, citations)
@@ -125,7 +130,7 @@ class GroundedQAUseCase:
         except Exception:  # noqa: BLE001 — gateway boundary degrades gracefully
             return self._fallback(context, prompt)
 
-    def stream(self, question: str, user: UniversalObject) -> Iterator[dict]:
+    def stream(self, question: str, user: UniversalObject, *, conversation=None) -> Iterator[dict]:
         """Streaming grounded QA with the leak-proof honesty contract.
 
         Tokens are buffered and flushed ONLY after a confirmed completion
@@ -139,7 +144,7 @@ class GroundedQAUseCase:
         success, in order) then exactly one
         ``{"type": "complete", "result": QAResult}``.
         """
-        context, citations, prompt = self._prepare(question, user)
+        context, citations, prompt = self._prepare(question, user, conversation)
         try:
             gateway = self._ai_core.gateway()
             gen_prompt, source_truncated = self._build_prompt(prompt, context, citations)
@@ -170,11 +175,15 @@ class GroundedQAUseCase:
             yield {"type": "complete", "result": self._fallback(context, prompt)}
 
     # ------------------------------------------------------------- shared
-    def _prepare(self, question: str, user: UniversalObject):
-        """Steps 1-4: retrieve → context → citations → prompt."""
+    def _prepare(self, question: str, user: UniversalObject, conversation=None):
+        """Steps 1-4: retrieve → context → citations → prompt.
+
+        ``conversation`` carries optional prior turns (M15 chat); ``None``
+        reproduces the original single-turn QA context.
+        """
         retrieval_result = self._retrieval.retrieve(question, user)
         context = self._context_builder.build(
-            None, question, retrieval_result,
+            conversation, question, retrieval_result,
         )
         citations = self._citation_builder.build(retrieval_result.items)
         prompt = self._prompt_builder.build(question, context, citations=citations)

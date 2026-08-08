@@ -1,3 +1,40 @@
+# AcademicOS — Sprint M15 Changelog (AI Chat over All Documents — F17)
+
+Release: **M15** · Baseline `bfa0124` (M14.1) · Commit `bb561d3` · Date: 2026-08-08
+Status: **next planned capability (F17) — conversational, document-grounded chat. Reuse-only; no new abstractions.**
+
+## Capability & roadmap evidence
+**F17 — AI Chat over All Documents** (`POST /ai/chat` + `POST /ai/chat/stream`). Selected per `AcademicOS_AI_Architecture.md` **Appendix F.1 — Phased Build Sequence**: P3 (Retrieval & Reasoning) = F13 Semantic Search · F14 QA · F15 Summarization · F16 Related · **F17 AI Chat**. F13–F16 were delivered in M12–M13.3; F17 is the last unfinished P3 item (exit criterion: "Chat scope adherence 100%"). Backed by the existing `ai_chat_enabled` flag (declared in M11.1).
+
+## Root design
+Conversational, document-grounded chat. The latest message is grounded in the caller's readable documents exactly like grounded QA, **and** the prompt carries client-supplied conversation history (stateless server; server-side persistence is a deferred M14+ item).
+
+**Reuse-only** — Chat adds the conversational layer; the entire grounded-generation pipeline is the existing `GroundedQAUseCase`, generalized with an *additive optional `conversation`* (QA single-turn behaviour preserved):
+- retrieve (permission-filtered `AssistantRetrievalService`) → context (`AssistantContextBuilder`, which already reads `msg.<seq>` history) → grounded prompt → authoritative source-text injection (`DocumentAnnotationService`) → generate/stream (`LanguageModelGateway`) → citation verification (`AnswerVerifier`) → provenance (M13.1 contract) → leak-proof streaming (M13.1.1).
+- `ChatUseCase` synthesizes a conversation from client history (via the existing `append_message` helper) and supplies chat-specific system instructions; it does not duplicate the pipeline.
+
+Gate runs **before** embedder/vector resolution (the audit pattern); feature-flagged via `core.config.enabled AND feature_flags["chat"]`.
+
+## Files changed
+| Path | Change |
+|---|---|
+| `backend/app/application/use_cases/ai/chat.py` | **new** — `ChatUseCase`, `ChatTurn`, `CHAT_SYSTEM_INSTRUCTIONS`. |
+| `backend/app/application/use_cases/ai/grounded_qa.py` | Additive optional `conversation` param on `execute`/`stream`/`_prepare` (QA unchanged when `None`). |
+| `backend/app/api/routes/ai.py` | `POST /ai/chat` + `/ai/chat/stream`, `ChatBody`/`ChatMessageModel`/`ChatResponseModel`, `_build_chat_use_case` helper. |
+| `backend/app/tests/unit/test_chat.py` | **new** — 9 unit tests. |
+| `backend/app/tests/integration/test_ai_chat_api.py` | **new** — 8 integration tests. |
+
+## Not introduced (out of scope)
+server-side conversation persistence (deferred M14+) · agents · memory · RAG pipeline · multi-hop · new provider/embedder/vector/transport/AI Core/persistence/prompt framework. No config changes (flag pre-existing since M11.1).
+
+## Verification
+- Backend: **1560 passed, 2 skipped** (1543 → 1560; +17 new; **0 failures**)
+- Architecture guardrails: **16/16** · ruff clean on changed files (only accepted `B008`/`E402`)
+- Frontend Vitest: **76 passed** · `tsc --noEmit` exit 0 (backend-only — unaffected)
+- App boots, **271 routes** (`/ai/chat` + `/ai/chat/stream` registered)
+
+---
+
 # AcademicOS — Sprint M14.1 Changelog (Search Results — Read-Time Index Repair)
 
 Release: **M14.1** · Baseline `2561cb8` (M14) · Commit `aeaaa8f` · Date: 2026-08-08

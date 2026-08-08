@@ -30,6 +30,7 @@ from app.api.routes.documents import get_storage
 from app.api.routes.search import get_embedder, get_vector_repository
 from app.application.ai.core import AiCore
 from app.application.assistant.citations import CitationBuilder
+from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.dtos.ai import (
     enrichment_result_dict,
@@ -51,6 +52,7 @@ from app.application.services.document_annotation_service import (
     DocumentAnnotationService,
 )
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.use_cases.ai.chat import CHAT_SYSTEM_INSTRUCTIONS, ChatTurn, ChatUseCase
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
@@ -503,6 +505,118 @@ def related_documents(
     return RelatedDocumentsResponseModel(**related_documents_result_dict(result))
 
 
+class ChatMessageModel(BaseModel):
+    """One prior conversation turn supplied by the client (stateless chat)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str
+    content: str
+
+
+class ChatBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    history: list[ChatMessageModel] = Field(default_factory=list)
+
+
+class ChatResponseModel(BaseModel):
+    """Conversational, document-grounded chat result (POST /ai/chat)."""
+
+    answer: str
+    available: bool
+    retrieved_count: int = 0
+    truncated: bool = False
+    citations: list[dict] = Field(default_factory=list)
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+
+
+def _build_chat_use_case(core, db, repo, storage):
+    """Compose the chat use case over the shared grounded-generation engine,
+    reusing the QA retrieval + citation/verification/grounding wiring but with
+    chat-specific system instructions."""
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
+    retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    grounded = GroundedQAUseCase(
+        repo, retrieval, core,
+        prompt_builder=AssistantPromptBuilder(system_instructions=CHAT_SYSTEM_INSTRUCTIONS),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        storage=storage,
+    )
+    return ChatUseCase(grounded)
+
+
+@router.post("/chat", response_model=ChatResponseModel)
+def ai_chat(
+    body: ChatBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Conversational document-grounded chat (M15 — F17).
+
+    Grounds the latest message in the caller's readable documents, carrying the
+    supplied conversation history for coherent multi-turn chat. Stateless
+    (server keeps no conversation); feature-flagged (``AI_CHAT_ENABLED``).
+    """
+    # Configuration authority — checked BEFORE resolving embedder/vector so a
+    # disabled feature never touches the AI embedder nor the vector store.
+    if not core.config.enabled or not core.config.feature_flags.get("chat", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    use_case = _build_chat_use_case(core, db, repo, storage)
+    history = [ChatTurn(turn.role, turn.content) for turn in body.history]
+    result = use_case.execute(body.message, history, user)
+    return ChatResponseModel(**qa_result_dict(result))
+
+
+@router.post("/chat/stream")
+def ai_chat_stream(
+    body: ChatBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Streaming chat (M15): SSE over the same grounded pipeline as ``POST /ai/chat``.
+
+    Events: ``token`` (partial deltas, flushed only on confirmed success),
+    ``completion`` (verified answer + provenance). Feature-flagged
+    (``AI_CHAT_ENABLED``). Inherits the leak-proof streaming contract.
+    """
+    if not core.config.enabled or not core.config.feature_flags.get("chat", False):
+        raise HTTPException(status_code=404)
+
+    repo = SQLAlchemyObjectRepository(db)
+    use_case = _build_chat_use_case(core, db, repo, storage)
+    history = [ChatTurn(turn.role, turn.content) for turn in body.history]
+
+    def events():
+        for event in use_case.stream(body.message, history, user):
+            if event["type"] == "token":
+                yield _sse("token", {"delta": event["delta"]})
+            elif event["type"] == "complete":
+                yield _sse("completion", qa_result_dict(event["result"]))
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 __all__ = [
     "AiHealthResponseModel",
     "AiModelResponseModel",
@@ -517,5 +631,7 @@ __all__ = [
     "RelatedDocumentsResponseModel",
     "QABody",
     "QAResponseModel",
+    "ChatBody",
+    "ChatResponseModel",
     "router",
 ]

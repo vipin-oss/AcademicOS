@@ -1,88 +1,75 @@
-# Verification Report — Sprint M14.1 (Search Results — Read-Time Index Repair)
+# Verification Report — Sprint M15 (AI Chat over All Documents — F17)
 
-**Parent commit:** `2561cb8` (M14) · **Commit:** `aeaaa8f` · **Date:** 2026-08-08
-**Branch:** `feature/m11-ai-workspace` · **Scope:** backend-only search reliability fix.
+**Parent commit:** `bfa0124` (M14.1) · **Commit:** `bb561d3` · **Date:** 2026-08-08
+**Branch:** `feature/m11-ai-workspace` · **Runtime:** Python 3.13 · **Scope:** F17 AI Chat.
 
 ---
 
-## 1. Root cause (traced end-to-end, then reproduced)
+## 1. Capability & roadmap evidence
+`AcademicOS_AI_Architecture.md` **Appendix F.1 — Phased Build Sequence** defines P3 (Retrieval & Reasoning) = F13–F17 with exit criteria "Search p95 ≤ 300 ms; QA hallucination ≤ 1.5%; Chat scope adherence 100%". F13 Semantic Search, F14 QA, F15 Summarization, F16 Related were delivered in M12–M13.3. **F17 — AI Chat over All Documents is the last unfinished P3 item**, behind the existing `ai_chat_enabled` flag (M11.1). Group C capability ordering confirms (#17 follows the implemented #13–16). No roadmap redesign.
 
-Full lifecycle traced: `SearchPage` → API client → `GET /api/v1/search` → `SearchObjectsUseCase` → lexical (`SQLAlchemySearchRepository`) + semantic → embedder → vector → permission filter → serializer → render.
+## 2. Root design (reuse-only)
+Conversational, document-grounded chat. The latest message is grounded in the caller's readable documents exactly like grounded QA, **and** the prompt carries client-supplied conversation history (stateless server; persistence deferred to M14+).
 
-**Where the result disappeared:** the lexical search matches against the derived `search_documents` projection table, **not** live objects. That projection is populated **only** by draining durable outbox events (`SearchIndexApplier.apply_pending`). The system ships **no always-on outbox relay** — only intake-commit and a manual `POST /search/index/sync` drain it. In normal operation the projection stayed **empty**, so `/search` returned `[]` for every query (including "energy") even though objects existed in the store.
+The entire grounded-generation pipeline is the existing `GroundedQAUseCase`, generalized with an **additive optional `conversation`** parameter (QA single-turn behaviour preserved when `None`). `ChatUseCase` composes it and only:
+- synthesizes a transient conversation from client history via the existing `append_message` helper (read as `msg.<seq>` history by the existing `AssistantContextBuilder`);
+- supplies chat-specific system instructions (conversational + grounded).
 
-**Reproduction (deterministic):**
-- Create a document "Renewable Energy Systems" (with its outbox event, exactly as the creation use case does).
-- `search_documents` rows = **0**; `search("energy")` → **0 results**.
-- Drain the outbox → `search_documents` rows = 2; `search("energy")` → **1 result** (the document).
+No pipeline duplication, no new abstraction.
 
-So the search use case, permission filter, embedder, and serializer were all correct — only the projection was unpopulated. (Document body content is intentionally not indexed — the index covers title + metadata; a body-only word like "solar" correctly returns 0. That is by design, not the bug.)
+## 3. Contract verification
 
-## 2. Fix (smallest correct — `search.py`, +13 lines)
-
-**Read-time repair:** `GET /search` drains pending outbox events via the existing `SearchIndexApplier` *before* querying, so the derived projection reflects all committed writes.
-
-- **Idempotent + bounded:** events are marked `delivered`; once caught up, each search's drain is a no-op. Verified empirically: undelivered count `2 → 0` after the first drain; stays `0` on subsequent drains (no re-processing, no re-embedding).
-- **Best-effort:** `try/except` + `db.rollback()` — a drain failure never breaks search.
-- **Reuse-only:** the existing `SearchIndexApplier` + outbox relay + the same embedder/vector the semantic leg already uses. No new search system, embedding abstraction, vector repo, provider, transport owner, or AI Core.
-
-## 3. Per-layer verification
-
-| Check | Result |
+| Requirement | Result |
 |---|---|
-| 1. Backend `/search` directly (no frontend) | ✅ returns the document |
-| 2. Lexical search (semantic disabled) | ✅ works (HashingEmbedder/None vector) |
-| 3. Semantic search (flag on) | ✅ preserved (applier also upserts vectors) |
-| 4. Qdrant availability | ✅ unavailable → `_safe_vector` catches; lexical drain proceeds (the route's try/except also protects) |
-| 5. Embedder output | ✅ reused unchanged |
-| 6. Vector collection dims | ✅ unchanged (same embedder identity) |
-| 7. Permission filtering | ✅ unchanged — `SearchObjectsUseCase` R4 gate intact; restricted objects never returned |
-| 8. Count before permission filter | ✅ projection populated by repair |
-| 9. Count after permission filter | ✅ only readable objects returned |
-| 10. Final `/search` JSON | ✅ `{"results":[…]}` — shape unchanged |
-| 11. Frontend parsing | ✅ unchanged (M14 already fixed rendering) |
-| 12. `SearchPage` render | ✅ results render |
+| Feature flag OFF → 404 (no embedder/vector touch) | ✅ `test_chat_404_when_flag_off`, streaming gate |
+| AI master switch OFF + flag ON → 404 | ✅ `test_master_switch_off_blocks_even_when_flag_on` |
+| Authentication | ✅ `test_chat_requires_auth` (401) |
+| Valid success (history + grounding) | ✅ `test_history_reaches_prompt` (prior turns + source text in prompt) |
+| Empty/missing input | ✅ missing message → 422; empty history accepted (200) |
+| Malformed input | ✅ unknown field → 422 |
+| Infrastructure/provider failure | ✅ `test_gateway_failure_returns_honest_fallback` (available=False) |
+| Streaming — no partial output before completion | ✅ `test_success_flushes_tokens_then_completion`, `test_failure_leaks_no_tokens`, `test_incomplete_stream_is_failure` |
+| Provenance (real, not fabricated) | ✅ `test_success_provenance_is_real` (provider/model/prompt-id/tokens/latency from the result) |
+| Boundary/limit | ✅ `test_only_newest_history_turns_kept` (history cap = 20) |
+| Permission (no unauthorized docs) | ✅ inherited from permission-filtered retrieval (unchanged) |
+| Existing-functionality regression | ✅ QA tests green (additive generalization); full suite 1560 |
 
-## 4. Independent audit of the fix
+## 4. Independent audit
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Root cause actually fixed? | ✅ document now found via `GET /search` with no manual sync |
-| 2 | Search results work? | ✅ integration tests |
-| 3 | Permissions preserved? | ✅ unchanged R4 gate; restricted-object tests still pass |
-| 4 | Semantic search preserved? | ✅ |
-| 5 | Lexical search preserved? | ✅ |
-| 6 | Qdrant failure safe? | ✅ caught |
-| 7 | Embedder failure safe? | ✅ caught |
-| 8 | M11/M12 preserved? | ✅ architecture 16/16 |
-| 9 | Architecture boundaries? | ✅ reuses `SearchIndexApplier`; no new infra |
-| 10 | Duplicate infrastructure? | ✅ none |
-| 11 | Read-repair efficient? | ✅ no-op once drained (verified) |
-| 12 | No debug/secrets/dead code? | ✅ |
-| 13 | Missing tests? | ✅ defect repro + contract covered |
+| 1 | Feature gate before feature-specific deps | ✅ gate raises 404 before `_build_chat_use_case` resolves embedder/vector |
+| 2 | Permission boundaries | ✅ retrieval permission-filtered; no unauthorized objects returned |
+| 3 | Data leakage | ✅ none (answer + verified citations only) |
+| 4 | Error handling / fallback | ✅ gateway failure → available=False |
+| 5 | Provenance | ✅ real GenerationResult; prompt_id from builder |
+| 6 | Streaming | ✅ leak-proof (inherited from M13.1.1) |
+| 7 | Race conditions / stale state | ✅ n/a (backend-only; stateless) |
+| 8 | Duplicate infrastructure | ✅ none (composes GroundedQAUseCase) |
+| 9 | Dead code / debug / secrets | ✅ none |
+| 10 | Backward compatibility | ✅ QA additive (conversation=None default); M11–M14 preserved |
+| 11 | Architecture boundaries | ✅ `chat.py` framework-free; 16/16 guardrails |
 
-**Findings:** Production-critical: **0**. Non-critical: **0**. (Note: document **body** content is intentionally not in the lexical index by design — title + metadata only. That is a documented limitation, not a defect; the reported symptom was the empty projection, now fixed.)
+**Findings:** Production-critical: **0**. Non-critical: **0**. (Stateless chat by design — server-side conversation persistence is a deferred M14+ item, not a defect.)
 
 ## 5. Test execution (actual)
 
 | Suite | Result |
 |---|---|
-| Backend full suite | **1543 passed, 2 skipped, 0 failed** (1538 → 1543; +5) |
+| M15 targeted (chat unit + integration + config + architecture + QA) | **51 passed** |
+| Backend full suite | **1560 passed, 2 skipped, 0 failed** (1543 → 1560; +17) |
 | Architecture guardrails | **16/16** |
-| Search-targeted (api + read-repair + semantic) | passed |
 | Frontend Vitest | **76 passed** (backend-only — unaffected) |
 | TypeScript `tsc --noEmit` | **exit 0** |
 | Ruff (changed files) | clean (only accepted `B008`/`E402`) |
-
-One pre-existing test (`test_search_api.py::test_update_reflects_new_version_*`) encoded the old "stale until sync" assumption — the behaviour that **caused** the reported bug. It was **replaced** with a test proving the correct read-repair contract (search reflects committed writes immediately), per the spec's instruction to replace tests that encode incorrect behaviour.
+| Boot/import | **271 routes** (`/ai/chat` + `/ai/chat/stream` registered) |
 
 ## 6. Repository integrity
-- Changed: `search.py` (+13), `test_search_api.py` (updated test), `test_search_read_repair.py` (new). Backend-only — no frontend, no architecture, no migration changes.
-- No debug code, no secrets, no dead code, no new files beyond the test.
+- Changed: `chat.py` (new), `grounded_qa.py` (additive), `ai.py` (routes+models), `test_chat.py` (new), `test_ai_chat_api.py` (new). **No config changes** (flag pre-existing). No unrelated files, no debug code, no secrets, no dead code.
 - Working tree clean after commit; branch `feature/m11-ai-workspace`.
 
 ## 7. Deliverables
-- **Patch ZIP:** `releases/m14.1/m14.1-patch.zip`
-- **Patch diff:** `releases/m14.1/m14.1.patch` (parent `2561cb8` → `aeaaa8f`)
+- **Patch ZIP:** `releases/m15/m15-patch.zip`
+- **Patch diff:** `releases/m15/m15.patch` (parent `bfa0124` → `bb561d3`)
 - **Manifest:** `PATCH_MANIFEST.md`
-- **Changelog:** `CHANGELOG.md` (M14.1 entry prepended)
+- **Changelog:** `CHANGELOG.md` (M15 entry prepended)
