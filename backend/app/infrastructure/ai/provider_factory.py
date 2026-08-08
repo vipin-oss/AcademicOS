@@ -139,7 +139,12 @@ def build_ai_core(settings) -> AiCore:
     # embedding_model AND a base_url is the embedding provider. If none,
     # the HashingEmbedder fallback is used (deterministic, no network).
     embedding_config = next(
-        (c for c in configs if c.embedding_model and c.base_url), None
+        (c for c in configs
+         if c.embedding_model
+         and c.base_url
+         and c.embedding_dimensions
+         and c.embedding_dimensions > 0),
+        None,
     )
     if embedding_config is not None:
         from app.application.ports.embedder import Embedder

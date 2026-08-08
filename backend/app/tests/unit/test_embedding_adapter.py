@@ -21,7 +21,7 @@ def _cfg(**over) -> ProviderConfig:
     base = dict(
         provider_id="oa", kind="openai", model="gpt-4o-mini",
         base_url="http://llm.example/v1", api_key="k",
-        embedding_model="text-embedding-3-small", embedding_dimensions=1536,
+        embedding_model="text-embedding-3-small", embedding_dimensions=None,
     )
     base.update(over)
     return ProviderConfig(**base)
@@ -95,7 +95,8 @@ class TestEmbed:
 
 class TestDimensions:
     def test_from_config(self):
-        assert _adapter(lambda r: httpx.Response(200)).dimensions == 1536
+        a = OpenAIEmbeddingAdapter(_cfg(embedding_dimensions=1536))
+        assert a.dimensions == 1536
 
     def test_not_configured_raises(self):
         a = OpenAIEmbeddingAdapter(_cfg(embedding_dimensions=None))
@@ -220,3 +221,96 @@ class TestBuildAiCoreEmbedder:
         core = build_ai_core(s)
         emb = core.embedder()
         assert isinstance(emb, HashingEmbedder)
+
+
+class TestDimensionValidation:
+    """M12.2.1: returned vector must match configured dimensions."""
+
+    def test_mismatched_dimensions_fail(self):
+        """If the endpoint returns 8 floats but dimensions=4, embed() raises."""
+        a = _adapter(lambda r: httpx.Response(200, json=_ok_embedding(8)))
+        a._config = ProviderConfig(
+            provider_id="oa", kind="openai", base_url="http://x/v1",
+            embedding_model="m", embedding_dimensions=4,
+        )
+        with pytest.raises(_EmbeddingError, match="mismatch"):
+            a.embed("hi")
+
+    def test_matching_dimensions_pass(self):
+        """Returned vector matches configured dimensions → succeeds."""
+        a = _adapter(lambda r: httpx.Response(200, json=_ok_embedding(4)))
+        vec = a.embed("hi")
+        assert len(vec) == 4
+
+    def test_no_configured_dimensions_skips_check(self):
+        """When embedding_dimensions is None, the length check is skipped
+        (the adapter still raises on dimensions property access, but embed()
+        itself does not validate)."""
+        a = OpenAIEmbeddingAdapter(
+            ProviderConfig(provider_id="oa", kind="openai", base_url="http://x/v1",
+                           embedding_model="m", embedding_dimensions=None),
+            client=httpx.Client(transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json=_ok_embedding(8)))),
+        )
+        vec = a.embed("hi")
+        assert len(vec) == 8  # no validation — passes through
+
+
+class TestBuildAiCoreEmbedderConfigValidation:
+    """M12.2.1: composition must not construct a real adapter unless config
+    is complete (embedding_model + positive dimensions + base_url)."""
+
+    def test_missing_dimensions_falls_back_to_hashing(self):
+        from app.infrastructure.ai.provider_factory import build_ai_core
+
+        s = _EmbedSettings()
+        s.ai_providers_json = (
+            '[{"provider_id": "oa", "kind": "openai", "model": "gpt-4o-mini",'
+            ' "base_url": "http://x/v1",'
+            ' "embedding_model": "text-embedding-3-small"}]'
+        )  # no embedding_dimensions
+        core = build_ai_core(s)
+        from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+        assert isinstance(core.embedder(), HashingEmbedder)
+
+    def test_zero_dimensions_falls_back_to_hashing(self):
+        from app.infrastructure.ai.provider_factory import build_ai_core
+
+        s = _EmbedSettings()
+        s.ai_providers_json = (
+            '[{"provider_id": "oa", "kind": "openai", "model": "gpt-4o-mini",'
+            ' "base_url": "http://x/v1",'
+            ' "embedding_model": "text-embedding-3-small",'
+            ' "embedding_dimensions": 0}]'
+        )
+        core = build_ai_core(s)
+        from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+        assert isinstance(core.embedder(), HashingEmbedder)
+
+    def test_negative_dimensions_falls_back_to_hashing(self):
+        from app.infrastructure.ai.provider_factory import build_ai_core
+
+        s = _EmbedSettings()
+        s.ai_providers_json = (
+            '[{"provider_id": "oa", "kind": "openai", "model": "gpt-4o-mini",'
+            ' "base_url": "http://x/v1",'
+            ' "embedding_model": "text-embedding-3-small",'
+            ' "embedding_dimensions": -5}]'
+        )
+        core = build_ai_core(s)
+        from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+        assert isinstance(core.embedder(), HashingEmbedder)
+
+    def test_valid_config_still_uses_real_adapter(self):
+        from app.infrastructure.ai.provider_factory import build_ai_core
+
+        s = _EmbedSettings()
+        s.ai_providers_json = (
+            '[{"provider_id": "oa", "kind": "openai", "model": "gpt-4o-mini",'
+            ' "base_url": "http://x/v1",'
+            ' "embedding_model": "text-embedding-3-small",'
+            ' "embedding_dimensions": 1536}]'
+        )
+        core = build_ai_core(s)
+        assert isinstance(core.embedder(), OpenAIEmbeddingAdapter)
+        assert core.embedder().dimensions == 1536

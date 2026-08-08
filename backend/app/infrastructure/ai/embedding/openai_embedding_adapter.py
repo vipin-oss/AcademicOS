@@ -99,7 +99,9 @@ class OpenAIEmbeddingAdapter(Embedder):
                 raise _EmbeddingError(
                     f"Embedding endpoint returned HTTP {response.status_code}."
                 )
-            return self._parse(response)
+            vector = self._parse(response)
+            self._validate_dimensions(vector)
+            return vector
         raise _EmbeddingError(f"Embedding request failed: {last_error}")
 
     # ------------------------------------------------------------- lifecycle
@@ -133,3 +135,14 @@ class OpenAIEmbeddingAdapter(Embedder):
         if not isinstance(embedding, list) or not embedding:
             raise _EmbeddingError("Embedding response contained no vector.")
         return [float(x) for x in embedding]
+
+    def _validate_dimensions(self, vector: list[float]) -> None:
+        """Fail immediately if the returned vector length differs from the
+        configured dimensions — never return an invalid vector (M12.2.1)."""
+        expected = self._config.embedding_dimensions
+        if expected is not None and expected > 0 and len(vector) != expected:
+            raise _EmbeddingError(
+                f"Embedding dimension mismatch: configured {expected}, "
+                f"received {len(vector)}. The embedding model or configuration "
+                f"is inconsistent."
+            )

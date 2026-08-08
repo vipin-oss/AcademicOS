@@ -1,3 +1,19 @@
+# AcademicOS — Sprint M12.2.1 Changelog (Embedding Contract Hardening)
+
+Release: **M12.2.1** · Baseline `8ef3ac2` (M12.2) · Date: 2026-08-08
+
+## Fixes
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | `embed()` returned vectors without validating length vs configured dimensions | `_validate_dimensions()` checks `len(vector) == embedding_dimensions`; raises `_EmbeddingError` on mismatch — never returns an invalid vector. |
+| 2 | `build_ai_core` constructed a real adapter with missing/zero/negative dimensions | Now requires `embedding_model` AND `embedding_dimensions > 0` AND `base_url`; otherwise falls back to `HashingEmbedder`. |
+
+## Verification
+- Backend: **1437 passed, 2 skipped** (+7 new; zero regressions); 16/16 guardrails; ruff clean.
+
+---
+
 # AcademicOS — Sprint M12.2 Changelog (Embedding Capability)
 
 Release: **M12.2** · Baseline `980a77b` (M12.1.1) · Date: 2026-08-08
