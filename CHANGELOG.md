@@ -1,3 +1,36 @@
+# AcademicOS — Sprint M13.1.1 Changelog (Corrective — QA Defect Fixes)
+
+Release: **M13.1.1** · Baseline `4f079a8` (M13.1) · Commit `ae55aeb` · Date: 2026-08-08
+Status: **corrective sprint only — three production-critical QA defects fixed. No new features, no new abstractions, no persistence, no redesign.**
+
+## Defects fixed
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | Streaming QA leaked partial answers (tokens emitted immediately; a later gateway failure returned `available=false` but tokens had already leaked; a stream ending without a completion event returned the accumulated partial answer as `available=true`) | Token deltas are now **buffered and flushed ONLY after a confirmed completion event**. A gateway failure or a stream that ends without a completion event is a **generation failure** — buffered tokens are discarded and the honest `available=false` fallback is yielded, the same honesty contract as synchronous QA. No token event is emitted until success is confirmed. |
+| 2 | QA was not grounded — the prompt carried only `RetrievedItem` metadata (title, id, version, source, score); no document content reached the model | The **authoritative document text** for each retrieved item is now loaded from the existing intake-extraction pipeline (`DocumentAnnotationService.extracted_text` — the same source the document viewer and summarization use) and injected into the prompt as delimited untrusted data, so the model answers from evidence rather than document titles. No new retrieval pipeline; no duplicated `AssistantContextBuilder`. |
+| 3 | Provenance reported the wrong prompt identity — `prompt_id` was hardcoded to `ai.grounded_qa` while the generated prompt is `assistant.default` | Provenance now reports the **`prompt_id` / `prompt_version` actually produced by the prompt builder** (`assistant.default`), consistently across sync, streaming, success and fallback paths. The hardcoded identity constants are removed. |
+
+A latent bug was also fixed: `execute()` called `_verify_citations()` twice.
+
+## Files changed
+
+| Path | Change |
+|---|---|
+| `backend/app/application/use_cases/ai/grounded_qa.py` | Leak-proof streaming (buffer + flush-on-completion + generation-failure fallback); authoritative source-text injection via `DocumentAnnotationService`; prompt-builder-driven provenance; shared `_success_result` / `_fallback` helpers. |
+| `backend/app/api/routes/ai.py` | Both QA endpoints wire the annotation service + storage so QA is grounded in production. |
+| `backend/app/tests/unit/test_grounded_qa.py` | **new** — 13 regression tests (4 streaming-leak, 5 grounding, 4 provenance). |
+
+## Reused components (no new abstractions)
+`DocumentAnnotationService` + `GetIntakeExtractedTextUseCase` (intake pipeline), `AssistantRetrievalService`, `AssistantContextBuilder`, `AssistantPromptBuilder`, `CitationBuilder`, `AnswerVerifier`, `LanguageModelGateway.generate/stream()`, `AiCore`, `PermissionEvaluator`. AI Core authority, transport ownership and all 16 architecture guardrails are unchanged.
+
+## Verification
+- Backend: **1462 passed, 2 skipped** (+13 new regression; zero regressions)
+- Frontend: **70 vitest passed** · `tsc --noEmit` clean (unaffected — backend-only, unchanged response shape)
+- Architecture guardrails: **16/16** · ruff clean on changed files
+
+---
+
 # AcademicOS — Sprint M13.1 Changelog (Grounded Question Answering)
 
 Release: **M13.1** · Baseline `0a0c0c7` (M12.3.1) · Date: 2026-08-08

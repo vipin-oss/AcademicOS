@@ -282,6 +282,7 @@ def grounded_qa(
     db: Session = Depends(get_db),
     vector_repository: VectorRepository | None = Depends(get_vector_repository),
     embedder: Embedder = Depends(get_embedder),
+    storage=Depends(get_storage),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Grounded question answering (M13.1).
@@ -299,6 +300,8 @@ def grounded_qa(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        storage=storage,
     )
     result = use_case.execute(body.question, user)
     return QAResponseModel(**qa_result_dict(result))
@@ -311,12 +314,14 @@ def grounded_qa_stream(
     db: Session = Depends(get_db),
     vector_repository: VectorRepository | None = Depends(get_vector_repository),
     embedder: Embedder = Depends(get_embedder),
+    storage=Depends(get_storage),
     user: UniversalObject = Depends(get_current_user),
 ):
     """Streaming grounded QA (M13.1): SSE over the same pipeline as ``POST /ai/qa``.
 
-    Events: ``token`` (partial deltas), ``completion`` (verified answer +
-    provenance). Feature-flagged (``AI_QA_ENABLED``).
+    Events: ``token`` (partial deltas, flushed only on confirmed success),
+    ``completion`` (verified answer + provenance). Feature-flagged
+    (``AI_QA_ENABLED``).
     """
     if not core.config.enabled or not core.config.feature_flags.get("qa", False):
         raise HTTPException(status_code=404)
@@ -327,6 +332,8 @@ def grounded_qa_stream(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        storage=storage,
     )
 
     def events():
