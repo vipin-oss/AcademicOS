@@ -47,6 +47,8 @@ def parse_provider_configs(raw: str) -> tuple[ProviderConfig, ...]:
             max_tokens=int(entry.get("max_tokens") or 2048),
             temperature=float(entry.get("temperature") or 0.0),
             streaming_enabled=bool(entry.get("streaming_enabled", True)),
+            embedding_model=str(entry.get("embedding_model") or ""),
+            embedding_dimensions=(int(entry["embedding_dimensions"]) if entry.get("embedding_dimensions") else None),
         )
         seen.add(provider_id)
         configs.append(config)

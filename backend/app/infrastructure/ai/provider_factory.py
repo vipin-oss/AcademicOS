@@ -135,6 +135,23 @@ def build_ai_core(settings) -> AiCore:
     for config in configs:
         gateways[config.provider_id] = registry.build(config)
 
+    # M12.2: Build the embedder. The first provider entry with an
+    # embedding_model AND a base_url is the embedding provider. If none,
+    # the HashingEmbedder fallback is used (deterministic, no network).
+    embedding_config = next(
+        (c for c in configs if c.embedding_model and c.base_url), None
+    )
+    if embedding_config is not None:
+        from app.application.ports.embedder import Embedder
+        from app.infrastructure.ai.embedding.openai_embedding_adapter import (
+            OpenAIEmbeddingAdapter,
+        )
+        embedder: Embedder = OpenAIEmbeddingAdapter(embedding_config)
+    else:
+        from app.application.ports.embedder import Embedder
+        from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+        embedder = HashingEmbedder()
+
     default_pid = _resolve_default_provider_id(settings, gateways)
     return AiCore(
         registry=registry,
@@ -142,6 +159,7 @@ def build_ai_core(settings) -> AiCore:
         config=AiConfigView.from_settings(settings),
         provider_order=PROVIDER_KINDS,
         default_provider=default_pid,
+        embedder=embedder,
     )
 
 

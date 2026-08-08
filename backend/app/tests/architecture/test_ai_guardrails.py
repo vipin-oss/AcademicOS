@@ -126,6 +126,10 @@ def find_infrastructure_violations() -> list[str]:
                         f"'{resolved}' (adapters must be independent)"
                     )
                 else:
+                    # The composition root (provider_factory) MAY import
+                    # non-AI infrastructure (e.g. the HashingEmbedder fallback).
+                    if mod_name == "app.infrastructure.ai.provider_factory":
+                        continue
                     violations.append(
                         f"{mod_name}: imports infrastructure '{resolved}' "
                         f"(AI adapters compose through the factory only)"

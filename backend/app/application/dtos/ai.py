@@ -93,6 +93,8 @@ class ProviderConfig:
     max_tokens: int = 2048
     temperature: float = 0.0
     streaming_enabled: bool = True
+    embedding_model: str = ""
+    embedding_dimensions: int | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():

@@ -16,8 +16,11 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 APP_ROOT = BACKEND_ROOT / "app"
 
-#: The one module permitted to import httpx (the single transport owner).
-TRANSPORT_OWNER = Path("app/infrastructure/ai/llm/openai.py")
+#: The modules permitted to import httpx (transport owners: generation + embedding).
+TRANSPORT_OWNERS = {
+    "app/infrastructure/ai/llm/openai.py",
+    "app/infrastructure/ai/embedding/openai_embedding_adapter.py",
+}
 
 #: Feature layers that must NEVER own transport. (Other infrastructure modules
 #: such as ``infrastructure/external`` may use httpx for non-AI purposes and
@@ -55,7 +58,7 @@ def test_no_feature_module_owns_transport():
         if not scope.exists():
             continue
         for path in sorted(scope.rglob("*.py")):
-            if _rel(path) == TRANSPORT_OWNER.as_posix():
+            if _rel(path) in TRANSPORT_OWNERS:
                 continue
             if _imports_httpx(path):
                 offenders.append(_rel(path))

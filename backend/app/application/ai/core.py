@@ -38,6 +38,7 @@ from app.application.dtos.ai import (
     ProviderConfig,
     ProviderRecord,
 )
+from app.application.ports.embedder import Embedder
 
 
 def _utcnow_iso() -> str:
@@ -55,6 +56,7 @@ class AiCore:
         config: AiConfigView,
         provider_order: Sequence[str] | None = None,
         default_provider: str | None = None,
+        embedder: Embedder | None = None,
     ) -> None:
         self._registry = registry
         self._gateways = dict(gateways)  # provider_id -> gateway
@@ -64,6 +66,7 @@ class AiCore:
         # Default EXECUTION provider id (a provider_id, not a kind). Falls back
         # to the configured default (a kind, for display/validity) when unset.
         self._default_provider = default_provider or config.default_provider
+        self._embedder = embedder
 
     # ------------------------------------------------------------ accessors
     @property
@@ -94,9 +97,23 @@ class AiCore:
                     close()
                 except Exception:  # noqa: BLE001 - cleanup must not raise
                     pass
+        embedder_close = getattr(self._embedder, "close", None)
+        if callable(embedder_close):
+            try:
+                embedder_close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def has_provider(self, provider_id: str) -> bool:
         return provider_id in self._gateways
+
+    def embedder(self) -> Embedder:
+        """The AI Core's resolved embedder (M12.2) — a real adapter when an
+        embedding-capable provider is configured, or the ``HashingEmbedder``
+        fallback. Raises ``UnknownProviderError`` when no embedder is wired."""
+        if self._embedder is None:
+            raise UnknownProviderError("No embedder configured.")
+        return self._embedder
 
     # ---------------------------------------------------------- selection
     def gateway(self, provider_id: str | None = None) -> LanguageModelGateway:

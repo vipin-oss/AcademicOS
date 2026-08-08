@@ -1,3 +1,29 @@
+# AcademicOS — Sprint M12.2 Changelog (Embedding Capability)
+
+Release: **M12.2** · Baseline `980a77b` (M12.1.1) · Date: 2026-08-08
+Status: **embedding integration on the frozen M11 AI Core. No semantic search, no RAG.**
+
+## What was built
+
+| Component | Detail |
+|---|---|
+| `OpenAIEmbeddingAdapter` | Implements the **existing** `Embedder` port (`application/ports/embedder.py`). Calls `/v1/embeddings` via httpx; same retry/error doctrine as `OpenAIProvider`; lazy owned client + `close()`. |
+| `AiCore.embedder()` | The AI Core resolves the embedder: real adapter when an embedding-capable provider is configured, `HashingEmbedder` fallback otherwise. |
+| `build_ai_core` composition | Finds the first provider with `embedding_model` + `base_url`; builds `OpenAIEmbeddingAdapter`; else `HashingEmbedder`. |
+| `ProviderConfig` | Gains `embedding_model` + `embedding_dimensions` (parsed from `AI_PROVIDERS_JSON`). |
+| Guardrails | `provider_factory` exempt from ALL infra imports (composes gen + embed); two transport owners (gen + embed). |
+
+## Design decision (finalized blueprint)
+
+The finalized M12 blueprint (post-Chrome-review) specifies **reusing the existing `Embedder` port** — not creating a sibling `EmbedderGateway`. This avoids duplicate abstraction and lets `SearchObjectsUseCase` and `SearchIndexApplier` use one consistent embedding identity.
+
+## Verification
+- Backend: **1430 passed, 2 skipped** (+14 new; zero regressions)
+- Architecture guardrails: **16/16**
+- ruff clean; app boots (265 routes)
+
+---
+
 # AcademicOS — Sprint M12.1.1 Changelog (Configuration Authority Fix)
 
 Release: **M12.1.1** · Baseline `8232ee0` (M12.1) · Date: 2026-08-08
