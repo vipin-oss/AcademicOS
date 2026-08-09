@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies.auth import get_current_user
+from app.api.routes.search import get_vector_repository
 from app.application.services.outbox import to_outbox_row
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
@@ -63,6 +64,10 @@ def harness(tmp_path):
 
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[get_current_user] = lambda: user
+    # Isolate from the real Qdrant: these tests verify the LEXICAL read-repair
+    # contract (drain -> projection -> search). The real Qdrant (Docker) causes
+    # false HashingEmbedder semantic matches for non-matching queries.
+    app.dependency_overrides[get_vector_repository] = lambda: None
     with TestClient(app) as client:
         yield client, session, user
     app.dependency_overrides.clear()
