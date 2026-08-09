@@ -36,6 +36,8 @@ Production-safe contract (mirrors ``SummarizeDocumentUseCase``):
 """
 from __future__ import annotations
 
+import json
+
 from app.application.ai.core import AiCore
 from app.application.dtos.ai import (
     EnrichmentResult,
@@ -51,11 +53,13 @@ from app.application.ports.permission import PermissionEvaluator
 from app.application.services.document_annotation_service import (
     DocumentAnnotationService,
 )
+from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.auth.helpers import get_roles
 from app.application.use_cases.object_acl import object_acl_scope
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import PermissionAction
+from app.domain.value_objects.metadata import MetadataEntry, MetadataLayer, Provenance
 from app.domain.value_objects.object_id import ObjectId
 
 #: Char budget for the document text in the prompt (matches the summarization
@@ -256,6 +260,7 @@ class EnrichDocumentUseCase:
             return self._fallback(truncated, chars_used, chars_total)
 
         validated = result.value
+        persisted = self._persist_if_authorized(doc, validated, str(user.id))
         return EnrichmentResult(
             title=validated["title"],
             summary=validated["summary"],
@@ -274,9 +279,35 @@ class EnrichDocumentUseCase:
             output_tokens=result.usage.output_tokens,
             token_usage_estimated=result.usage.estimated,
             latency_ms=result.latency_ms,
+            persisted=persisted,
         )
 
     # ------------------------------------------------------------- helpers
+    def _persist_if_authorized(self, doc, payload, actor: str) -> bool:
+        if not self._permission_evaluator.can(
+            principal={"sub": actor, "roles": []},
+            scope=object_acl_scope(doc),
+            action=PermissionAction.WRITE,
+        ):
+            return False
+        entries = [
+            MetadataEntry("ai.tags", json.dumps(list(payload["tags"])), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+            MetadataEntry("ai.categories", json.dumps(list(payload["categories"])), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+            MetadataEntry("ai.keywords", json.dumps(list(payload["keywords"])), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+            MetadataEntry("ai.summary", payload["summary"], MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+        ]
+        if payload.get("title"):
+            entries.append(MetadataEntry("ai.title_suggestion", payload["title"], MetadataLayer.L5_INFERRED, Provenance.INFERRED))
+        changed = False
+        for entry in entries:
+            if doc.set_metadata(entry, actor=actor):
+                changed = True
+        if changed:
+            events = doc.pop_domain_events()
+            outbox_rows = [to_outbox_row(e) for e in events]
+            self._repository.save(doc, outbox_events=outbox_rows)
+        return changed
+
     @staticmethod
     def _fallback(truncated: bool, chars_used: int, chars_total: int) -> EnrichmentResult:
         """Honest unavailable result: empty fields, consistent provenance.

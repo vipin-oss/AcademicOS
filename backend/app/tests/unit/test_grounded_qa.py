@@ -383,3 +383,49 @@ class TestProvenance:
         assert result.available is False
         assert result.prompt_id == "assistant.default"
         assert result.prompt_version == 1
+
+
+class TestConfidenceIndicators:
+    """M20 — honest heuristic confidence indicators (NOT calibrated)."""
+
+    def test_grounded_when_retrieval_and_complete(self):
+        # Items present, finish_reason=stop, not truncated -> grounded.
+        gw = _FakeGateway(generate_text="answer")
+        use_case, _ = _make_use_case(gw, annotation_texts={"obj:document:d1": "x"})
+        result = use_case.execute("q", _user())
+        assert result.available is True
+        assert result.confidence == "grounded"
+
+    def test_partial_when_no_retrieval(self):
+        # No items retrieved -> partial (even if generation completed).
+        empty = _MockRetrieval([])  # empty items
+        from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
+        gw = _FakeGateway(generate_text="answer")
+        use_case = GroundedQAUseCase(
+            None, empty, _MockAiCore(gw),
+            verifier=None,
+            annotation_service=_MockAnnotationService({}),
+            storage=_MockStorage(),
+        )
+        result = use_case.execute("q", _user())
+        assert result.confidence == "partial"
+
+    def test_incomplete_when_finish_reason_length(self):
+        gw = _FakeGateway(generate_text="answer")
+        gw._generate_result = GenerationResult(
+            text="answer", model="test-model", finish_reason="length",
+            usage=TokenUsage(estimated=True),
+        )
+        # Override generate to return the length-finish result.
+        gw.generate = lambda prompt: gw._generate_result
+        use_case, _ = _make_use_case(gw, annotation_texts={"obj:document:d1": "x"})
+        result = use_case.execute("q", _user())
+        assert result.confidence == "incomplete"
+
+    def test_no_confidence_on_fallback(self):
+        raising_gw = _FakeGateway()
+        raising_gw.generate = lambda prompt: (_ for _ in ()).throw(RuntimeError("down"))
+        use_case, _ = _make_use_case(raising_gw, annotation_texts={"obj:document:d1": "x"})
+        result = use_case.execute("q", _user())
+        assert result.available is False
+        assert result.confidence == ""

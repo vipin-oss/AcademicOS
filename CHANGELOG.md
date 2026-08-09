@@ -1095,3 +1095,19 @@ and verified.
 | `frontend/src/app/(auth)/login/page.tsx`, `reset-password/page.tsx` | `useSearchParams` wrapped in Suspense + `force-dynamic` (prerender failure) |
 | `frontend/src/app/(main)/objects/[id]/page.tsx` | `Section` icon-prop misuse (tsc) |
 | `frontend/src/lib/api/intake.ts` | Missing `RequestOptions` import |
+
+# AcademicOS — Sprint M17 (Map-Reduce Summarization)
+Release: M17 · Baseline 98464ed (M16.1) · Commit 03c27a6 · Date: 2026-08-08
+Roadmap: M13 deferred table "Map-reduce summarization". Documents >12k chars now get full coverage via chunk+synthesize (capped at 5 chunks to bound cost) instead of head-truncation. Backward compatible (≤12k unchanged). Reuses existing gateway + permission + extraction + SummarizeResult contract. Provenance aggregated across all calls. Backend 1581 passed; architecture 16/16.
+
+# AcademicOS — Sprint M18 (Enrichment Persistence)
+Release: M18 · Baseline 88ea5e5 (M17) · Commit 0bf8a2d · Date: 2026-08-08
+Roadmap: M13 deferred "Enrichment persistence (tags stored on objects)". After successful enrichment + strict validation, tags/categories/keywords/summary are persisted as L5_INFERRED metadata (AI-generated, below human-asserted). WRITE permission gates persistence; READ-only callers get unchanged M13.2 behavior. Idempotent. Backend 1584 passed; architecture 16/16.
+
+# AcademicOS — Sprint M19 (Conversation Persistence for Chat)
+Release: M19 · Baseline b3eea6a (M18) · Date: 2026-08-08
+Roadmap: "Conversation persistence for QA". Server-side conversations for /ai/chat: conversation_id loads/creates an AI_CONVERSATION; messages appended + persisted after each turn. Backward compatible (client-history mode unchanged). Backend 1587 passed; architecture 16/16.
+
+# AcademicOS — Sprint M20 (Confidence Indicators)
+Release: M20 · Baseline 79cd300 (M19) · Date: 2026-08-08
+Roadmap: "Confidence scoring / calibration" (heuristic half). Honest quality indicators on QAResult: grounded/partial/incomplete/"". Not calibrated (A9 is P5). Backend 1591 passed; architecture 16/16.

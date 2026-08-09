@@ -24,7 +24,7 @@ from app.application.exceptions import (
 )
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.domain.entities.object import UniversalObject
-from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.value_objects.enums import ObjectStatus, ObjectType, PermissionAction
 from app.domain.value_objects.object_id import ObjectId
 
 # --------------------------------------------------------------------------- mocks
@@ -33,9 +33,13 @@ from app.domain.value_objects.object_id import ObjectId
 class _MockRepo:
     def __init__(self, doc=None):
         self._doc = doc
+        self.saved: list = []
 
     def get_by_id(self, oid):
         return self._doc
+
+    def save(self, obj, *, outbox_events=()):
+        self.saved.append((obj, outbox_events))
 
 
 class _MockAnnotationService:
@@ -47,10 +51,13 @@ class _MockAnnotationService:
 
 
 class _MockEvaluator:
-    def __init__(self, allow=True):
+    def __init__(self, allow=True, deny_write=False):
         self._allow = allow
+        self._deny_write = deny_write
 
     def can(self, **kwargs):
+        if self._deny_write and kwargs.get("action") == PermissionAction.WRITE:
+            return False
         return self._allow
 
 
@@ -325,3 +332,43 @@ class TestTruncation:
         result = _enrich(_MockGateway(_GOOD_VALUE), text="Short.")
         assert result.truncated is False
         assert result.chars_used == result.chars_total == len("Short.")
+
+
+class TestEnrichmentPersistence:
+    """M18 — enrichment tags persisted on the document when WRITE is held."""
+
+    def test_persists_tags_with_write_permission(self):
+        gw = _MockGateway(_GOOD_VALUE)
+        use_case = _use_case(gw, extraction={"text": "Some text."})
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.available is True
+        assert result.persisted is True
+        # The repo was saved.
+        assert len(use_case._repository.saved) == 1
+        saved_obj, outbox = use_case._repository.saved[0]
+        # Tags are on the object's metadata.
+        tags = saved_obj.metadata.get_value("ai.tags")
+        assert tags is not None
+        assert "physics" in tags
+
+    def test_read_only_user_no_persistence(self):
+        gw = _MockGateway(_GOOD_VALUE)
+        # deny_write=True: READ allowed, WRITE denied.
+        repo = _MockRepo(_doc())
+        use_case = EnrichDocumentUseCase(
+            repo, _MockAnnotationService({"text": "text."}),
+            _MockEvaluator(allow=True, deny_write=True),
+            _MockAiCore(gw),
+        )
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.available is True
+        assert result.persisted is False  # no persistence without WRITE
+        assert len(repo.saved) == 0
+
+    def test_gateway_failure_no_persistence(self):
+        gw = _MockGateway(raise_exc=RuntimeError("down"))
+        use_case = _use_case(gw, extraction={"text": "text."})
+        result = use_case.execute("obj:document:doc1", _user(), storage=None)
+        assert result.available is False
+        assert result.persisted is False
+        assert len(use_case._repository.saved) == 0

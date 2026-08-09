@@ -81,9 +81,16 @@ class ChatUseCase:
         message: str,
         history: list[ChatTurn] | None,
         user: UniversalObject,
+        *,
+        conversation: UniversalObject | None = None,
     ) -> QAResult:
-        """Synchronous chat: ground the latest message in documents + history."""
-        conversation = self._conversation_from_history(history, user)
+        """Synchronous chat: ground the latest message in documents + history.
+
+        ``conversation`` (M19) optionally carries a server-persisted
+        conversation whose msg.<seq> history is read by the context builder;
+        ``None`` synthesises from client-supplied ``history`` (M15 behavior)."""
+        if conversation is None:
+            conversation = self._conversation_from_history(history, user)
         return self._grounded.execute(message, user, conversation=conversation)
 
     def stream(
@@ -91,9 +98,12 @@ class ChatUseCase:
         message: str,
         history: list[ChatTurn] | None,
         user: UniversalObject,
+        *,
+        conversation: UniversalObject | None = None,
     ) -> Iterator[dict]:
         """Streaming chat — inherits the leak-proof completion contract."""
-        conversation = self._conversation_from_history(history, user)
+        if conversation is None:
+            conversation = self._conversation_from_history(history, user)
         return self._grounded.stream(message, user, conversation=conversation)
 
     @staticmethod

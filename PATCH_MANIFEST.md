@@ -1,16 +1,11 @@
-# AcademicOS M16.1 — Incremental Patch Manifest (Local/Free AI Verification + Docs)
-
-**Parent commit:** `cda5f58` (M16 docs) · **Commit:** `801941a` · **Date:** 2026-08-08
-**Scope:** provider/cost requirement — evidence (tests) + usability docs. No behavior change.
-
-## Files Changed
+# AcademicOS M20 — Confidence Indicators on QA Results
+**Parent:** 79cd300 · **Commit:** (current) · **Date:** 2026-08-08
+## Files Modified
 | Path | Change |
 |---|---|
-| `backend/app/tests/unit/test_openai_adapter_hardening.py` | +`TestLocalFreeProvider`: gateway generates (chat + structured) with `api_key=""`, no `Authorization` header. |
-| `AI_DEVELOPER_GUIDE.md` | +§7 Local/Free AI: Ollama `AI_PROVIDERS_JSON` example (no key) + no-provider `/ai/handoff` fallback. |
-
-## Why
-The core must work without paid AI. The architecture already supports keyless local providers; this adds the regression proof and the setup documentation.
-
+| `backend/app/application/dtos/ai.py` | `confidence: str = ""` on QAResult + serializer. |
+| `backend/app/application/use_cases/ai/grounded_qa.py` | `_compute_confidence` heuristic (finish_reason + retrieved_count + truncated). |
+| `backend/app/api/routes/ai.py` | `confidence` on QAResponseModel + ChatResponseModel. |
+| `backend/app/tests/unit/test_grounded_qa.py` | +4 confidence indicator tests. |
 ## Verification
-- OpenAI adapter hardening: **15 passed** · Architecture **16/16** · full backend green.
+- Backend: **1591 passed, 2 skipped** (+4; zero regressions) · Architecture **16/16**

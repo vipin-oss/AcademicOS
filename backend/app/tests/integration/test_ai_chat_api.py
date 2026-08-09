@@ -151,3 +151,41 @@ class TestStreamingEndpoint:
         app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=False)
         resp = harness.post(f"{API}/chat/stream", json={"message": "hi"})
         assert resp.status_code == 404
+
+
+class TestConversationPersistence:
+    """M19 — server-side conversation persistence for chat."""
+
+    def test_first_turn_creates_conversation(self, harness):
+        """No conversation_id + no history → a new conversation is created
+        and its id is returned."""
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        resp = harness.post(f"{API}/chat", json={"message": "hello"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["conversation_id"] is not None
+        assert body["conversation_id"].startswith("obj:ai_conversation:")
+
+    def test_second_turn_continues_conversation(self, harness):
+        """Sending the conversation_id from the first turn loads its history."""
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        first = harness.post(f"{API}/chat", json={"message": "hello"})
+        conv_id = first.json()["conversation_id"]
+        assert conv_id is not None
+
+        second = harness.post(
+            f"{API}/chat", json={"message": "follow up", "conversation_id": conv_id},
+        )
+        assert second.status_code == 200
+        assert second.json()["conversation_id"] == conv_id  # same conversation
+
+    def test_client_history_mode_no_persistence(self, harness):
+        """conversation_id absent + history present → M15 stateless mode
+        (no conversation_id in the response)."""
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        resp = harness.post(f"{API}/chat", json={
+            "message": "hi",
+            "history": [{"role": "user", "content": "previous"}],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["conversation_id"] is None

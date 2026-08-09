@@ -294,7 +294,20 @@ class GroundedQAUseCase:
             output_tokens=result.usage.output_tokens,
             token_usage_estimated=result.usage.estimated,
             latency_ms=result.latency_ms,
+            confidence=self._compute_confidence(result, context),
         )
+
+    @staticmethod
+    def _compute_confidence(result, context) -> str:
+        """Honest heuristic quality indicator (NOT calibrated — calibration
+        is A9/P5 scope). Based on observable signals only."""
+        if result.finish_reason != "stop":
+            return "incomplete"
+        retrieved = context.retrieved.__len__() if context else 0
+        truncated = context.truncated if context else False
+        if retrieved > 0 and not truncated:
+            return "grounded"
+        return "partial"
 
     def _fallback(self, context, prompt):
         """The honest unavailable result — shared by sync + streaming paths."""

@@ -53,6 +53,7 @@ from app.application.services.document_annotation_service import (
     DocumentAnnotationService,
 )
 from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.ai.chat import CHAT_SYSTEM_INSTRUCTIONS, ChatTurn, ChatUseCase
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
@@ -62,9 +63,12 @@ from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
 from app.application.use_cases.ai.related_documents import RelatedDocumentsUseCase
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
+from app.application.use_cases.assistant.helpers import append_message, derive_title
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
+from app.domain.value_objects.enums import ObjectType
+from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
@@ -265,6 +269,7 @@ class EnrichmentResponseModel(BaseModel):
     output_tokens: int = 0
     token_usage_estimated: bool = True
     latency_ms: int = 0
+    persisted: bool = False
 
 
 @router.post("/enrich", response_model=EnrichmentResponseModel)
@@ -536,6 +541,7 @@ class ChatBody(BaseModel):
 
     message: str
     history: list[ChatMessageModel] = Field(default_factory=list)
+    conversation_id: str | None = None
 
 
 class ChatResponseModel(BaseModel):
@@ -554,6 +560,8 @@ class ChatResponseModel(BaseModel):
     output_tokens: int = 0
     token_usage_estimated: bool = True
     latency_ms: int = 0
+    conversation_id: str | None = None
+    confidence: str = ""
 
 
 def _build_chat_use_case(core, db, repo, storage):
@@ -595,9 +603,40 @@ def ai_chat(
 
     repo = SQLAlchemyObjectRepository(db)
     use_case = _build_chat_use_case(core, db, repo, storage)
+
+    # M19: server-side conversation persistence.
+    conversation = None
+    if body.conversation_id:
+        conv_obj = repo.get_by_id(ObjectId(body.conversation_id))
+        if conv_obj is not None and conv_obj.object_type == ObjectType.AI_CONVERSATION:
+            conversation = conv_obj
+    elif not body.history:
+        # First turn of a new persistent conversation (no client history).
+        from app.domain.value_objects.enums import ObjectType as _OT
+        conversation = UniversalObject.create(
+            _OT.AI_CONVERSATION,
+            derive_title(body.message),
+            created_by=str(user.id),
+            object_id=ObjectId.generate(_OT.AI_CONVERSATION),
+        )
+
     history = [ChatTurn(turn.role, turn.content) for turn in body.history]
-    result = use_case.execute(body.message, history, user)
-    return ChatResponseModel(**qa_result_dict(result))
+    result = use_case.execute(body.message, history, user, conversation=conversation)
+
+    # Persist user + assistant messages on the conversation.
+    if conversation is not None:
+        append_message(conversation, "user", body.message, answer=None)
+        if result.available:
+            append_message(conversation, "assistant", result.answer, answer=None)
+        events = conversation.pop_domain_events()
+        outbox_rows = [to_outbox_row(e) for e in events]
+        repo.save(conversation, outbox_events=outbox_rows)
+
+    response_data = qa_result_dict(result)
+    response_data["conversation_id"] = (
+        str(conversation.id) if conversation is not None else None
+    )
+    return ChatResponseModel(**response_data)
 
 
 @router.post("/chat/stream")

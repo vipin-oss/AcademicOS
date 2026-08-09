@@ -391,6 +391,7 @@ class QAResult:
     output_tokens: int = 0
     token_usage_estimated: bool = True
     latency_ms: int = 0
+    confidence: str = ""
 
     def __post_init__(self) -> None:
         if self.retrieved_count < 0:
@@ -431,6 +432,7 @@ class EnrichmentResult:
     output_tokens: int = 0
     token_usage_estimated: bool = True
     latency_ms: int = 0
+    persisted: bool = False
 
     def __post_init__(self) -> None:
         if self.chars_used < 0 or self.chars_total < 0:
@@ -624,6 +626,7 @@ def qa_result_dict(result: QAResult) -> dict:
         "output_tokens": result.output_tokens,
         "token_usage_estimated": result.token_usage_estimated,
         "latency_ms": result.latency_ms,
+        "confidence": result.confidence,
     }
 
 
