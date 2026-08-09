@@ -54,7 +54,10 @@ describe("api client auth wiring", () => {
 
     const blob = await api.getBlob("/documents/obj:document:X/download");
 
-    expect(await blob.text()).toBe("%PDF-1.7");
+    // jsdom does not implement Blob.text(); use arrayBuffer + TextDecoder.
+    const buffer = await blob.arrayBuffer();
+    expect(new TextDecoder().decode(buffer)).toBe("%PDF-1.7");
+    expect(blob.type).toBe("application/pdf");
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer token-abc");
   });
