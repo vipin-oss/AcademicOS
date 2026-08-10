@@ -303,11 +303,14 @@ def test_retrieval_object_type_passthrough_is_backward_compatible(world):
     conv = _conversation(repo)
     index(conv, doc)
 
-    # ``None`` (the pre-M1 default) retrieves every type (the asker is a
-    # searchable user object too).
+    # ``None`` (the general-retrieval default) retrieves academic types but
+    # EXCLUDES internal objects (AI_CONVERSATION, USER) — conversation
+    # content is internal state and must never become AI evidence.
     all_items = retrieval.retrieve("find quantum", asker).items
     all_types = {i.object_type for i in all_items}
-    assert "ai_conversation" in all_types and "document" in all_types
+    assert "document" in all_types
+    assert "ai_conversation" not in all_types
+    assert "user" not in all_types
 
     # Narrowed to conversations, only the conversation comes back.
     conv_items = retrieval.retrieve(

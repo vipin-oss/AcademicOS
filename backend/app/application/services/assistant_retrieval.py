@@ -69,6 +69,16 @@ _QUERY_STOPWORDS = frozenset(
 # evidence. Their titles may still appear; their metadata is suppressed.
 _NO_METADATA_TYPES = frozenset({ObjectType.AI_CONVERSATION, ObjectType.USER})
 
+# AI-retrieval contamination fix: internal/system object types that must
+# NEVER surface as AI evidence in GENERAL retrieval (object_type=None).
+# AI_CONVERSATION objects are indexed in search_documents — their titles
+# and stored messages are internal state, not academic knowledge — and
+# USER objects carry account internals. The memory-recall path explicitly
+# requests object_type=AI_CONVERSATION and is therefore NOT affected.
+# Global search (SearchObjectsUseCase via GET /search) is untouched: this
+# exclusion lives in the assistant retrieval service only.
+_RETRIEVAL_EXCLUDED_TYPES = frozenset({ObjectType.AI_CONVERSATION, ObjectType.USER})
+
 # Topic markers: the retrieval term is the content AFTER the LAST marker.
 _TOPIC_MARKERS = (
     "related to",
@@ -180,6 +190,7 @@ class AssistantRetrievalService:
         hits = self._search.execute(
             user=user, text=term, object_type=object_type, limit=search_limit
         )
+        hits = self._exclude_internal_types(hits, object_type)
         if not hits and term and term != query:
             singular = _singularize(term)
             if singular != term:
@@ -187,6 +198,7 @@ class AssistantRetrievalService:
                     user=user, text=singular, object_type=object_type,
                     limit=search_limit,
                 )
+                hits = self._exclude_internal_types(hits, object_type)
         graph_items = self._graph_items(
             hits, user, anchors=graph_anchors, depth=graph_depth
         )
@@ -195,6 +207,20 @@ class AssistantRetrievalService:
             search_count=len(hits),
             graph_count=len(graph_items),
         )
+
+    def _exclude_internal_types(self, hits, object_type: str | None):
+        """Drop internal/system hits from GENERAL AI retrieval.
+
+        When a caller explicitly narrows to one object type (e.g. the
+        memory-recall path searches AI_CONVERSATION on purpose) the
+        explicit type wins and nothing is filtered. For general retrieval
+        (object_type=None) AI_CONVERSATION and USER hits are removed before
+        the graph leg, so internal conversation content can never become AI
+        evidence or a cited source.
+        """
+        if object_type is not None or not hits:
+            return hits
+        return [h for h in hits if h.object_type not in _RETRIEVAL_EXCLUDED_TYPES]
 
     # ------------------------------------------------------------- graph leg
     def _graph_items(
@@ -278,6 +304,8 @@ class AssistantRetrievalService:
                 )
                 continue
             node_type = str(node["object_type"])
+            if node_type in _RETRIEVAL_EXCLUDED_TYPES:
+                continue  # internal objects never enter the merged result
             _add(
                 RetrievedItem(
                     object_id=node_id,
