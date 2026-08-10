@@ -1,3 +1,9 @@
+> **ARCHIVED — historical record.** This document describes the "Sprint 8 / M8"
+> release state (commit `80892d6`). It is preserved for history only and does
+> NOT describe the current branch (`feature/m11-ai-workspace`, HEAD `26c5f80`
+> and later, which ships M10–M25 incl. AI chat, semantic search, and domain
+> assistants). See `README.md` and `CHANGELOG.md` for the current state.
+
 # AcademicOS — Release Verification Report
 
 Release: **1.0.0** · Git: `80892d6` · Date: 2026-08-07

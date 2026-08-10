@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.api.routes.documents import get_storage
 from app.application.dtos.annotation import as_annotation_dict
 from app.application.exceptions import ObjectNotFoundError
@@ -43,7 +43,7 @@ from app.infrastructure.storage.local import LocalFileStorage
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_user), Depends(require_object_acl())],
 )
 
 

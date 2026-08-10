@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.ai import get_ai_core
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.api.mappers.assistant_mapper import (
     output_dict,
     to_ask_input,
@@ -99,7 +99,7 @@ from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
 
-router = APIRouter(prefix="/assistant", tags=["Assistant"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/assistant", tags=["Assistant"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:

@@ -657,22 +657,69 @@ def ai_chat_stream(
     """Streaming chat (M15): SSE over the same grounded pipeline as ``POST /ai/chat``.
 
     Events: ``token`` (partial deltas, flushed only on confirmed success),
-    ``completion`` (verified answer + provenance). Feature-flagged
-    (``AI_CHAT_ENABLED``). Inherits the leak-proof streaming contract.
+    ``completion`` (verified answer + provenance + ``conversation_id`` when a
+    conversation is active). Feature-flagged (``AI_CHAT_ENABLED``). Inherits
+    the leak-proof streaming contract.
+
+    Reconciliation pass — M19 parity with the synchronous endpoint: the same
+    server-side conversation persistence (create/lookup on ``conversation_id``,
+    append user + assistant messages, outbox rows in the same transaction).
+    Without it, the streaming path — now the primary UI path — silently lost
+    conversation history. The persistence happens after the final event so it
+    never delays a single token.
     """
+    # Configuration authority — checked BEFORE resolving embedder/vector so a
+    # disabled feature never touches the AI embedder nor the vector store.
     if not core.config.enabled or not core.config.feature_flags.get("chat", False):
         raise HTTPException(status_code=404)
 
     repo = SQLAlchemyObjectRepository(db)
     use_case = _build_chat_use_case(core, db, repo, storage)
+
+    # M19: server-side conversation persistence (mirrors POST /ai/chat).
+    conversation = None
+    if body.conversation_id:
+        conv_obj = repo.get_by_id(ObjectId(body.conversation_id))
+        if conv_obj is not None and conv_obj.object_type == ObjectType.AI_CONVERSATION:
+            conversation = conv_obj
+    elif not body.history:
+        # First turn of a new persistent conversation (no client history).
+        from app.domain.value_objects.enums import ObjectType as _OT
+        conversation = UniversalObject.create(
+            _OT.AI_CONVERSATION,
+            derive_title(body.message),
+            created_by=str(user.id),
+            object_id=ObjectId.generate(_OT.AI_CONVERSATION),
+        )
+
     history = [ChatTurn(turn.role, turn.content) for turn in body.history]
+    # Track the final answer so the conversation row is written once the
+    # stream completes (never before the verified answer exists).
+    final = {"text": None, "available": False}
 
     def events():
-        for event in use_case.stream(body.message, history, user):
+        for event in use_case.stream(body.message, history, user, conversation=conversation):
             if event["type"] == "token":
                 yield _sse("token", {"delta": event["delta"]})
             elif event["type"] == "complete":
-                yield _sse("completion", qa_result_dict(event["result"]))
+                result = event["result"]
+                final["text"] = result.answer if result.available else None
+                final["available"] = result.available
+                data = qa_result_dict(result)
+                if conversation is not None:
+                    data["conversation_id"] = str(conversation.id)
+                yield _sse("completion", data)
+        # Persist after the stream ends — never before the first token.
+        if conversation is not None:
+            try:
+                append_message(conversation, "user", body.message, answer=None)
+                if final["available"] and final["text"]:
+                    append_message(conversation, "assistant", final["text"], answer=None)
+                events_out = conversation.pop_domain_events()
+                repo.save(conversation, outbox_events=[to_outbox_row(e) for e in events_out])
+                db.commit()
+            except Exception:  # noqa: BLE001 — persistence must never break a stream
+                db.rollback()
 
     return StreamingResponse(
         events(),

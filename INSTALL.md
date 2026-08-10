@@ -22,7 +22,9 @@ Windows (PowerShell), Linux and macOS.
    DATABASE_URL=sqlite:///./academicos.db
    JWT_SECRET=change-me-to-a-long-random-string
    ```
-   Create the database and start the server:
+   Create the database and start the server (stay in `backend/` — the env
+   file is anchored to `backend/.env`, not the process CWD; starting from
+   the repo root silently skips it and every AI flag falls back to OFF):
    ```powershell
    python scripts/init_db.py
    uvicorn app.main:app --host 127.0.0.1 --port 8000

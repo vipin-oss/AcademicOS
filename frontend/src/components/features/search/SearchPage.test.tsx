@@ -17,6 +17,12 @@ vi.mock("@/lib/api/search", () => ({
   searchObjects: vi.fn(),
 }));
 
+// M26: the page reads `?q=` from the router — tests run without a router
+// context, so provide a stable, empty query string.
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(""),
+}));
+
 import { searchObjects } from "@/lib/api/search";
 import type { SearchHit, SearchResponse } from "@/lib/api/search";
 import { ApiError } from "@/lib/api/client";

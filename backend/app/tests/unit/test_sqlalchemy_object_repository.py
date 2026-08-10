@@ -497,6 +497,23 @@ def test_find_sort_and_order(session):
     assert len(all_desc) == 3
 
 
+def test_find_sort_title_ci_is_case_insensitive(session):
+    """title_ci reproduces the application layer's casefold name ordering
+    in SQL (reconciliation pass) — 'apple' precedes 'Zebra'."""
+    repo = SQLAlchemyObjectRepository(session)
+    for title in ("Zebra", "apple", "Banana"):
+        obj = UniversalObject.create(
+            ObjectType.COURSE, title, created_by="faculty:1"
+        )
+        obj.pop_domain_events()
+        repo.save(obj)
+
+    asc = repo.find(page=1, page_size=10, sort_by="title_ci", order="asc")
+    assert [o.title for o in asc] == ["apple", "Banana", "Zebra"]
+    desc = repo.find(page=1, page_size=10, sort_by="title_ci", order="desc")
+    assert [o.title for o in desc] == ["Zebra", "Banana", "apple"]
+
+
 def test_find_rejects_invalid_sort_and_order(session):
     repo = _save_n_courses(session, 1)
     with pytest.raises(ValueError):

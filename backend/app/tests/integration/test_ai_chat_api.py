@@ -153,6 +153,70 @@ class TestStreamingEndpoint:
         assert resp.status_code == 404
 
 
+def _sse_events(body: str) -> list[dict]:
+    """Parse the SSE frames of a streaming response into {event, data} dicts."""
+    events = []
+    for frame in body.split("\n\n"):
+        event, data = "message", ""
+        for line in frame.split("\n"):
+            if line.startswith("event:"):
+                event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data += line[len("data:"):].strip()
+        if data:
+            import json as _json
+            events.append({"event": event, "data": _json.loads(data)})
+    return events
+
+
+class TestStreamingConversationPersistence:
+    """Reconciliation pass — M19 parity: the streaming endpoint persists the
+    conversation exactly like the synchronous endpoint (create on first turn,
+    continue on conversation_id, completion carries conversation_id)."""
+
+    def test_stream_first_turn_creates_and_returns_conversation(self, harness):
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        resp = harness.post(f"{API}/chat/stream", json={"message": "hello"})
+        assert resp.status_code == 200
+        events = _sse_events(resp.text)
+        completions = [e for e in events if e["event"] == "completion"]
+        assert completions, "stream must end with a completion event"
+        conv_id = completions[-1]["data"].get("conversation_id")
+        assert conv_id is not None and conv_id.startswith("obj:ai_conversation:")
+        # The conversation row actually exists with the user turn persisted.
+        got = harness.get(f"/api/v1/assistant/conversations/{conv_id}")
+        assert got.status_code == 200
+        assert got.json()["messages"], "user message must be persisted"
+
+    def test_stream_second_turn_continues_same_conversation(self, harness):
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        first = harness.post(f"{API}/chat/stream", json={"message": "hello"})
+        conv_id = _sse_events(first.text)[-1]["data"].get("conversation_id")
+        assert conv_id is not None
+
+        second = harness.post(
+            f"{API}/chat/stream",
+            json={"message": "follow up", "conversation_id": conv_id},
+        )
+        assert second.status_code == 200
+        events = _sse_events(second.text)
+        assert events[-1]["event"] == "completion"
+        assert events[-1]["data"].get("conversation_id") == conv_id
+
+    def test_stream_client_history_mode_stays_stateless(self, harness):
+        """conversation_id absent + history present → no persistence, exactly
+        like the synchronous endpoint."""
+        app.dependency_overrides[get_ai_core] = lambda: _core_with(enabled=True, chat=True)
+        resp = harness.post(f"{API}/chat/stream", json={
+            "message": "hi",
+            "history": [{"role": "user", "content": "previous"}],
+        })
+        assert resp.status_code == 200
+        events = _sse_events(resp.text)
+        assert events[-1]["event"] == "completion"
+        assert events[-1]["data"].get("conversation_id") is None
+
+
 class TestConversationPersistence:
     """M19 — server-side conversation persistence for chat."""
 

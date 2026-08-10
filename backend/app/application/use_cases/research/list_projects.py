@@ -59,6 +59,47 @@ class ListProjectsUseCase:
     def execute(self, query: ListProjectsQuery) -> ListProjectsResult:
         assert_valid_list_projects_query(query)
 
+        # M27 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title_ci — the registry's name order, since
+        # ProjectOutput.title is the object title) instead of loading every
+        # RESEARCH_PROJECT row and hydrating all JSONB metadata before
+        # slicing. The slow path below is preserved for queries with criteria
+        # the SQL projection cannot express (q tokens, pi/agency/status/
+        # year/department filters, the relationship-scoped lens).
+        plain = (
+            not (query.q or "").strip()
+            and not (query.pi or "").strip()
+            and not (query.agency or "").strip()
+            and query.status is None
+            and query.year is None
+            and query.department is None
+            and query.object_id is None
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.RESEARCH_PROJECT)
+            page = self._repository.find(
+                object_type=ObjectType.RESEARCH_PROJECT,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            all_ids = []
+            for project in page:
+                all_ids.extend(linked_target_ids(project))
+            linked_by_id = {
+                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+            }
+            return ListProjectsResult(
+                items=[
+                    ProjectOutput.from_domain(project, [], linked_by_id=linked_by_id)
+                    for project in page
+                ],
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         projects = self._repository.find_by_type(ObjectType.RESEARCH_PROJECT)
 
         if query.object_id is not None:

@@ -6,7 +6,10 @@ import { NextResponse, type NextRequest } from "next/server";
  * verification happens client-side via /auth/me + the refresh interceptor. */
 
 const PROTECTED_PREFIXES = [
+  "/ai",
   "/assistant",
+  "/assistants",
+  "/chat",
   "/committees",
   "/documents",
   "/events",
@@ -56,7 +59,10 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     "/",
+    "/ai/:path*",
     "/assistant/:path*",
+    "/assistants/:path*",
+    "/chat/:path*",
     "/committees/:path*",
     "/documents/:path*",
     "/events/:path*",

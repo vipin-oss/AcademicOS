@@ -41,6 +41,7 @@ from app.application.exceptions import (
 )
 from app.application.intake.commit_engine import CommitEngineService
 from app.application.intake.proposal_engine import ProposalEngineService
+from app.application.ports.document_content_store import DocumentContentStore
 from app.application.ports.file_storage import FileStorage
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import MetadataLayer, ObjectType, Provenance
@@ -79,9 +80,16 @@ class ReviewItemUseCase:
     """The single review seam: approve/reject one item, or bulk-review a
     session. Approval delegates to the existing Commit Engine."""
 
-    def __init__(self, repository: ObjectRepository, storage: FileStorage) -> None:
+    def __init__(
+        self,
+        repository: ObjectRepository,
+        storage: FileStorage,
+        content_store: DocumentContentStore | None = None,
+    ) -> None:
         self._repository = repository
-        self._commit_engine = CommitEngineService(repository, storage)
+        self._commit_engine = CommitEngineService(
+            repository, storage, content_store=content_store
+        )
         self._proposal_engine = ProposalEngineService(repository)
 
     # ------------------------------------------------------------------ item

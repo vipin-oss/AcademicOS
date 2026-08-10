@@ -43,6 +43,7 @@ from app.application.exceptions import (
     ObjectNotFoundError,
     ValidationError,
 )
+from app.application.ports.document_content_store import DocumentContentStore
 from app.application.ports.file_storage import FileStorage
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.validators.document import DOCUMENT_TYPES
@@ -70,10 +71,15 @@ class CommitItemUseCase:
         repository: ObjectRepository,
         storage: FileStorage,
         document_creator: CreateDocumentUseCase,
+        content_store: DocumentContentStore | None = None,
     ) -> None:
         self._repository = repository
         self._storage = storage
         self._document_creator = document_creator
+        # M27: the document-content search projection. Optional — a feature
+        # without a wired store commits documents without a content row
+        # (documented degraded behavior).
+        self._content_store = content_store
 
     def execute(self, command: CommitIntakeItemCommand) -> CommitItemOutput:
         item = self._repository.get_by_id(ObjectId(command.item_id))
@@ -159,6 +165,27 @@ class CommitItemUseCase:
                 )
             )
         )
+
+        # --- M27: document-content search projection ------------------------
+        # The extracted-text blob (``text_key`` in the extraction descriptor)
+        # is the source of truth; the content row is a searchable, derived
+        # projection written in the same transaction as the commit. Skipped
+        # when no store is wired, or when the text blob is unavailable (the
+        # document still commits — content search simply lags/absent for it).
+        if self._content_store is not None:
+            text_key = descriptor.get("text_key") if isinstance(descriptor, dict) else None
+            if text_key:
+                try:
+                    text = self._storage.read(text_key).decode("utf-8")
+                except FileNotFoundError:
+                    text = ""
+                if text:
+                    self._content_store.upsert(
+                        object_id=str(document.id),
+                        version=document.version,
+                        content_text=text,
+                        source_item_id=str(item.id),
+                    )
 
         # --- mark committed (idempotent terminal state) ---------------------
         item.set_metadata(_system_entry(KEY_COMMITTED_DOCUMENT, str(document.id)), actor=command.actor)

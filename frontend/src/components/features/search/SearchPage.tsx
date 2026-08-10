@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 import { SearchBar } from "@/components/features/objects/SearchBar";
 import { Spinner } from "@/components/features/objects/Spinner";
@@ -9,13 +10,22 @@ import { searchObjects, type SearchHit } from "@/lib/api/search";
 import { isAbortError, toErrorMessage } from "@/lib/api/client";
 
 /**
- * Global search page (Sprint-5 M2). Queries the hybrid search API and
+ * Global search (Sprint-5 M2 + M26). Queries the hybrid search API and
  * renders typed hits with provenance (lexical / semantic / both) and the
- * deterministic score. Reuses the objects SearchBar component.
+ * deterministic score. Deep-linkable via `?q=` (the TopHeader search box
+ * navigates here); typing re-searches with a 300 ms debounce.
  */
 export default function SearchPage() {
-  const [query, setQuery] = useState("");
-  const [debounced, setDebounced] = useState("");
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(urlQuery);
+  const [debounced, setDebounced] = useState(urlQuery);
+
+  // Sync with the URL when the header search navigates here again.
+  useEffect(() => {
+    setQuery(urlQuery);
+    setDebounced(urlQuery);
+  }, [urlQuery]);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +77,7 @@ export default function SearchPage() {
   }, [debounced, run]);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <header>
         <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Search</h1>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
@@ -91,6 +101,12 @@ export default function SearchPage() {
       {searched && !loading && hits.length === 0 ? (
         <p className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 text-sm text-[var(--text-secondary)]">
           No results for &ldquo;{debounced}&rdquo;.
+        </p>
+      ) : null}
+
+      {searched && !loading && hits.length > 0 ? (
+        <p className="text-xs text-[var(--text-tertiary)]">
+          {hits.length} result{hits.length === 1 ? "" : "s"} for &ldquo;{debounced}&rdquo;
         </p>
       ) : null}
 

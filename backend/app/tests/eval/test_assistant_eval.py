@@ -28,11 +28,33 @@ from app.application.services.assistant_eval import (
 )
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
-from app.application.services.model_registry import (
-    PROVIDER_KIND_RULES,
-    ModelRegistry,
-    ModelSpec,
-)
+# M26: the legacy ModelRegistry module was removed (superseded by the AI Core
+# ProviderRegistry). The eval runner only needs `registry.all()`; a minimal
+# local registry keeps the across-models evaluation contract intact.
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class _ModelSpec:
+    id: str
+    model: str
+    provider_kind: str = "openai"
+
+
+@dataclass
+class _ModelRegistry:
+    default_id: str = "main"
+    _specs: list = None
+
+    def __post_init__(self):
+        if self._specs is None:
+            self._specs = []
+
+    def register(self, spec: _ModelSpec) -> None:
+        self._specs.append(spec)
+
+    def all(self) -> list:
+        return list(self._specs)
 from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
@@ -234,18 +256,10 @@ def test_eval_suite_reports_counts_and_is_reproducible(db, repo):
 def test_eval_runs_across_all_registered_models(db, repo):
     """The evaluation runner executes the same suite against every
     registered model, deterministically (side-by-side comparison)."""
-    from app.application.services.model_registry import (
-        PROVIDER_KIND_RULES,
-        ModelRegistry,
-        ModelSpec,
-    )
-
-    registry = ModelRegistry(default_id="main")
-    registry.register(ModelSpec(id="main", base_url="http://a/v1", model="model-main"))
-    registry.register(ModelSpec(id="alt", base_url="http://b/v1", model="model-alt"))
-    registry.register(
-        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
-    )
+    registry = _ModelRegistry(default_id="main")
+    registry.register(_ModelSpec(id="main", model="model-main"))
+    registry.register(_ModelSpec(id="alt", model="model-alt"))
+    registry.register(_ModelSpec(id="rules", model="rules-v1", provider_kind="rules"))
 
     vectors = _seed_world(db, repo)
 
@@ -275,11 +289,9 @@ def test_eval_runs_across_all_registered_models(db, repo):
 
 
 def test_eval_across_models_marks_failures_per_model(db, repo):
-    registry = ModelRegistry(default_id="good")
-    registry.register(ModelSpec(id="good", base_url="http://a/v1", model="m-good"))
-    registry.register(
-        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
-    )
+    registry = _ModelRegistry(default_id="good")
+    registry.register(_ModelSpec(id="good", model="m-good"))
+    registry.register(_ModelSpec(id="rules", model="rules-v1", provider_kind="rules"))
     vectors = _seed_world(db, repo)
 
     def build_use_case(model_id: str) -> AskQuestionUseCase:

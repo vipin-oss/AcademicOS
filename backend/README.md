@@ -1,9 +1,14 @@
 # Backend — AcademicOS (FastAPI)
 
-Folder skeleton only. No business logic or configuration yet.
+The AcademicOS API service: an object-centric knowledge graph over a single
+`UniversalObject` aggregate (typed relationships, seven-layer metadata,
+provenance, optimistic concurrency), exposed as 270+ REST endpoints with a
+grounded AI layer on top (AI Core, QA/chat, summarization, enrichment,
+domain assistants, intake review pipeline).
 
 Implements **Clean Architecture** with the **Repository Pattern** and **SOLID**
-principles. Dependency direction is strictly inward:
+principles. Dependency direction is strictly inward (enforced by the
+architecture guardrail tests in `app/tests/architecture/`):
 
 ```
 api ──▶ application ──▶ domain ◀── infrastructure
@@ -18,13 +23,13 @@ api ──▶ application ──▶ domain ◀── infrastructure
 
 | Folder | Responsibility |
 |---|---|
-| `domain/entities` | Core business objects (User, Document, Space, Tag, …) |
-| `domain/repositories` | Abstract repository **ports** (e.g. `DocumentRepository`) |
+| `domain/entities` | The UniversalObject aggregate (the single entity) |
+| `domain/repositories` | Abstract repository **ports** (ObjectRepository, SearchRepository, VectorRepository) |
 | `domain/services` | Pure domain logic with no I/O |
 | `application/use_cases` | One use case per feature group |
 | `application/ports` | Interfaces the application layer requires |
 | `application/dtos` | Input/output data shapes |
-| `api/routes` | FastAPI routers (auth, documents, search, ai, storage) |
+| `api/routes` | FastAPI routers (21 modules: auth, documents, search, ai, intake, students, …) |
 | `api/dependencies` | DI: DB sessions, auth context, repository wiring |
 | `infrastructure/db` | PostgreSQL ORM models + session factory |
 | `infrastructure/repositories` | Concrete repository implementations |

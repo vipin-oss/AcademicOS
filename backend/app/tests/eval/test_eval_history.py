@@ -29,11 +29,33 @@ from app.application.services.assistant_eval import (
 )
 from app.application.services.assistant_retrieval import AssistantRetrievalService
 from app.application.services.graph_runtime import GraphRuntimeService
-from app.application.services.model_registry import (
-    PROVIDER_KIND_RULES,
-    ModelRegistry,
-    ModelSpec,
-)
+# M26: the legacy ModelRegistry module was removed (superseded by the AI Core
+# ProviderRegistry). The eval runner only needs `registry.all()`; a minimal
+# local registry keeps the across-models evaluation contract intact.
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class _ModelSpec:
+    id: str
+    model: str
+    provider_kind: str = "openai"
+
+
+@dataclass
+class _ModelRegistry:
+    default_id: str = "main"
+    _specs: list = None
+
+    def __post_init__(self):
+        if self._specs is None:
+            self._specs = []
+
+    def register(self, spec: _ModelSpec) -> None:
+        self._specs.append(spec)
+
+    def all(self) -> list:
+        return list(self._specs)
 from app.application.services.outbox import to_outbox_row
 from app.application.services.prompt_registry import (
     DEFAULT_PROMPT_ID,
@@ -441,12 +463,10 @@ def _seed_world(db, repo) -> FakeVectorRepository:
     return vectors
 
 
-def _registry() -> ModelRegistry:
-    registry = ModelRegistry(default_id="main")
-    registry.register(ModelSpec(id="main", base_url="http://a/v1", model="main-model"))
-    registry.register(
-        ModelSpec(id="rules", model="rules-v1", provider_kind=PROVIDER_KIND_RULES)
-    )
+def _registry() -> _ModelRegistry:
+    registry = _ModelRegistry(default_id="main")
+    registry.register(_ModelSpec(id="main", model="main-model"))
+    registry.register(_ModelSpec(id="rules", model="rules-v1", provider_kind="rules"))
     return registry
 
 
@@ -536,9 +556,9 @@ def test_runner_requires_prompt_registry_when_recording(db, repo, history):
 
 
 def test_partial_failure_records_completed_models(db, repo, history):
-    registry = ModelRegistry(default_id="alpha")
-    registry.register(ModelSpec(id="alpha", base_url="http://a/v1", model="alpha-model"))
-    registry.register(ModelSpec(id="omega", base_url="http://o/v1", model="omega-model"))
+    registry = _ModelRegistry(default_id="alpha")
+    registry.register(_ModelSpec(id="alpha", model="alpha-model"))
+    registry.register(_ModelSpec(id="omega", model="omega-model"))
     cases = [EvalCase(name="marker", question="find quantum",
                       expected_contains=("marker",))]
     vectors = _seed_world(db, repo)

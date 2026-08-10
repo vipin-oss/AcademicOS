@@ -1,19 +1,39 @@
 """Application configuration.
 
 Single source of environment-bound settings. Reads from environment variables
-or a local `.env` file (never committed). No business logic here.
+or a local ``backend/.env`` file (never committed). No business logic here.
+
+Env-file resolution (M26 hardening): the dotenv path is anchored to the
+*repository* (``backend/.env``), never to the process CWD. Previously
+``env_file=".env"`` resolved relative to the working directory, so starting
+uvicorn from the repo root silently skipped ``backend/.env`` and every AI
+feature flag fell back to its default (OFF) — the "assistants not enabled
+despite ``AI_ASSISTANTS_ENABLED=true``" failure mode. An explicit
+``ACADEMICOS_ENV_FILE`` environment variable overrides the location for
+non-standard deployments. Real environment variables always take precedence
+over the dotenv file (pydantic-settings contract).
 """
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: backend/.env — anchored to this file (backend/app/core/config.py -> parents[2]).
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def _env_file() -> str | Path:
+    override = os.environ.get("ACADEMICOS_ENV_FILE")
+    return override if override else _BACKEND_DIR / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_file(), extra="ignore")
 
     # Identity
     app_name: str = "AcademicOS"

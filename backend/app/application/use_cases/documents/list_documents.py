@@ -25,6 +25,42 @@ class ListDocumentsUseCase:
     def execute(self, query: ListDocumentsQuery) -> ListDocumentsResult:
         assert_valid_list_documents_query(query)
 
+        # M26 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find) instead of loading every DOCUMENT and hydrating all
+        # JSONB metadata before slicing. The slow path below is preserved
+        # verbatim for queries that carry criteria the SQL projection cannot
+        # express (the linked-object lens).
+        if query.object_id is None:
+            total_count = self._repository.count(object_type=ObjectType.DOCUMENT)
+            page = self._repository.find(
+                object_type=ObjectType.DOCUMENT,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="id",
+                order="asc",
+            )
+            link_ids = [
+                link for doc in page if (link := linked_object_id(doc)) is not None
+            ]
+            linked_by_id = {
+                str(obj.id): obj for obj in self._repository.find_by_ids(link_ids)
+            }
+            return ListDocumentsResult(
+                items=[
+                    DocumentOutput.from_domain(
+                        doc,
+                        [],
+                        linked=linked_by_id.get(str(linked_object_id(doc)))
+                        if linked_object_id(doc) is not None
+                        else None,
+                    )
+                    for doc in page
+                ],
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         documents = self._repository.find_by_type(ObjectType.DOCUMENT)
 
         if query.object_id is not None:

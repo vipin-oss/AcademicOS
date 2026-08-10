@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.domain.entities.object import UniversalObject
 from app.api.mappers.events_mapper import (
     event_response,
@@ -50,7 +50,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 # ---------------------------------------------------------------------------

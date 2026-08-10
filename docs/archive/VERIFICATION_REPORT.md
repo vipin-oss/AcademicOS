@@ -1,3 +1,9 @@
+> **ARCHIVED — historical record.** This document describes the "Sprint 8 / M8"
+> release state (commit `80892d6`). It is preserved for history only and does
+> NOT describe the current branch (`feature/m11-ai-workspace`, HEAD `26c5f80`
+> and later, which ships M10–M25 incl. AI chat, semantic search, and domain
+> assistants). See `README.md` and `CHANGELOG.md` for the current state.
+
 # Verification Report — Sprint M15 (AI Chat over All Documents — F17)
 
 **Parent commit:** `bfa0124` (M14.1) · **Commit:** `bb561d3` · **Date:** 2026-08-08

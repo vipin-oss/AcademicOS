@@ -61,10 +61,15 @@ _LOCK_MESSAGE_TOKENS = ("database is locked", "database table is locked", "datab
 
 # R2 — repository projections: the only sortable columns (scalar object
 # columns; metadata/audit live in JSON and are not orderable in SQL).
+# ``title_ci`` is the case-insensitive title ordering (reconciliation pass —
+# directory listings sorted by name used ``str.casefold`` in the application
+# layer; ``func.lower`` reproduces that ordering in SQL on both SQLite and
+# PostgreSQL for practical academic data).
 _FIND_SORT_COLUMNS = {
     "id": ObjectModel.id,
     "object_type": ObjectModel.object_type,
     "title": ObjectModel.title,
+    "title_ci": func.lower(ObjectModel.title),
     "status": ObjectModel.status,
     "version": ObjectModel.version,
 }
@@ -465,16 +470,31 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def _apply_metadata_filter(self, stmt, *, metadata_key: str, metadata_value: str | None):
         """Metadata containment that works on BOTH engines.
 
-        PostgreSQL uses native JSONB containment; SQLite (which lacks it)
-        uses json_each over the metadata array. This is what makes
-        ``find_by_metadata`` correct on the test/CI database — the review
-        queue (S6 M5) is its first consumer.
+        PostgreSQL uses native JSONB containment (``@>`` — indexable with a
+        GIN jsonb index); SQLite (which lacks it) uses json_each over the
+        metadata array. This is what makes ``find_by_metadata`` correct on
+        the test/CI database — the review queue (S6 M5) is its first
+        consumer.
+
+        M27 (PostgreSQL readiness): the previous PG branch used
+        ``ObjectModel.metadata_json.contains([clause])``, which the
+        ``JSONBType`` TypeDecorator compiles to ``LIKE '%' || :param || '%'``
+        on BOTH dialects — failing on PostgreSQL (``jsonb ~~ text``) and a
+        sequential scan on SQLite. Native ``@>`` containment is emitted
+        explicitly here.
         """
         if self._session.get_bind().dialect.name == "postgresql":
+            import json as _json
+
+            from sqlalchemy import text
+
             clause: dict = {"key": metadata_key}
             if metadata_value is not None:
                 clause["value"] = metadata_value
-            return stmt.where(ObjectModel.metadata_json.contains([clause]))
+            payload = _json.dumps([clause], ensure_ascii=False)
+            return stmt.where(
+                text("metadata_json @> CAST(:payload AS jsonb)").bindparams(payload=payload)
+            )
         from sqlalchemy import text
 
         where = (

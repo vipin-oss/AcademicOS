@@ -38,6 +38,7 @@ from app.infrastructure.db.models.object_version_model import ObjectVersionModel
 from app.infrastructure.db.models.search_document_model import SearchDocumentModel
 from app.infrastructure.outbox.relay import OutboxRelay
 from app.infrastructure.persistence.mapper import SnapshotMapper
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.persistence.search_mapping import (
     to_search_document,
     to_search_text,
@@ -77,6 +78,9 @@ class SearchIndexApplier:
         self._relay = OutboxRelay(session)
         self._index = SQLAlchemySearchRepository(session)
         self._objects = SQLAlchemyObjectRepository(session)
+        # M27: the document-content projection rides the same consumer —
+        # deletions remove the derived content row (idempotent).
+        self._content = SQLDocumentContentStore(session)
         # Sprint-5 M2 — the semantic projection rides the same drain when a
         # vector store and embedder are wired; without them the applier is
         # exactly the M1 lexical consumer.
@@ -114,8 +118,10 @@ class SearchIndexApplier:
         if document is None:
             # The aggregate no longer exists in durable state (its
             # ObjectDeleted event, or a deletion whose event is drained
-            # after the rows vanished): remove the projection.
+            # after the rows vanished): remove the projections — including
+            # the M27 document-content row (idempotent).
             self._index.delete(aggregate_id)
+            self._content.delete(aggregate_id)
             if self._vector_repository is not None:
                 self._safe_vector(lambda: self._vector_repository.delete(aggregate_id))
         else:

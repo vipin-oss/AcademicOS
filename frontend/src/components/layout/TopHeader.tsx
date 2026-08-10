@@ -1,12 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import { Bell, LogOut, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth/session";
 
 export function TopHeader() {
   const { user, logout } = useAuth();
+  const router = useRouter();
+  const [query, setQuery] = useState("");
   const initials = (user?.username ?? "AU").slice(0, 2).toUpperCase();
+
+  const submitSearch = () => {
+    const q = query.trim();
+    if (!q) return;
+    router.push(`/search?q=${encodeURIComponent(q)}`);
+  };
 
   return (
     <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 md:px-6">
@@ -16,8 +26,14 @@ export function TopHeader() {
       <div className="relative w-full max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
         <input
-          type="text"
-          placeholder="Search the knowledge graph…"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitSearch();
+          }}
+          placeholder="Search the knowledge graph… (Enter)"
+          aria-label="Search the knowledge graph"
           className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-app)] py-2 pl-9 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none"
         />
       </div>

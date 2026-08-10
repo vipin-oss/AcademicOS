@@ -122,6 +122,48 @@ def require_object_access(action: PermissionAction):
     return _check
 
 
+def require_object_acl():
+    """Router-level object ACL enforcement (M26 — closes the domain-route gap).
+
+    The same evaluator and scope as :func:`require_object_access`, but the
+    action is derived from the HTTP method so one router-level dependency
+    covers every object-scoped route of a module: GET/HEAD map to READ, all
+    other methods (POST/PUT/PATCH/DELETE) map to WRITE. Routes without an
+    object id in the path (create/list/export) are no-ops, and the handler
+    still maps missing objects to 404. Applied as
+    ``dependencies=[Depends(require_object_acl())]`` on every domain router
+    so an ACL set via ``PUT /objects/{id}/acl`` is enforced consistently
+    across documents, students, faculty, research, finance, etc. — not just
+    the generic ``/objects`` routes (previously bypassable).
+    """
+
+    def _check(
+        request: Request,
+        user: UniversalObject = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> UniversalObject | None:
+        object_id = _path_object_id(request)
+        if object_id is None:
+            return None  # no object id in this route (create/list)
+        action = (
+            PermissionAction.READ
+            if request.method in ("GET", "HEAD")
+            else PermissionAction.WRITE
+        )
+        repo = SQLAlchemyObjectRepository(db)
+        obj = repo.get_by_id(ObjectId(object_id))
+        if obj is None:
+            return None  # the handler maps missing to 404
+        principal = {"sub": str(user.id), "roles": get_roles(user)}
+        evaluator = ObjectPermissionEvaluator()
+        scope = object_acl_scope(obj)
+        if not evaluator.can(principal=principal, scope=scope, action=action):
+            raise ForbiddenError(f"Missing permission: {action.value}")
+        return obj
+
+    return _check
+
+
 def _path_object_id(request: Request) -> str | None:
     """The value of the first ``*_id`` path param that looks like an ObjectId."""
     for name, value in request.path_params.items():

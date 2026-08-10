@@ -63,9 +63,10 @@ class ObjectRepository(Repository[UniversalObject]):
         result is the requested page.
 
         Ordering: when ``sort_by`` is given, the result is ordered by that
-        column (``id``, ``object_type``, ``title``, ``status`` or
-        ``version``) in ``order`` (``asc``/``desc``), with ``id`` as a
-        deterministic tie-break — whether or not pagination is active.
+        column (``id``, ``object_type``, ``title``, ``title_ci`` (the
+        case-insensitive title ordering), ``status`` or ``version``) in
+        ``order`` (``asc``/``desc``), with ``id`` as a deterministic
+        tie-break — whether or not pagination is active.
         Paginating without ``sort_by`` defaults to ``id`` ascending so
         pages are stable across calls. Unsupported sort/order values raise
         ``ValueError``.

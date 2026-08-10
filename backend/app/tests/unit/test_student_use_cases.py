@@ -95,7 +95,7 @@ class InMemoryObjectRepository(ObjectRepository):
         if page_size < 0:
             raise ValueError("page_size must be >= 0.")
         if sort_by is not None and sort_by not in (
-            "id", "object_type", "title", "status", "version",
+            "id", "object_type", "title", "title_ci", "status", "version",
         ):
             raise ValueError(f"Unsupported sort_by: {sort_by!r}")
         if order not in ("asc", "desc"):
@@ -121,7 +121,7 @@ class InMemoryObjectRepository(ObjectRepository):
                 items.sort(key=lambda o: str(o.id), reverse=reverse)
             elif effective_sort == "object_type":
                 items.sort(key=lambda o: o.object_type.value, reverse=reverse)
-            elif effective_sort == "title":
+            elif effective_sort in ("title", "title_ci"):
                 items.sort(key=lambda o: o.title, reverse=reverse)
             elif effective_sort == "status":
                 items.sort(key=lambda o: o.status.value, reverse=reverse)

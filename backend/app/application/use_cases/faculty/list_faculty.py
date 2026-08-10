@@ -38,6 +38,36 @@ class ListFacultyUseCase:
     def execute(self, query: ListFacultyQuery) -> ListFacultyResult:
         assert_valid_list_faculty_query(query)
 
+        # M26 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title-ordered — the registry's name order, since
+        # FacultyOutput.name is the object title) instead of loading every
+        # FACULTY row and hydrating all JSONB metadata before slicing. The
+        # slow path below is preserved for queries with criteria the SQL
+        # projection cannot express (q tokens, department/designation/
+        # employment-type filters).
+        plain = (
+            not (query.q or "").strip()
+            and query.status is None
+            and query.department is None
+            and query.designation is None
+            and query.employment_type is None
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.FACULTY)
+            page = self._repository.find(
+                object_type=ObjectType.FACULTY,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            return ListFacultyResult(
+                items=[FacultyOutput.from_domain(obj, []) for obj in page],
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         rows = [
             FacultyOutput.from_domain(obj, [])
             for obj in self._repository.find_by_type(ObjectType.FACULTY)

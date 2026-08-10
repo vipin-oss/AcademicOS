@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.domain.entities.object import UniversalObject
 from app.api.mappers.research_mapper import (
     agency_response,
@@ -123,7 +123,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/research", tags=["research"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/research", tags=["research"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:

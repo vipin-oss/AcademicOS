@@ -31,6 +31,9 @@ import sqlalchemy as sa
 from app.infrastructure.db.models.annotation_model import (  # noqa: F401
     DocumentAnnotationModel,
 )
+from app.infrastructure.db.models.document_content_model import (  # noqa: F401
+    DocumentContentModel,
+)
 from app.infrastructure.db.models.eval_run_model import EvalRunModel  # noqa: F401
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.models.object_relationship_model import (  # noqa: F401
@@ -47,7 +50,7 @@ from app.infrastructure.db.models.search_document_model import (  # noqa: F401
     SearchDocumentModel,
 )
 
-CURRENT_MIGRATION = "0008_document_annotations"
+CURRENT_MIGRATION = "0009_document_contents"
 
 
 def main() -> None:

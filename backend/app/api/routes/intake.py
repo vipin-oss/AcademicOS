@@ -27,7 +27,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.api.mappers.intake_mapper import (
     CommitItemResponseModel,
     IntakeProgressResponseModel,
@@ -90,6 +90,7 @@ from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
 from app.infrastructure.db.session import SessionLocal, get_db
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -97,7 +98,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 from app.infrastructure.search.index_applier import SearchIndexApplier
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/intake", tags=["Intake"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/intake", tags=["Intake"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
@@ -380,9 +381,9 @@ def commit_item(
     commit the search index is drained immediately, so the new document
     is searchable right away (M9)."""
     try:
-        out = CommitEngineService(repo, storage).commit_item(
-            item_id=item_id, actor=str(user.id)
-        )
+        out = CommitEngineService(
+            repo, storage, content_store=SQLDocumentContentStore(db)
+        ).commit_item(item_id=item_id, actor=str(user.id))
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
     except ValidationError as exc:
@@ -430,8 +431,12 @@ class BulkReviewResponseModel(BaseModel):
 def _review_service(
     repo: SQLAlchemyObjectRepository,
     storage: LocalFileStorage,
+    db: Session,
 ) -> ReviewItemUseCase:
-    return ReviewItemUseCase(repo, storage)
+    # M27: wire the document-content search projection at review/commit time.
+    return ReviewItemUseCase(
+        repo, storage, content_store=SQLDocumentContentStore(db)
+    )
 
 
 def _drain_search_index(
@@ -476,7 +481,7 @@ def review_item(
         raise _unprocessable(
             ValidationError("decision must be one of: approve, reject.")
         )
-    service = _review_service(repo, storage)
+    service = _review_service(repo, storage, db)
     try:
         if decision == REVIEW_APPROVED:
             out = service.approve(item_id, actor=str(user.id))
@@ -513,7 +518,7 @@ def bulk_review_items(
         raise _unprocessable(
             ValidationError("decision must be one of: approve, reject.")
         )
-    service = _review_service(repo, storage)
+    service = _review_service(repo, storage, db)
     try:
         result = service.bulk(
             session_id,

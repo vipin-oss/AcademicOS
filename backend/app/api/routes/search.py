@@ -28,6 +28,7 @@ from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
 from app.api.dependencies.db import get_db
 from app.application.ai.core import AiCore
+from app.api.routes.documents import get_storage as get_documents_storage
 from app.application.exceptions import ValidationError
 from app.application.ports.embedder import Embedder
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
@@ -42,6 +43,7 @@ from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
 from app.infrastructure.search.index_applier import SearchIndexApplier
+from app.infrastructure.search.document_content_rebuilder import rebuild_document_contents
 from app.infrastructure.vector_db.client import get_qdrant_client
 from app.infrastructure.vector_db.collections import VectorCollectionManager
 from app.infrastructure.vector_db.qdrant_vector_repository import (
@@ -214,3 +216,24 @@ def sync_search_index(
             db, vector_repository=vector_repository, embedder=embedder
         ).apply_pending()
     )
+
+
+class ContentRebuildResponseModel(BaseModel):
+    """Result of the document-content projection rebuild (M27)."""
+
+    indexed: int
+    skipped: int
+
+
+@router.post("/content/rebuild", response_model=ContentRebuildResponseModel)
+def rebuild_document_content(
+    db: Session = Depends(get_db),
+    storage=Depends(get_documents_storage),
+) -> ContentRebuildResponseModel:
+    """Rebuild the document-content search projection from durable state
+    (M27): every DOCUMENT's linked intake item's extracted-text blob. Derived
+    data only — the blobs remain authoritative; idempotent; runs in one
+    transaction. Skipped documents (no intake item / no extracted text) stay
+    searchable by title/metadata."""
+    result = rebuild_document_contents(db, storage)
+    return ContentRebuildResponseModel(**result)

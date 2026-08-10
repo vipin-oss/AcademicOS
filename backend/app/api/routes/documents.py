@@ -32,7 +32,7 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.domain.entities.object import UniversalObject
 from app.api.mappers.document_mapper import to_create_input, to_response, to_update_input
 from app.application.commands.create_document import CreateDocumentCommand
@@ -57,7 +57,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 class UpdateDocumentRequest(BaseModel):

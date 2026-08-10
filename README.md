@@ -7,10 +7,24 @@ grounded AI assistant.
 
 ## Release status
 
-**M10 Release Candidate 1 (RC1)** — feature-frozen, production hardening
-only. See **[FINAL_RELEASE_NOTES.md](FINAL_RELEASE_NOTES.md)** for the
-full release statement, verification results, and the list of improvements
-deferred to Sprint M11.
+**Active branch: `feature/m11-ai-workspace` (HEAD `26c5f80`+)** — M1–M25
+delivered: object-centric knowledge graph, documents + intake with human
+review, ERP modules (students, teaching, research, grants, publications,
+faculty, committees, finance, events, reports, productivity, settings),
+global hybrid search, and the AI layer (AI Core, grounded QA, chat,
+summarization, enrichment, related documents, external handoff, and the
+M21–M25 domain assistants).
+
+Status legend used throughout this repository:
+
+- **IMPLEMENTED** — shipped, tested, and exercised by the runtime.
+- **PARTIAL** — implemented for the documented slice; the rest is PLANNED.
+- **PLANNED** — designed (spec/blueprint) but not built.
+- **DEFERRED** — consciously postponed; see `docs/` for the roadmap.
+
+`main` is intentionally frozen at M10-era state; all milestone work lands on
+the feature branch and is verified by CI before merge. Historical release
+documents live in `docs/archive/`.
 
 ## Quickstart
 
@@ -31,6 +45,11 @@ npm install
 npm run dev                     # http://127.0.0.1:3000  → register → sign in
 ```
 
+> **Environment file.** The backend reads `backend/.env` (anchored to the
+> repository, never to the process CWD — M26). Start uvicorn from
+> `backend/` or set `ACADEMICOS_ENV_FILE` explicitly; starting from the repo
+> root silently skips the file and every AI feature flag falls back to OFF.
+
 Full-stack (PostgreSQL + Qdrant) instructions, Docker Compose for the
 infrastructure services, and configuration reference are in `INSTALL.md`
 and `backend/.env.example`.
@@ -43,31 +62,55 @@ and `backend/.env.example`.
 | Backend | FastAPI · Python 3.11+ · Clean Architecture (domain / application / infrastructure) |
 | Relational DB | PostgreSQL 16 (SQLite supported for local quickstart) |
 | Vector DB | Qdrant (optional — search degrades to lexical-only) |
-| Auth | JWT (access + refresh), bcrypt, role-based access |
+| Auth | JWT (access + refresh), bcrypt, role-based access + object-level ACL |
 | Storage | Local filesystem adapter (Google Drive / OneDrive slots reserved) |
-| AI Core (M11.1–M11.3.2) | Provider-independent `LanguageModelGateway` port · AI Core authority (provider/model/config/credentials/selection) · real OpenAI-compatible adapter (the others placeholders) · three-state health (configured/executable/operational) · no chat/RAG/memory/agents/embeddings yet |
+| AI | Provider-independent AI Core (`LanguageModelGateway` port) · OpenAI-compatible adapter (httpx, no SDKs) · local/free AI via Ollama · grounded QA/chat · summarization · enrichment · related documents · domain assistants (research/teaching/publication/administration) · external-AI handoff |
 
-## AI Core (M11.1 – M11.3.2)
+## AI layer (M11–M25) — IMPLEMENTED
 
 AcademicOS's AI Core is the single authority for provider/model/config/
-credentials/selection and runtime execution (ADR-001). It owns a
-provider-id-keyed catalogue built from `AI_PROVIDERS_JSON` (with deprecated
-`ASSISTANT_*` compatibility), a real OpenAI-compatible adapter (the single
-owner of generative transport; Anthropic/Google/Ollama/Local remain honest
-"Not Configured" placeholders until their sprints), and a three-state health
-surface that distinguishes **configured** (declared), **executable** (can run)
-and **operational** (verified — None, since no live probe is performed).
+credentials/selection and runtime execution (ADR-001): a provider-id-keyed
+catalogue built from `AI_PROVIDERS_JSON`, one real OpenAI-compatible adapter
+(any local or cloud endpoint — Ollama, vLLM, LM Studio — works with no API
+key), honest placeholders for other kinds, and a three-state health surface
+(configured / executable / operational).
 
-- `GET /api/v1/ai/health` — aggregate runtime health + the effective default (public)
-- `GET /api/v1/ai/providers` — one row per provider, keyed by `provider_id` (authenticated)
-- `GET /api/v1/ai/models` — aggregated models + the effective default (authenticated)
-- UI: **Settings → AI Settings** (`/settings/ai`)
+Capabilities (each gated by its own feature flag in `backend/.env.example`):
 
-The assistant resolves providers through the AI Core (`AiCore.select_provider`
-/ `AiCore.gateway`); it constructs no provider or `ProviderConfig`. **No chat,
-RAG, memory, agents or embeddings exist yet** — those capability flags are OFF.
-Future sprints add providers by implementing only an adapter (see
-`AI_DEVELOPER_GUIDE.md`).
+- `POST /ai/summarize` — document summarization with provenance
+- `POST /ai/enrich` — structured metadata extraction (title/summary/tags)
+- `POST /ai/qa` + `/ai/qa/stream` — grounded QA with verified citations
+- `GET /ai/related` — related documents over the semantic index
+- `POST /ai/chat` + `/ai/chat/stream` — conversational grounded chat
+- `GET /ai/assistants`, `POST /ai/assistants/{role}` + `/stream` —
+  M21–M25 domain assistants (research, teaching, publication, administration)
+- `POST /ai/handoff` — grounded prompt bundle for external AI (no provider
+  required; works with AI disabled)
+- `GET /ai/health`, `/ai/providers`, `/ai/models` — the health surface
+- UI: **Academic AI** workspace (`/ai`, sidebar "Academic AI") with five
+  modes — General, Research, Teaching, Publication, Administration — and
+  **Settings → AI Settings**
+
+The deterministic **Academic Intelligence Assistant** (`/assistant`) is a
+separate, non-LLM capability: rules-based answers over your live AcademicOS
+data with links back to every module, plus conversation memory, a human
+review queue and evaluation history. It works with no AI provider configured
+and is reachable from the Academic AI workspace.
+
+All LLM generation is grounded in the caller's readable documents,
+permission-filtered, citation-verified, and honestly degraded (no provider →
+`available=false` fallback). Human review exists for intake commits;
+AI-proposed graph relationships (SMART_LINK) are designed and planned as M28 —
+see `docs/M28_SMART_LINK_PLAN.md`.
+
+**Search (M27):** the global search (`/search`, header box) is hybrid lexical +
+semantic over titles, metadata, and — since M27 — the extracted text of
+committed documents (`document_contents` projection, written at intake
+commit, rebuildable via `POST /search/content/rebuild`, removed on document
+deletion, permission-filtered through the same gate as every other hit).
+Document content is a derived projection; the extracted-text blob remains
+authoritative. SQLite quickstart users: `python scripts/init_db.py` creates
+the new table (stamp 0009); existing databases need `alembic upgrade head`.
 
 ## Repository Layout
 
@@ -76,28 +119,35 @@ academicos/
 ├── backend/        # FastAPI service (Clean Architecture)
 │   ├── alembic/    # Migrations 0001..0008
 │   ├── app/        # api / application / domain / infrastructure
-│   │   └── application/ai + infrastructure/ai   # AI Core (M11.1)
+│   │   ├── application/ai + infrastructure/ai   # AI Core (M11.1+)
+│   │   └── tests/  # unit + integration + architecture guardrails
 │   ├── scripts/    # init_db.py (SQLite quickstart), seed_regression.py
-│   └── tests/      # unit + integration + architecture guardrails (1300+)
+│   └── README.md   # backend architecture overview
 ├── frontend/       # Next.js client (App Router, src/)
-│   ├── src/app/    # (auth)/ + (main)/ route groups (incl. /settings/ai)
+│   ├── src/app/    # (auth)/ + (main)/ route groups (incl. /ai, /search, /settings/ai)
 │   ├── src/lib/    # api clients, auth session, constants
-│   └── tests/      # vitest unit tests + scripted e2e flows
-└── AI_DEVELOPER_GUIDE.md  # how to add an AI provider / capability
-├── docker-compose.yml   # PostgreSQL + Qdrant for the full stack
+│   ├── e2e/        # Puppeteer browser suites (npm run test:e2e)
+│   └── tests/      # vitest setup
+├── .github/workflows/ci.yml  # pytest + vitest + tsc + build on push
+├── docker-compose.yml   # PostgreSQL + Qdrant + Ollama (infrastructure only)
 ├── INSTALL.md      # Windows/Linux/macOS installation guide
-└── *.md            # Product/architecture specifications
+├── docs/           # roadmap + archive of historical release documents
+└── *.md            # Product/architecture specifications (see status legend)
 ```
 
 ## Verification
 
-- Backend: `cd backend && python -m pytest -q` (SQLite test DB)
+- Backend: `cd backend && python -m pytest -q` (SQLite test DB; 1600+ tests)
+- Backend architecture guardrails: `cd backend && python -m pytest app/tests/architecture -q`
 - Frontend: `cd frontend && npx vitest run && npx tsc --noEmit && npm run build`
+- Browser e2e: `cd frontend && npm run test:e2e` (requires running backend + `next start`)
+- CI: every push runs the full suite (`.github/workflows/ci.yml`); no green
+  CI = no claim of a verified milestone.
 - Backend boots with `uvicorn app.main:app`; health at
   `http://127.0.0.1:8000/api/v1/health`
 
-See `AcademicOS_Execution_Roadmap.md` for the delivery history and
-`AcademicOS_Engineering_Review.md` for engineering decisions.
+Milestone history and verification numbers: `CHANGELOG.md`. Engineering
+decisions: `AI_DEVELOPER_GUIDE.md` and `docs/`.
 
 ---
 
@@ -111,7 +161,6 @@ AcademicOS ships one-command PowerShell tooling for Windows 10/11
 | `.\start.ps1` | Verify/start PostgreSQL, Docker Desktop + Engine, Qdrant; install missing deps; run migrations; start backend + frontend; open http://localhost:3000 |
 | `.\stop.ps1` | Gracefully stop backend + frontend (+ optional Qdrant container). PostgreSQL is never touched |
 | `.\health.ps1` | PASS/FAIL for PostgreSQL, DB connection, Docker, Qdrant, backend, frontend, storage, Alembic, node_modules, Python packages |
-| `.\apply_patch.ps1 AcademicOS_M11_Patch.zip` | Apply an incremental patch ZIP with backup, extract, replace, manifest-deleted files, conflict detection, summary + exit code |
 | `scripts\windows\reset_academicos.ps1` | Interactive menu (frontend / backend / database / Qdrant / everything) with confirmation |
 | `scripts\windows\validate_environment.ps1` | Detect missing Python / Node / npm / Docker / PostgreSQL / Git / ports / deps with fix instructions |
 
@@ -134,18 +183,6 @@ AcademicOS ships one-command PowerShell tooling for Windows 10/11
 .\stop.ps1
 ```
 
-### Applying future patches
-
-```
-.\apply_patch.ps1 AcademicOS_M11_Patch.zip
-```
-
-The script backs up every replaced file, extracts the patch preserving
-paths, applies it, deletes obsolete files from `PATCH_MANIFEST.md`, prints
-Added / Modified / Deleted / Failed counts, and exits 0 on success (non-zero
-on failure). Run `cd frontend && npm install` and `cd backend && alembic
-upgrade head` when the manifest reports new dependencies or migrations.
-
 ### Health check
 
 ```
@@ -157,5 +194,9 @@ upgrade head` when the manifest reports new dependencies or migrations.
 - **Backend won't start** — `$env:TEMP\academicos_backend.log`
 - **Frontend won't start** — `$env:TEMP\academicos_frontend.log`
 - **Qdrant unreachable** — `docker start academicos-qdrant` (or re-run `.\start.ps1`)
+- **AI flags ignored / assistants "not enabled" despite `.env`** — the backend
+  was started from a directory other than `backend/` (the env file is anchored
+  to `backend/.env`; starting from the repo root silently skips it). Start
+  from `backend/`, or set `ACADEMICOS_ENV_FILE`, then restart the process.
 - **Ports in use** — stop other dev servers; `stop_academicos.ps1` clears 8000/3000
 - **DB reset** — `scripts\windows\reset_academicos.ps1` (option 3)

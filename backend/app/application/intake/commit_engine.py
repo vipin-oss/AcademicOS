@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.application.commands.commit_intake_item import CommitIntakeItemCommand
 from app.application.dtos.intake import CommitItemOutput
+from app.application.ports.document_content_store import DocumentContentStore
 from app.application.ports.file_storage import FileStorage
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.use_cases.intake.commit_item import CommitItemUseCase
@@ -18,10 +19,17 @@ from app.domain.repositories.object_repository import ObjectRepository
 
 
 class CommitEngineService:
-    def __init__(self, repository: ObjectRepository, storage: FileStorage) -> None:
+    def __init__(
+        self,
+        repository: ObjectRepository,
+        storage: FileStorage,
+        content_store: DocumentContentStore | None = None,
+    ) -> None:
         self._repository = repository
         self._document_creator = CreateDocumentUseCase(repository, storage)
-        self._commit_item = CommitItemUseCase(repository, storage, self._document_creator)
+        self._commit_item = CommitItemUseCase(
+            repository, storage, self._document_creator, content_store=content_store
+        )
 
     def commit_item(self, item_id: str, actor: str, dry_run: bool = False) -> CommitItemOutput:
         """Commit one processed intake item to a Document (idempotent).
