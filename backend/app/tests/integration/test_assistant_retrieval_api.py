@@ -22,7 +22,9 @@ from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
 from app.api.dependencies.auth import get_current_user
+from app.api.routes.assistant import get_assistant_provider
 from app.api.routes.search import get_embedder, get_vector_repository
+from app.application.assistant.providers import RuleBasedAssistantProvider
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import (
     MetadataLayer,
@@ -35,6 +37,7 @@ from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base, ObjectModel
 from app.infrastructure.db.session import get_db
 from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -83,6 +86,15 @@ def harness(tmp_path):
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_vector_repository] = lambda: vectors
     app.dependency_overrides[get_embedder] = lambda: embedder
+    # Pin the deterministic rules provider (same construction as the route's
+    # fallback): this suite asserts the retrieval + graph + persistence
+    # workflow, so it must never depend on the developer's local AI provider
+    # configuration (a configured provider selects LlmAssistantProvider and
+    # reports intent="llm").
+    app.dependency_overrides[get_assistant_provider] = lambda: RuleBasedAssistantProvider(
+        SQLAlchemyObjectRepository(session),
+        permission_evaluator=ObjectPermissionEvaluator(),
+    )
     with TestClient(app) as client:
         yield client, session, vectors, embedder
     app.dependency_overrides.clear()
