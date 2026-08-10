@@ -100,8 +100,9 @@ and is reachable from the Academic AI workspace.
 All LLM generation is grounded in the caller's readable documents,
 permission-filtered, citation-verified, and honestly degraded (no provider →
 `available=false` fallback). Human review exists for intake commits;
-AI-proposed graph relationships (SMART_LINK) are designed and planned as M28 —
-see `docs/M28_SMART_LINK_PLAN.md`.
+AI-proposed graph relationships (SMART_LINK — "AI proposes, human approves",
+`POST /objects/{id}/links/propose` → `.../approve` | `.../reject`) are
+implemented as M28 — see `docs/M28_SMART_LINK_PLAN.md`.
 
 **Search (M27):** the global search (`/search`, header box) is hybrid lexical +
 semantic over titles, metadata, and — since M27 — the extracted text of

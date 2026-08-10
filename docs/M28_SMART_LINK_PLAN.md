@@ -1,8 +1,10 @@
-# M28 — SMART_LINK relationship proposals: implementation plan
+# M28 — SMART_LINK relationship proposals
 
-Status: **PLANNED — not implemented.** This document fixes the exact boundary,
-interfaces and review workflow so the feature composes over existing seams and
-never bypasses human approval.
+Status: **IMPLEMENTED (backend) — M28.** The deterministic proposal engine
+and the human review flow are shipped; the review-queue UI and LLM-assisted
+proposal generation are DEFERRED (documented below). This document records
+the exact boundary, interfaces and review workflow so the feature composes
+over existing seams and never bypasses human approval.
 
 ## Principle
 
@@ -26,27 +28,49 @@ evidence) and only a human decision promotes it to a real relationship.
 | Outbox → search projection | `infrastructure/outbox/relay.py` + `search/index_applier.py` | propagation of accepted edges |
 | ACL (`require_object_acl`) | `api/dependencies/auth.py` | proposals are object-scoped: only users with WRITE on BOTH endpoints may review |
 
-## Proposed flow (mirrors intake M9)
+## Implemented flow (M28 — mirrors intake M9)
 
-1. **Propose** — `POST /objects/{id}/links/propose` (or `POST /ai/links/propose`
-   with `{source_id, hint}`). The use case (`application/use_cases/ai/propose_links.py`):
-   - runs the shared retrieval to gather candidates (permission-filtered);
-   - for each candidate emits a `SMART_LINK` edge on the source object with
-     `provenance=INFERRED`, `confidence` (0..1), `evidence` (source-text quotes),
-     and `acl_scope` = intersection of both endpoints' ACL scopes;
-   - records `ai.proposal.status = pending`, `ai.proposal.reviewed_by = ""` in
-     L5 metadata; writes an outbox event `LinkProposed`.
-2. **Review** — `GET /objects/{id}/links/proposals` lists pending proposals
-   (READ on source). `POST /objects/{id}/links/{target}/approve` and
-   `.../reject`:
-   - approve: `change_relationship_kind` SMART_LINK → the proposed kind
-     (e.g. `AUTHORED_BY`) with provenance upgraded to `ASSERTED`-by-human
-     (record `reviewed_by`, `reviewed_at` in L6 metadata — human decision is
-     human-asserted); outbox event `LinkApproved`.
-   - reject: remove the SMART_LINK edge; outbox event `LinkRejected`.
-3. **Propagate** — outbox consumers (search projection) pick up the new edges;
-   the graph runtime exposes them for AI retrieval; provenance stays
-   queryable via `audit` metadata and outbox history.
+1. **Propose** — `POST /objects/{id}/links/propose` (WRITE on the source).
+   The use case (`application/use_cases/ai/propose_links.py`) is the T0
+   deterministic tier of the AI architecture: it scans compatible object
+   types, matches metadata field-pair evidence (e.g. publication `authors`
+   ↔ faculty `name`), and for each match creates a `SMART_LINK` edge on the
+   source with `provenance=INFERRED`, a deterministic `confidence`, and the
+   matching `evidence` quotes. Candidates the principal cannot READ are
+   skipped (no leakage through proposals); already-linked or already-decided
+   targets are never re-proposed. Proposal bookkeeping lives in
+   `ai.proposal.<target>` L5 metadata (kind, confidence, evidence, status,
+   created_at).
+2. **Review** — `GET /objects/{id}/links/proposals` lists the SMART_LINK
+   proposals (READ on source). `POST /objects/{id}/links/{target}/approve`
+   and `.../reject` (WRITE on source via the dependency, WRITE on the target
+   checked in the use case):
+   - approve: the SMART_LINK edge is removed and re-added with the proposed
+     kind (e.g. `AUTHORED_BY`) and `Provenance.ASSERTED` — the human decision
+     is human-asserted; `ai.review.<target>` L6 metadata records
+     `reviewed_by` / `reviewed_at` / status / original confidence.
+   - reject: the SMART_LINK edge is removed; the L6 review record records the
+     rejection.
+3. **Propagate** — the aggregate's domain events (`RelationshipAdded` /
+   `RelationshipRemoved`, re-used — no new event types) ride the existing
+   transactional outbox for the audit trail; the graph runtime reads edges
+   live, so accepted edges are immediately visible to graph traversal and AI
+   retrieval. The `search_documents` projection indexes title/metadata only
+   (not edges), so no index update is required for relationship changes.
+
+### Deliberate M28 decisions (documented)
+
+- **No new domain events** (`LinkProposed`/`LinkApproved`/`LinkRejected`):
+  the existing `RelationshipAdded`/`RelationshipRemoved` events carry the
+  same audit information through the outbox; adding event types would
+  duplicate functionality.
+- **No LLM in the proposal path**: generation is the deterministic T0
+  evidence engine (architecture tier T0 — rules/classical, CPU-stateless).
+  LLM-assisted proposal generation is deferred; the engine stays the
+  fallback either way.
+- **Review-queue UI deferred**: the API is the review surface for now
+  (`GET /objects/{id}/links/proposals`); a UI tab in the Academic AI
+  workspace is future work (mirrors AssistantLabs "review").
 
 ## Explicitly out of scope for M28
 
@@ -55,12 +79,13 @@ evidence) and only a human decision promotes it to a real relationship.
   pipeline (the first version works off existing metadata + retrieval, not
   raw PDF parsing).
 
-## First consumers (when built)
+## First consumers (status)
 
 - `enrich_document` output gains relationship proposals (publication ↔
-  project/faculty via author metadata);
-- intake commit proposals (document ↔ linked course/project);
-- a review queue UI tab in the AI workspace (mirrors AssistantLabs "review").
+  project/faculty via author metadata) — DEFERRED;
+- intake commit proposals (document ↔ linked course/project) — DEFERRED;
+- review queue UI tab in the AI workspace (mirrors AssistantLabs "review") —
+  DEFERRED (the API is the current review surface).
 
 ## Acceptance criteria
 

@@ -297,3 +297,186 @@ def object_graph_path(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except (ValueError, ValidationError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# M28 — SMART_LINK relationship proposals (AI proposes, human approves)
+# ---------------------------------------------------------------------------
+
+class LinkProposalModel(BaseModel):
+    """One AI-proposed relationship awaiting (or after) human review."""
+
+    target_id: str
+    target_type: str
+    target_title: str
+    kind: str
+    confidence: float
+    evidence: list[str] = []
+    status: str = "pending"
+    reviewed_by: str = ""
+    reviewed_at: str | None = None
+
+
+class ProposeLinksResponseModel(BaseModel):
+    items: list[LinkProposalModel] = []
+    created: int = 0
+
+
+class LinkProposalsResponseModel(BaseModel):
+    items: list[LinkProposalModel] = []
+
+
+class LinkDecisionModel(BaseModel):
+    target_id: str
+    target_type: str
+    target_title: str
+    kind: str
+    status: str
+
+
+def _link_proposal_model(proposal) -> LinkProposalModel:
+    return LinkProposalModel(
+        target_id=proposal.target_id,
+        target_type=proposal.target_type,
+        target_title=proposal.target_title,
+        kind=proposal.kind,
+        confidence=proposal.confidence,
+        evidence=list(proposal.evidence),
+        status=proposal.status,
+        reviewed_by=proposal.reviewed_by,
+        reviewed_at=proposal.reviewed_at,
+    )
+
+
+@router.post(
+    "/{object_id}/links/propose",
+    response_model=ProposeLinksResponseModel,
+    status_code=status.HTTP_201_CREATED,
+)
+def propose_links(
+    object_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.WRITE)),
+) -> ProposeLinksResponseModel:
+    """AI proposes candidate relationships (SMART_LINK, inferred provenance,
+    confidence + evidence). Human review approves or rejects them."""
+    from app.application.use_cases.ai.propose_links import ProposeLinksUseCase
+
+    try:
+        result = ProposeLinksUseCase(
+            repo, ObjectPermissionEvaluator()
+        ).propose(
+            ObjectId.parse(object_id),
+            actor=str(user.id),
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return ProposeLinksResponseModel(
+        items=[_link_proposal_model(p) for p in result.items],
+        created=result.created,
+    )
+
+
+@router.get("/{object_id}/links/proposals", response_model=LinkProposalsResponseModel)
+def list_link_proposals(
+    object_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.READ)),
+) -> LinkProposalsResponseModel:
+    """List the SMART_LINK proposals of one object (READ on the source)."""
+    from app.application.use_cases.ai.propose_links import ProposeLinksUseCase
+
+    try:
+        result = ProposeLinksUseCase(
+            repo, ObjectPermissionEvaluator()
+        ).list_proposals(ObjectId.parse(object_id))
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return LinkProposalsResponseModel(
+        items=[_link_proposal_model(p) for p in result.items]
+    )
+
+
+@router.post("/{object_id}/links/{target_id}/approve", response_model=LinkDecisionModel)
+def approve_link_proposal(
+    object_id: str,
+    target_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.WRITE)),
+) -> LinkDecisionModel:
+    """Human approval: promote the SMART_LINK edge to its proposed kind with
+    asserted provenance. Requires WRITE on the source (dependency) and on the
+    target (use case)."""
+    from app.application.exceptions import PermissionDeniedError
+    from app.application.use_cases.ai.propose_links import ProposeLinksUseCase
+
+    try:
+        decision = ProposeLinksUseCase(
+            repo, ObjectPermissionEvaluator()
+        ).approve(
+            ObjectId.parse(object_id),
+            ObjectId.parse(target_id),
+            actor=str(user.id),
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ObjectAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return LinkDecisionModel(
+        target_id=decision.target_id,
+        target_type=decision.target_type,
+        target_title=decision.target_title,
+        kind=decision.kind,
+        status=decision.status,
+    )
+
+
+@router.post("/{object_id}/links/{target_id}/reject", response_model=LinkDecisionModel)
+def reject_link_proposal(
+    object_id: str,
+    target_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+    _acl: UniversalObject | None = Depends(require_object_access(PermissionAction.WRITE)),
+) -> LinkDecisionModel:
+    """Human rejection: remove the SMART_LINK edge and record the decision."""
+    from app.application.exceptions import PermissionDeniedError
+    from app.application.use_cases.ai.propose_links import ProposeLinksUseCase
+
+    try:
+        decision = ProposeLinksUseCase(
+            repo, ObjectPermissionEvaluator()
+        ).reject(
+            ObjectId.parse(object_id),
+            ObjectId.parse(target_id),
+            actor=str(user.id),
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ObjectAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return LinkDecisionModel(
+        target_id=decision.target_id,
+        target_type=decision.target_type,
+        target_title=decision.target_title,
+        kind=decision.kind,
+        status=decision.status,
+    )
