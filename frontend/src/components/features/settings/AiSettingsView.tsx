@@ -103,7 +103,7 @@ export function AiSettingsView() {
         <section aria-label="AI health" className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${statusTone}`}>
-              {health.status === "ok" ? (
+              {health.status === "ok" || health.status === "configured" ? (
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
               ) : (
                 <XCircle className="h-4 w-4" aria-hidden="true" />
@@ -127,11 +127,13 @@ export function AiSettingsView() {
               <dd className="mt-0.5 font-medium text-[var(--text-primary)]">
                 {health.status === "ok"
                   ? "Ready"
-                  : health.status === "not_configured"
-                    ? "Not configured"
-                    : health.status === "disabled"
-                      ? "Disabled"
-                      : "Error"}
+                  : health.status === "configured"
+                    ? "Configured"
+                    : health.status === "not_configured"
+                      ? "Not configured"
+                      : health.status === "disabled"
+                        ? "Disabled"
+                        : "Error"}
               </dd>
             </div>
             <div>

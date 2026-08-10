@@ -49,6 +49,26 @@ const NOT_CONFIGURED_HEALTH: AiHealth = {
   checked_at: "2026-08-07T00:00:00+00:00",
 };
 
+/** A healthy "configured" state (e.g. local Ollama with base_url set). */
+const CONFIGURED_HEALTH: AiHealth = {
+  status: "configured",
+  ai_enabled: true,
+  default_provider: "local-ollama",
+  default_model: "llama3.2",
+  default_provider_valid: true,
+  providers_total: 5,
+  providers_configured: 1,
+  feature_flags: {
+    chat: true,
+    rag: false,
+    memory: false,
+    agents: false,
+    document_understanding: false,
+    streaming: true,
+  },
+  checked_at: "2026-08-10T00:00:00+00:00",
+};
+
 const PROVIDERS: ListAiProvidersResponse = {
   items: [
     {
@@ -104,6 +124,27 @@ describe("AiSettingsView", () => {
     const banner = screen.getByLabelText("AI health");
     expect(within(banner).getByText("local")).toBeInTheDocument();
     expect(within(banner).getByText("0 / 5 configured")).toBeInTheDocument();
+  });
+
+  it("renders the configured status as Configured, not Error", async () => {
+    // Regression: a healthy "configured" status (local Ollama with base_url
+    // set) must read "Configured", not fall through to "Error".
+    mockedHealth.mockResolvedValue(CONFIGURED_HEALTH);
+    mockedProviders.mockResolvedValue(PROVIDERS);
+    mockedModels.mockResolvedValue(MODELS);
+
+    render(<AiSettingsView />);
+
+    const banner = await screen.findByLabelText("AI health");
+    // The Status field shows the healthy label ...
+    expect(within(banner).getByText("Configured")).toBeInTheDocument();
+    // ... and the honest "endpoint set, not verified reachable" banner label.
+    expect(
+      within(banner).getByText("Configured — endpoint is set, not verified reachable"),
+    ).toBeInTheDocument();
+    // It must NOT render the error label for a configured state.
+    expect(within(banner).queryByText("Error")).not.toBeInTheDocument();
+    expect(within(banner).queryByText("Configuration error")).not.toBeInTheDocument();
   });
 
   it("lists every available provider with its status", async () => {
