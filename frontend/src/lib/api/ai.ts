@@ -5,7 +5,7 @@
  * catalogue. Thin wrappers over the shared `api` client — no business
  * logic here.
  */
-import { api, type RequestOptions } from "@/lib/api/client";
+import { api, type RequestOptions, DEFAULT_AI_TIMEOUT_MS } from "@/lib/api/client";
 import type {
   AiChatResponse,
   AiHealth,
@@ -41,16 +41,21 @@ export function aiChat(
   },
   options?: RequestOptions,
 ): Promise<AiChatResponse> {
-  return api.post<AiChatResponse>("/ai/chat", body, options);
+  return api.post<AiChatResponse>("/ai/chat", body, {
+    timeoutMs: DEFAULT_AI_TIMEOUT_MS,
+    ...options,
+  });
 }
-
 
 /** `POST /ai/summarize` — on-demand document summary. */
 export function summarizeDocument(
   objectId: string,
   options?: RequestOptions,
 ): Promise<SummarizeResponse> {
-  return api.post<SummarizeResponse>("/ai/summarize", { object_id: objectId }, options);
+  return api.post<SummarizeResponse>("/ai/summarize", { object_id: objectId }, {
+    timeoutMs: DEFAULT_AI_TIMEOUT_MS,
+    ...options,
+  });
 }
 
 /** `POST /ai/enrich` — extract metadata from a document. */
@@ -58,5 +63,8 @@ export function enrichDocument(
   objectId: string,
   options?: RequestOptions,
 ): Promise<EnrichResponse> {
-  return api.post<EnrichResponse>("/ai/enrich", { object_id: objectId }, options);
+  return api.post<EnrichResponse>("/ai/enrich", { object_id: objectId }, {
+    timeoutMs: DEFAULT_AI_TIMEOUT_MS,
+    ...options,
+  });
 }

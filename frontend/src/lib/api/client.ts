@@ -13,7 +13,16 @@ import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/lib/a
  *  - 204 (and empty bodies) resolve to `undefined` instead of throwing.
  */
 
+/** Default timeout for regular API calls (15 seconds). */
 export const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Default timeout for AI generation calls (chat, QA, summarize, enrich).
+ * Local CPU-based inference (Ollama, vLLM) can take 10-60+ seconds per
+ * response — especially with retrieval overhead. 120 seconds gives ample
+ * headroom without hanging indefinitely.
+ */
+export const DEFAULT_AI_TIMEOUT_MS = 120_000;
 
 export type ApiErrorKind = "http" | "network" | "offline" | "timeout" | "aborted";
 

@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { aiChat } from "@/lib/api/ai";
 import type { AiChatResponse } from "@/types";
-import { toErrorMessage } from "@/lib/api/client";
+import { toErrorMessage, ApiError } from "@/lib/api/client";
 
 interface Message {
   role: "user" | "assistant";
@@ -24,6 +24,7 @@ export default function ChatPage() {
     if (!msg || loading) return;
     setInput("");
     setError(null);
+    setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
 
     try {
@@ -43,7 +44,19 @@ export default function ChatPage() {
         },
       ]);
     } catch (err) {
-      setError(toErrorMessage(err, "Chat failed. Please try again."));
+      if (err instanceof ApiError) {
+        if (err.isTimeout) {
+          setError("The AI model is taking too long to respond. Local models (Ollama) may need more time — please wait or try a shorter question.");
+        } else if (err.status === 404) {
+          setError("AI Chat is not enabled on the server. Add AI_CHAT_ENABLED=true to the backend .env file and restart the backend.");
+        } else if (err.isNetwork) {
+          setError("Cannot reach the backend server. Make sure the backend is running on port 8000.");
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError(toErrorMessage(err, "Chat failed. Please try again."));
+      }
     } finally {
       setLoading(false);
     }
