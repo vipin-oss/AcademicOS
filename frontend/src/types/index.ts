@@ -2538,3 +2538,70 @@ export interface AiProviderInfo {
 export interface ListAiProvidersResponse {
   items: AiProviderInfo[];
 }
+
+/** Citation in a grounded AI response. */
+export interface AiCitation {
+  number: number;
+  object_id: string;
+  object_type: string;
+  title: string;
+}
+
+/** `POST /ai/chat` response. */
+export interface AiChatResponse {
+  answer: string;
+  available: boolean;
+  retrieved_count: number;
+  truncated: boolean;
+  citations: AiCitation[];
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  confidence: string;
+  conversation_id: string | null;
+}
+
+
+/** `POST /ai/summarize` response. */
+export interface SummarizeResponse {
+  summary: string;
+  available: boolean;
+  truncated: boolean;
+  chars_used: number;
+  chars_total: number;
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+}
+
+/** `POST /ai/enrich` response. */
+export interface EnrichResponse {
+  title: string;
+  summary: string;
+  tags: string[];
+  categories: string[];
+  keywords: string[];
+  available: boolean;
+  truncated: boolean;
+  chars_used: number;
+  chars_total: number;
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  persisted: boolean;
+}
