@@ -1,33 +1,20 @@
 """Memory consolidation & forgetting (Sprint-8 M4).
 
 Keeps the memory base clean by detecting redundant conversations and
-marking the obsolete ones SUPERSEDED — never deleting anything:
+marking the obsolete ones SUPERSEDED, never deleting anything.
 
-- **Duplicate detection** — near-identical memories are grouped using
-  EXISTING conversation metadata (the same question/answer projection
-  ``MemoryItem`` exposes): normalized question equality AND deterministic
-  token-Jaccard answer similarity at or above ``DUPLICATE_ANSWER_SIMILARITY``.
-- **Canonical choice** — within a group, the member whose content is most
-  recallable wins: approved review > unreviewed > pending/rejected
-  (a pending or rejected canonical would hide the group's answer content),
-  ties broken by newest first. Review history is preserved per
-  conversation (immutable ``review_decisions`` rows are never touched).
-- **Superseding** — every other member is marked through the EXISTING
-  domain primitive ``UniversalObject.supersede(canonical_id, actor)``:
-  terminal SUPERSEDED status + a VERSION_OF graph edge to the canonical +
-  a durable ``ObjectSuperseded`` outbox event, committed with the
-  repository's optimistic concurrency (CAS) — so concurrent runs collapse
-  safely (one wins, the other 409s) and nothing is ever deleted. The
-  superseded object keeps ALL of its data: messages, citations, review
-  status, ACL permissions, graph relationships.
-- **Retrieval effect** — the memory service drops SUPERSEDED conversations
-  from recall (the live object is the authority), so consolidated memory
-  is ignored by default while remaining fully intact.
-
-Consolidation is an explicit, operator-triggered pass (the
-``POST /assistant/memory/consolidate`` endpoint) — it never runs inside
-the read/ask path.
+- Duplicate detection uses normalized question equality and deterministic
+  token-Jaccard answer similarity.
+- Canonical choice prefers approved review > unreviewed >
+  pending/rejected, with newest created_at winning ties.
+- Superseding uses the existing UniversalObject.supersede() domain
+  primitive.
+- SUPERSEDED conversations remain fully intact and are excluded from
+  normal memory recall.
+- Consolidation is an explicit operator-triggered operation and never
+  runs inside the read/ask path.
 """
+
 from __future__ import annotations
 
 import re
@@ -43,14 +30,16 @@ from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectStatus
 
-# The answer-similarity threshold for "near-identical" memories (Jaccard
-# over lowercased tokens; deterministic, no embeddings).
+
+# The answer-similarity threshold for "near-identical" memories.
+# Jaccard similarity is computed over lowercased tokens.
 DUPLICATE_ANSWER_SIMILARITY = 0.7
 
-# Canonical-choice quality: approved content is fully recallable,
-# unreviewed content is recallable, pending/rejected content is hidden by
-# the review gate — a canonical in those states would hide the group's
-# answer. Ties break by newest first.
+
+# Canonical-choice quality:
+# approved > unreviewed > pending/rejected.
+#
+# Within the same review-quality level, the newest created_at wins.
 _REVIEW_QUALITY = {
     dto.REVIEW_APPROVED: 2,
     "": 1,
@@ -61,7 +50,7 @@ _REVIEW_QUALITY = {
 
 @dataclass(frozen=True)
 class ConsolidatedPair:
-    """One superseded memory and the canonical that replaced it."""
+    """One superseded memory and the canonical memory that replaced it."""
 
     conversation_id: str
     canonical_id: str
@@ -85,20 +74,30 @@ def _tokens(text: str) -> set[str]:
 
 
 def answer_similarity(a: str, b: str) -> float:
-    """Deterministic token-Jaccard similarity of two answers in [0, 1]."""
-    tokens_a, tokens_b = _tokens(a), _tokens(b)
+    """Return deterministic token-Jaccard similarity in [0, 1]."""
+    tokens_a = _tokens(a)
+    tokens_b = _tokens(b)
+
     if not tokens_a and not tokens_b:
         return 1.0
+
     if not tokens_a or not tokens_b:
         return 0.0
+
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
 
 
 def _last_question(obj: UniversalObject) -> str:
     user_messages = [
-        payload for _seq, payload in read_messages(obj) if payload.get("role") == "user"
+        payload
+        for _seq, payload in read_messages(obj)
+        if payload.get("role") == "user"
     ]
-    return str(user_messages[-1].get("content") or "") if user_messages else ""
+
+    if not user_messages:
+        return ""
+
+    return str(user_messages[-1].get("content") or "")
 
 
 def _last_answer(obj: UniversalObject) -> str:
@@ -107,15 +106,15 @@ def _last_answer(obj: UniversalObject) -> str:
         for _seq, payload in read_messages(obj)
         if payload.get("role") == "assistant"
     ]
-    return (
-        str(assistant_messages[-1].get("content") or "")
-        if assistant_messages
-        else ""
-    )
+
+    if not assistant_messages:
+        return ""
+
+    return str(assistant_messages[-1].get("content") or "")
 
 
 class MemoryConsolidationService:
-    """The single consolidation seam: deduplicates conversation memory."""
+    """The single consolidation seam for conversation-memory deduplication."""
 
     def __init__(
         self,
@@ -131,39 +130,54 @@ class MemoryConsolidationService:
         *,
         actor: str = "system",
     ) -> ConsolidationReport:
-        """One deterministic consolidation pass over all conversations.
+        """Run one deterministic consolidation pass.
 
-        ACTIVE conversations are grouped by near-duplicate question+answer
-        (oldest-first iteration); each group keeps ONE canonical (the most
-        recallable, newest on ties) and every other member is superseded
-        by it. Already-superseded / archived conversations are never
-        touched again (the terminal status is a no-op guard).
+        ACTIVE conversations are grouped by near-duplicate question and
+        answer. Each group keeps exactly one canonical conversation.
+
+        Canonical selection is based on:
+        1. review quality;
+        2. newest created_at for equal review quality.
+
+        All other members are marked SUPERSEDED.
         """
         conversations = all_conversations(self._repository)
+
         active = [
             obj
             for obj in conversations
             if obj.status is ObjectStatus.ACTIVE
         ]
-        active.sort(key=lambda obj: (obj.audit.created_at if obj.audit else "", str(obj.id)))
 
-        # Deterministic grouping: the first member seeds a group; every
-        # later member with the same normalized question and a similar
-        # answer joins it. Groups are keyed by the ANCHOR's object id (the
-        # normalized question is not unique — two different questions can
-        # normalize identically, and same-question dissimilar answers form
-        # separate groups).
+        # Stable chronological traversal.
+        active.sort(
+            key=lambda obj: (
+                obj.audit.created_at if obj.audit else "",
+                str(obj.id),
+            )
+        )
+
+        # Deterministic grouping.
+        #
+        # The first member seeds a group. Later members join when they
+        # have the same normalized question and sufficiently similar
+        # answers.
         groups: dict[str, list[UniversalObject]] = {}
         order: list[str] = []
+
         for obj in active:
             question = _normalize_question(_last_question(obj))
+
             if not question:
-                continue  # no retrievable memory content to consolidate
+                continue
+
             answer = _last_answer(obj)
-            matched = None
+            matched: str | None = None
+
             for anchor_id in order:
                 anchor = groups[anchor_id][0]
                 anchor_answer = _last_answer(anchor)
+
                 if (
                     _normalize_question(_last_question(anchor)) == question
                     and answer_similarity(answer, anchor_answer)
@@ -171,6 +185,7 @@ class MemoryConsolidationService:
                 ):
                     matched = anchor_id
                     break
+
             if matched is None:
                 anchor_id = str(obj.id)
                 groups[anchor_id] = [obj]
@@ -179,10 +194,18 @@ class MemoryConsolidationService:
                 groups[matched].append(obj)
 
         superseded: list[ConsolidatedPair] = []
+
         for anchor_id in order:
             members = groups[anchor_id]
+
             if len(members) < 2:
                 continue
+
+            # Canonical policy:
+            #   1. review quality
+            #   2. newest created_at
+            #
+            # Do NOT use object ID as a proxy for creation order.
             canonical = max(
                 members,
                 key=lambda obj: (
@@ -190,17 +213,21 @@ class MemoryConsolidationService:
                     obj.audit.created_at if obj.audit else "",
                 ),
             )
+
             for member in members:
                 if member is canonical:
                     continue
+
                 member.supersede(canonical.id, actor)
                 self._repository.save(member)
+
                 superseded.append(
                     ConsolidatedPair(
                         conversation_id=str(member.id),
                         canonical_id=str(canonical.id),
                     )
                 )
+
         return ConsolidationReport(
             scanned=len(active),
             consolidated=len(superseded),

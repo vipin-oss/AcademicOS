@@ -183,7 +183,11 @@ def get_assistant_retrieval(
         embedder=embedder,
     )
     graph = GraphRuntimeService(SQLAlchemyObjectRepository(db), ObjectPermissionEvaluator())
-    return AssistantRetrievalService(search, graph)
+    # P0-2: the repository enriches graph-only retrieval items with their
+    # metadata so the LLM receives evidence beyond titles.
+    return AssistantRetrievalService(
+        search, graph, repository=SQLAlchemyObjectRepository(db)
+    )
 
 
 def get_assistant_memory(

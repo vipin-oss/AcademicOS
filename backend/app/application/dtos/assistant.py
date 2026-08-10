@@ -331,6 +331,11 @@ class RetrievedItem:
     version: int
     sources: tuple[str, ...]  # ("search",) | ("graph",) | ("search", "graph")
     score: float  # deterministic RRF score (0.0 for graph-only items)
+    # P0-2: the deterministic ``key: value`` metadata text of the object —
+    # LLM evidence beyond title. Populated from the search projection for
+    # search hits and from the object's metadata for graph-only items.
+    # Additive: empty for legacy callers.
+    metadata_text: str = ""
 
 
 @dataclass(frozen=True)

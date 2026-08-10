@@ -65,7 +65,8 @@ _GROUNDING_CORE = (
     "do not invent. "
     "Cite sources by their bracketed numbers ([1], [2]) from RETRIEVED CONTEXT "
     "ONLY; never invent citations and never cite anything not listed there. "
-    "Be concise and factual. Respond in the same language as the request."
+    "Be concise and factual. Answer in at most 250 words unless the user "
+    "explicitly asks for more detail. Respond in the same language as the request."
 )
 
 #: Research Assistant (F18) — literature review, gap/hypothesis framing,

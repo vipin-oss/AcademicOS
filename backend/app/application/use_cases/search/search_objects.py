@@ -150,25 +150,29 @@ def _fuse(lexical: list, semantic: list, *, limit: int) -> list[SearchHit]:
     exactly, so behaviour is identical to Sprint-5 M1.
     """
     score_by_id: dict[str, float] = {}
-    fields: dict[str, tuple[str, str, int]] = {}
+    fields: dict[str, tuple[str, str, int, str]] = {}
     sources: dict[str, set[str]] = {}
     for rank, doc in enumerate(lexical):
         score_by_id[doc.object_id] = score_by_id.get(doc.object_id, 0.0) + 1.0 / (
             _RRF_K + rank + 1
         )
-        fields.setdefault(doc.object_id, (doc.object_type, doc.title, doc.version))
+        fields.setdefault(
+            doc.object_id, (doc.object_type, doc.title, doc.version, doc.metadata_text)
+        )
         sources.setdefault(doc.object_id, set()).add(INDEX_SOURCE_LEXICAL)
     for rank, doc in enumerate(semantic):
         score_by_id[doc.object_id] = score_by_id.get(doc.object_id, 0.0) + 1.0 / (
             _RRF_K + rank + 1
         )
-        fields.setdefault(doc.object_id, (doc.object_type, doc.title, doc.version))
+        fields.setdefault(
+            doc.object_id, (doc.object_type, doc.title, doc.version, doc.metadata_text)
+        )
         sources.setdefault(doc.object_id, set()).add(INDEX_SOURCE_SEMANTIC)
 
     ranked = sorted(score_by_id.items(), key=lambda item: (-item[1], item[0]))
     hits: list[SearchHit] = []
     for object_id, score in ranked[:limit]:
-        object_type, title, version = fields[object_id]
+        object_type, title, version, metadata_text = fields[object_id]
         source_set = sources[object_id]
         index_source = (
             INDEX_SOURCE_BOTH
@@ -183,6 +187,7 @@ def _fuse(lexical: list, semantic: list, *, limit: int) -> list[SearchHit]:
                 version=version,
                 index_source=index_source,
                 score=round(score, _SCORE_DECIMALS),
+                metadata_text=metadata_text,
             )
         )
     return hits

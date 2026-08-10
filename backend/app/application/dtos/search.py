@@ -22,3 +22,7 @@ class SearchHit:
     version: int
     index_source: str  # INDEX_SOURCE_* constant
     score: float  # deterministic reciprocal-rank-fusion score
+    # P0-2: the deterministic ``key: value`` metadata text of the object
+    # (from the search projection). Additive — the search API route does not
+    # serialize it; the AI retrieval layer uses it as LLM evidence.
+    metadata_text: str = ""

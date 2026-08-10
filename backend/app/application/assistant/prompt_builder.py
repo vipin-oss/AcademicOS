@@ -34,6 +34,24 @@ from app.application.services.prompt_registry import (
 # budgets already bound the inputs — this only covers formatting overhead).
 _USER_CHAR_CAP = 12000
 
+# P0-2: per-item metadata evidence cap (chars) — keeps the prompt small while
+# giving the model materially useful structured evidence.
+_METADATA_SNIPPET_CAP = 600
+
+
+def _truncate_metadata(metadata_text: str) -> str:
+    """Deterministic per-item metadata snippet: first line(s) up to the cap,
+    with an honest truncation marker. Metadata lines are ``key: value``,
+    sorted by key (search projection shape)."""
+    if len(metadata_text) <= _METADATA_SNIPPET_CAP:
+        return metadata_text
+    head = metadata_text[:_METADATA_SNIPPET_CAP]
+    # Cut at a line boundary when possible (deterministic).
+    idx = head.rfind("\n")
+    if idx > 0:
+        head = head[:idx]
+    return head + "\n... (metadata truncated)"
+
 SYSTEM_INSTRUCTIONS = """You are AcademicOS Assistant, the grounded assistant of an academic knowledge graph.
 
 Rules:
@@ -42,6 +60,7 @@ Rules:
 - Never claim access to material that is not in the context; if the context does not answer the question, say so plainly.
 - Never reveal or infer restricted information. The context was permission-filtered; treat anything absent from it as not available to the user.
 - Be concise and factual.
+- Answer in at most 250 words unless the user explicitly asks for more detail.
 - Cite the sources you use by their bracketed numbers ([1], [2]) from RETRIEVED CONTEXT ONLY. Never invent citations and never cite anything not listed there.
 - Respond in the same language as the question."""
 
@@ -126,6 +145,12 @@ class AssistantPromptBuilder:
                     f"(id={item.object_id}, source={','.join(item.sources)}, "
                     f"version={item.version}, score={item.score:.4f})"
                 )
+                # P0-2: deterministic metadata evidence (same ``key: value``
+                # shape as the search projection), truncated per item so the
+                # budget guards still hold.
+                if getattr(item, "metadata_text", ""):
+                    snippet = _truncate_metadata(item.metadata_text)
+                    lines.append(f"    {snippet}")
             sections.append(
                 "RETRIEVED CONTEXT (permission-filtered, authoritative material):\n"
                 + "\n".join(lines)

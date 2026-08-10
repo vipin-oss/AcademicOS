@@ -374,7 +374,9 @@ def _qa_retrieval(
         embedder=embedder,
     )
     graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
-    return AssistantRetrievalService(search, graph)
+    # P0-2: the repository enriches graph-only retrieval items with their
+    # metadata so the LLM receives evidence beyond titles.
+    return AssistantRetrievalService(search, graph, repository=repo)
 
 
 def _sse(event: str, data: dict) -> str:
