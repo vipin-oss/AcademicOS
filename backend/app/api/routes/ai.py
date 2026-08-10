@@ -33,6 +33,7 @@ from app.application.assistant.citations import CitationBuilder
 from app.application.assistant.prompt_builder import AssistantPromptBuilder
 from app.application.assistant.verifier import AnswerVerifier
 from app.application.dtos.ai import (
+    domain_assistant_result_dict,
     enrichment_result_dict,
     handoff_bundle_dict,
     health_summary_dict,
@@ -55,6 +56,12 @@ from app.application.services.document_annotation_service import (
 from app.application.services.graph_runtime import GraphRuntimeService
 from app.application.services.outbox import to_outbox_row
 from app.application.use_cases.ai.chat import CHAT_SYSTEM_INSTRUCTIONS, ChatTurn, ChatUseCase
+from app.application.use_cases.ai.domain_assistant import (
+    ASSISTANT_ROLE_KEYS,
+    ASSISTANT_ROLES,
+    DomainAssistantRole,
+    DomainAssistantUseCase,
+)
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
 from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
@@ -673,6 +680,166 @@ def ai_chat_stream(
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+class AssistantRoleModel(BaseModel):
+    """One domain-assistant role in the catalogue (GET /ai/assistants)."""
+
+    key: str
+    display_name: str
+    description: str
+
+
+class ListAssistantRolesResponseModel(BaseModel):
+    """The domain-assistant catalogue (GET /ai/assistants)."""
+
+    items: list[AssistantRoleModel]
+
+
+class AssistantBody(BaseModel):
+    """One domain-assistant request (POST /ai/assistants/{role}).
+
+    Stateless: the caller supplies optional prior turns; the server keeps no
+    conversation (the same M15 stateless contract chat started with).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    history: list[ChatMessageModel] = Field(default_factory=list)
+
+
+class AssistantResponseModel(BaseModel):
+    """Domain-assistant grounded result (POST /ai/assistants/{role})."""
+
+    role: str
+    answer: str
+    available: bool
+    retrieved_count: int = 0
+    truncated: bool = False
+    citations: list[dict] = Field(default_factory=list)
+    provider_id: str = ""
+    model: str = ""
+    prompt_id: str = ""
+    prompt_version: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    token_usage_estimated: bool = True
+    latency_ms: int = 0
+    confidence: str = ""
+
+
+def _build_assistant_use_case(core, db, repo, storage, role: DomainAssistantRole):
+    """Compose a domain assistant over the shared grounded-generation engine,
+    reusing the QA retrieval + citation/verification/grounding wiring but with
+    the role-specific system instructions (identical structure to chat)."""
+    embedder = get_embedder(core)
+    vector_repository = get_vector_repository(embedder)
+    retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    grounded = GroundedQAUseCase(
+        repo, retrieval, core,
+        prompt_builder=AssistantPromptBuilder(
+            system_instructions=role.system_instructions
+        ),
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        storage=storage,
+    )
+    return DomainAssistantUseCase(grounded, role)
+
+
+@router.get("/assistants", response_model=ListAssistantRolesResponseModel)
+def list_assistant_roles(
+    core: AiCore = Depends(get_ai_core),
+    user=Depends(get_current_user),
+) -> ListAssistantRolesResponseModel:
+    """The domain-assistant catalogue (Group D, F18-F21).
+
+    Configuration-derived (the role catalogue is static), so it requires
+    authentication. Returns every role regardless of the feature flag so the
+    UI can label the layer as available-but-disabled when the flag is off.
+    """
+    del core, user  # auth gate only
+    return ListAssistantRolesResponseModel(
+        items=[
+            AssistantRoleModel(
+                key=r.key, display_name=r.display_name, description=r.description
+            )
+            for r in ASSISTANT_ROLES.values()
+        ]
+    )
+
+
+@router.post("/assistants/{role}", response_model=AssistantResponseModel)
+def ai_assistant(
+    role: str,
+    body: AssistantBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Domain-assistant grounded generation (M22-M25 - F18-F21).
+
+    Role-specialized grounded generation over the caller's readable documents.
+    The teaching role applies the academic-integrity guard before generation
+    (refuses assessable-completion requests, scaffolds instead). Feature-flagged
+    (``AI_ASSISTANTS_ENABLED``).
+    """
+    if not core.config.enabled or not core.config.feature_flags.get("assistants", False):
+        raise HTTPException(status_code=404)
+    if role not in ASSISTANT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown assistant role: {role!r}. Expected one of {list(ASSISTANT_ROLE_KEYS)}.",
+        )
+    repo = SQLAlchemyObjectRepository(db)
+    use_case = _build_assistant_use_case(core, db, repo, storage, ASSISTANT_ROLES[role])
+    history = [ChatTurn(turn.role, turn.content) for turn in body.history]
+    result = use_case.execute(body.message, history, user)
+    return AssistantResponseModel(**domain_assistant_result_dict(result, role))
+
+
+@router.post("/assistants/{role}/stream")
+def ai_assistant_stream(
+    role: str,
+    body: AssistantBody,
+    core: AiCore = Depends(get_ai_core),
+    db: Session = Depends(get_db),
+    storage=Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Streaming domain-assistant generation (M22-M25): SSE over the same
+    grounded pipeline as ``POST /ai/assistants/{role}``.
+
+    Events: ``token`` (partial deltas), ``completion`` (answer + provenance).
+    The teaching integrity refusal is yielded as a single ``completion``.
+    Feature-flagged (``AI_ASSISTANTS_ENABLED``).
+    """
+    if not core.config.enabled or not core.config.feature_flags.get("assistants", False):
+        raise HTTPException(status_code=404)
+    if role not in ASSISTANT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown assistant role: {role!r}. Expected one of {list(ASSISTANT_ROLE_KEYS)}.",
+        )
+    repo = SQLAlchemyObjectRepository(db)
+    use_case = _build_assistant_use_case(core, db, repo, storage, ASSISTANT_ROLES[role])
+    history = [ChatTurn(turn.role, turn.content) for turn in body.history]
+
+    def events():
+        for event in use_case.stream(body.message, history, user):
+            if event["type"] == "token":
+                yield _sse("token", {"delta": event["delta"]})
+            elif event["type"] == "complete":
+                yield _sse("completion", domain_assistant_result_dict(event["result"], role))
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 class HandoffBody(BaseModel):
     """External-AI handoff request (POST /ai/handoff)."""
 
@@ -761,6 +928,10 @@ __all__ = [
     "QAResponseModel",
     "ChatBody",
     "ChatResponseModel",
+    "AssistantRoleModel",
+    "ListAssistantRolesResponseModel",
+    "AssistantBody",
+    "AssistantResponseModel",
     "HandoffBody",
     "HandoffResponseModel",
     "router",

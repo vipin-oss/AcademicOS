@@ -20,6 +20,7 @@ class _StubSettings:
     ai_qa_enabled = False
     ai_enrichment_enabled = False
     ai_related_documents_enabled = False
+    ai_assistants_enabled = False
     ai_rag_enabled = False
     ai_memory_enabled = False
     ai_agents_enabled = False
@@ -51,6 +52,7 @@ class TestAiConfigView:
             "qa": False,
             "enrichment": False,
             "related_documents": False,
+            "assistants": False,
         }
 
     def test_custom_values_projected(self):

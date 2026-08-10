@@ -630,6 +630,13 @@ def qa_result_dict(result: QAResult) -> dict:
     }
 
 
+def domain_assistant_result_dict(result: QAResult, role: str) -> dict:
+    """Serialize a domain-assistant result (a grounded QAResult + the role)."""
+    data = qa_result_dict(result)
+    data["role"] = role
+    return data
+
+
 def enrichment_result_dict(result: EnrichmentResult) -> dict:
     return {
         "title": result.title,
@@ -704,6 +711,7 @@ __all__ = [
     "summarize_result_dict",
     "qa_result_dict",
     "enrichment_result_dict",
+    "domain_assistant_result_dict",
     "related_documents_result_dict",
     "handoff_bundle_dict",
     "provider_record_dict",

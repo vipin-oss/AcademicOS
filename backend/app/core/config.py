@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     ai_enrichment_enabled: bool = False
     # M13.3: related documents (semantic similarity over the existing index).
     ai_related_documents_enabled: bool = False
+    # M22-M25 (Group D / Features F18-F21): domain assistants (research,
+    # teaching, publication, administration) — grounded compositions over the
+    # existing retrieval/reasoning pipeline, specialized by role. One flag
+    # gates the whole assistant layer (all four roles).
+    ai_assistants_enabled: bool = False
     # Provider configuration: JSON list of entries, e.g.
     #   [{"provider_id": "openai", "kind": "openai", "model": "gpt-4o-mini",
     #     "base_url": "", "timeout_seconds": 30, "max_tokens": 2048,

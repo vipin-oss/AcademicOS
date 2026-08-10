@@ -10,8 +10,11 @@ import type {
   AiChatResponse,
   AiHealth,
   AiModelsResponse,
+  AssistantResponse,
+  AssistantRole,
   EnrichResponse,
   ListAiProvidersResponse,
+  ListAssistantRolesResponse,
   SummarizeResponse,
 } from "@/types";
 
@@ -64,6 +67,31 @@ export function enrichDocument(
   options?: RequestOptions,
 ): Promise<EnrichResponse> {
   return api.post<EnrichResponse>("/ai/enrich", { object_id: objectId }, {
+    timeoutMs: DEFAULT_AI_TIMEOUT_MS,
+    ...options,
+  });
+}
+
+/**
+ * `GET /ai/assistants` - the domain-assistant catalogue (Group D, F18-F21).
+ * Static and configuration-derived (requires auth).
+ */
+export function getAssistantRoles(options?: RequestOptions): Promise<AssistantRole[]> {
+  return api
+    .get<ListAssistantRolesResponse>("/ai/assistants", options)
+    .then((res) => res.items);
+}
+
+/** `POST /ai/assistants/{role}` - role-specialized grounded generation. */
+export function queryAssistant(
+  role: string,
+  body: {
+    message: string;
+    history?: Array<{ role: string; content: string }>;
+  },
+  options?: RequestOptions,
+): Promise<AssistantResponse> {
+  return api.post<AssistantResponse>(`/ai/assistants/${encodeURIComponent(role)}`, body, {
     timeoutMs: DEFAULT_AI_TIMEOUT_MS,
     ...options,
   });

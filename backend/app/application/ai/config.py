@@ -67,6 +67,7 @@ class AiConfigView:
                 "related_documents": bool(
                     getattr(settings, "ai_related_documents_enabled", False)
                 ),
+                "assistants": bool(getattr(settings, "ai_assistants_enabled", False)),
             },
         )
 

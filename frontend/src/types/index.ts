@@ -2605,3 +2605,34 @@ export interface EnrichResponse {
   latency_ms: number;
   persisted: boolean;
 }
+
+/** One domain-assistant role in the catalogue (`GET /ai/assistants`). */
+export interface AssistantRole {
+  key: string;
+  display_name: string;
+  description: string;
+}
+
+/** `GET /ai/assistants` response (Group D, F18-F21). */
+export interface ListAssistantRolesResponse {
+  items: AssistantRole[];
+}
+
+/** `POST /ai/assistants/{role}` response - a grounded answer tagged with role. */
+export interface AssistantResponse {
+  role: string;
+  answer: string;
+  available: boolean;
+  retrieved_count: number;
+  truncated: boolean;
+  citations: AiCitation[];
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  confidence: string;
+}

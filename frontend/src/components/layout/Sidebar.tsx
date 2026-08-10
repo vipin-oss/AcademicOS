@@ -9,6 +9,7 @@ const NAV = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/" },
   { label: "Assistant", icon: Sparkles, href: "/assistant" },
   { label: "AI Chat", icon: Sparkles, href: "/chat" },
+  { label: "Assistants", icon: Sparkles, href: "/assistants" },
   { label: "Productivity", icon: CalendarCheck, href: "/productivity" },
   { label: "Objects", icon: Boxes, href: "/objects" },
   { label: "Documents", icon: FileText, href: "/documents" },
