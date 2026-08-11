@@ -79,6 +79,7 @@ from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -235,7 +236,7 @@ def summarize_document(
         raise HTTPException(status_code=404)
 
     repo = SQLAlchemyObjectRepository(db)
-    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db))
     evaluator = ObjectPermissionEvaluator()
     use_case = SummarizeDocumentUseCase(repo, annotation_service, evaluator, core)
     try:
@@ -299,7 +300,7 @@ def enrich_document(
         raise HTTPException(status_code=404)
 
     repo = SQLAlchemyObjectRepository(db)
-    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db))
     evaluator = ObjectPermissionEvaluator()
     use_case = EnrichDocumentUseCase(repo, annotation_service, evaluator, core)
     try:
@@ -414,7 +415,7 @@ def grounded_qa(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -452,7 +453,7 @@ def grounded_qa_stream(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -522,7 +523,7 @@ def related_documents(
     vector_repository = get_vector_repository(embedder)
 
     repo = SQLAlchemyObjectRepository(db)
-    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db))
+    annotation_service = DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db))
     evaluator = ObjectPermissionEvaluator()
     use_case = RelatedDocumentsUseCase(
         repo, annotation_service, evaluator, vector_repository, embedder,
@@ -587,7 +588,7 @@ def _build_chat_use_case(core, db, repo, storage):
         prompt_builder=AssistantPromptBuilder(system_instructions=CHAT_SYSTEM_INSTRUCTIONS),
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -797,7 +798,7 @@ def _build_assistant_use_case(core, db, repo, storage, role: DomainAssistantRole
         ),
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
-        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
         storage=storage,
         max_output_tokens=drafting_budget,
     )
@@ -962,7 +963,7 @@ def ai_handoff(
     grounded = GroundedQAUseCase(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
-        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
+        annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
         storage=storage,
     )
     use_case = HandoffUseCase(grounded)

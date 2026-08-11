@@ -38,6 +38,7 @@ from app.api.mappers.document_mapper import to_create_input, to_response, to_upd
 from app.application.commands.create_document import CreateDocumentCommand
 from app.application.commands.delete_document import DeleteDocumentCommand
 from app.application.commands.update_document import UpdateDocumentCommand
+from app.application.dtos.extraction import format_of
 from app.application.dtos.intake import MAX_FILE_BYTES
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.intake.pipeline import human_bytes
@@ -52,10 +53,16 @@ from app.core.config import settings
 from app.domain.exceptions import InvalidStateTransitionError
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
+from app.infrastructure.extraction import build_document_parsers
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 from app.infrastructure.storage.local import LocalFileStorage
+
+import logging
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
@@ -121,6 +128,56 @@ def _download_url(out, storage: LocalFileStorage) -> str | None:
         f"{settings.public_base_url}{settings.api_v1_prefix}"
         f"/documents/{out.id}/download"
     )
+
+
+def _index_direct_upload_content(
+    db: Session,
+    *,
+    document_id: str,
+    version: int,
+    file_name: str,
+    content: bytes,
+) -> None:
+    """Direct-upload content projection (Fix A, M27 seam).
+
+    After a document is created, parse the already-in-memory upload bytes
+    with the EXISTING M2 parser registry (``build_document_parsers()``) and
+    write the EXISTING ``document_contents`` projection through the same
+    store the intake commit uses (``SQLDocumentContentStore``). The content
+    row is keyed by the document id, so the existing SQL content-search leg
+    (``SQLAlchemySearchRepository.search``) and the annotation service's
+    extracted-text fallback find the body without any new architecture.
+
+    Graceful degradation contract: an unsupported format, a parse failure,
+    or empty extracted text simply skips the content row — the upload
+    itself has already succeeded and title/metadata stay searchable
+    (mirrors the intake pipeline's per-item isolation).
+    """
+    extension = file_name.rsplit(".", 1)[-1] if "." in file_name else ""
+    parser = build_document_parsers().get(format_of(extension) or "")
+    if parser is None:
+        return
+    try:
+        result = parser.parse(content)
+    except Exception:  # noqa: BLE001 — content indexing must never fail the upload
+        _log.warning(
+            "Direct-upload content indexing skipped for %r: parse failed.",
+            file_name,
+            exc_info=True,
+        )
+        return
+    text = (result.text or "").strip()
+    if not text:
+        return
+    SQLDocumentContentStore(db).upsert(
+        object_id=document_id,
+        version=version,
+        content_text=text,
+        # Self-provenance: a direct upload has no intake item, so the row
+        # records the document itself as its source (NOT NULL column).
+        source_item_id=document_id,
+    )
+    db.commit()
 
 
 def _read_upload(file: UploadFile) -> bytes:
@@ -202,6 +259,7 @@ def get_document(
 def create_document(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    db: Session = Depends(get_db),
     *,
     title: str = Form(...),
     document_type: str = Form(...),
@@ -244,6 +302,22 @@ def create_document(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+    # Fix A: index the body content of a direct upload (best-effort — a
+    # parse/indexing failure must never fail an otherwise-successful upload).
+    try:
+        _index_direct_upload_content(
+            db,
+            document_id=str(out.id),
+            version=out.version,
+            file_name=file_name,
+            content=content,
+        )
+    except Exception:  # noqa: BLE001 — content indexing is best-effort
+        _log.warning(
+            "Direct-upload content indexing failed for %r; upload succeeded.",
+            file_name,
+            exc_info=True,
         )
     return DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
 

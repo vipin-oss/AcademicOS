@@ -50,3 +50,10 @@ class SQLDocumentContentStore(DocumentContentStore):
                 DocumentContentModel.object_id == object_id
             )
         )
+
+    def get_content(self, object_id: str) -> str | None:
+        """The content text for ``object_id`` (``None`` when no row)."""
+        row = self._session.get(DocumentContentModel, object_id)
+        if row is None:
+            return None
+        return row.content_text

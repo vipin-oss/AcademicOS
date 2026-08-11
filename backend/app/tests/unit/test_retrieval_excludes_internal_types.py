@@ -56,7 +56,8 @@ class _FakeSearch:
 
     def execute(self, *, user, text, object_type=None, limit=8):
         self.calls.append((text, object_type))
-        return self.hits_by_text.get(text, [])
+        # object_type-aware lookup, mirroring the real SQL filter.
+        return self.hits_by_text.get((text, object_type), self.hits_by_text.get(text, []))
 
 
 class _FakeGraph:
@@ -146,12 +147,13 @@ def test_singular_fallback_after_conversation_only_hits():
     the singular fallback still runs and can surface academic objects."""
     conv = _FakeHit("obj:ai_conversation:2", "ai_conversation", "grants")
     grant = _FakeHit("obj:grant:1", "grant", "Grant 001")
-    search = _FakeSearch({"grants": [conv], "grant": [grant]})
+    search = _FakeSearch({("grants", "grant"): [conv], ("grant", "grant"): [grant]})
 
     result = _service(search).retrieve("What research grants do I have?", _USER)
 
-    assert search.calls[0] == ("grants", None)
-    assert search.calls[1] == ("grant", None)  # fallback fired after filtering
+    # The multi-signal plan now scopes the search to the grant type.
+    assert search.calls[0] == ("grants", "grant")
+    assert search.calls[1] == ("grant", "grant")  # fallback fired after filtering
     assert [i.object_id for i in result.items] == ["obj:grant:1"]
 
 

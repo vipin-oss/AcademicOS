@@ -25,6 +25,9 @@ runtime), so every merged item has passed it. The service only composes.
 """
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
 from app.application.dtos.assistant import (
     AssistantRetrievalResult,
     RetrievedItem,
@@ -87,6 +90,125 @@ _TOPIC_MARKERS = (
     "about",
     "for",
 )
+
+
+# ---------------------------------------------------------------------------
+# Multi-signal retrieval plan (evidence-based fix, second forensic analysis)
+# ---------------------------------------------------------------------------
+# A single "last content token" loses information (Hindi auxiliaries, verbs,
+# years, proper nouns). The plan extracts up to three signals, in priority
+# order, and reuses the EXISTING object_type-scoped search seam:
+#   A. topic markers      -> existing marker behavior (formulate_query)
+#   B. proper nouns       -> the meaningful entity (CBLU), not "attended"
+#   C. year + domain noun -> type + year constraint ("papers ... in 2025")
+#   D. type/count question-> object_type-scoped search (text optional)
+#   E. domain noun        -> text + object_type
+#   F. fallback           -> existing last-content-token behavior (unchanged)
+
+
+@dataclass(frozen=True)
+class RetrievalPlan:
+    """Deterministic retrieval signals for one question.
+
+    ``terms`` are tried in order (first non-empty hit set wins); ``object_type``
+    narrows the search leg when set; ``type_question`` allows a final
+    no-text type-scoped search (e.g. "how many publications do I have").
+    """
+
+    terms: tuple[str, ...] = ()
+    object_type: str | None = None
+    type_question: bool = False
+
+
+#: Domain nouns -> existing ObjectType values (exact enum names).
+_DOMAIN_NOUN_TO_TYPE: dict[str, ObjectType] = {
+    "publication": ObjectType.PUBLICATION,
+    "publications": ObjectType.PUBLICATION,
+    "paper": ObjectType.PUBLICATION,
+    "papers": ObjectType.PUBLICATION,
+    "grant": ObjectType.GRANT,
+    "grants": ObjectType.GRANT,
+    "conference": ObjectType.EVENT,
+    "conferences": ObjectType.EVENT,
+    "event": ObjectType.EVENT,
+    "events": ObjectType.EVENT,
+    "project": ObjectType.RESEARCH_PROJECT,
+    "projects": ObjectType.RESEARCH_PROJECT,
+    "document": ObjectType.DOCUMENT,
+    "documents": ObjectType.DOCUMENT,
+    "designation": ObjectType.FACULTY,
+}
+
+#: Type/count question markers (normalized form).
+_TYPE_COUNT_MARKERS = ("how many", "total number of", "number of", "which", "what")
+
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _proper_noun(question: str, norm: str) -> str | None:
+    """A capitalized token in the ORIGINAL question (proper noun/entity).
+
+    Sentence-initial words and single letters are excluded (they are usually
+    the question word or "I"). ``None`` when no entity is present.
+    """
+    tokens = (question or "").split()
+    for idx, token in enumerate(tokens):
+        if idx == 0:
+            continue  # sentence-initial word (question word / "I" / "maine")
+        stripped = token.strip("'\".,!?;:’‘")
+        if len(stripped) <= 1:
+            continue
+        if stripped[0].isupper() and stripped[0].isalpha():
+            lowered = stripped.lower()
+            if lowered not in _QUERY_STOPWORDS:
+                return lowered
+    return None
+
+
+def _domain_noun_type(norm: str) -> tuple[str | None, ObjectType | None]:
+    """The LAST domain noun present in the normalized question."""
+    words = norm.split()
+    for word in reversed(words):
+        obj_type = _DOMAIN_NOUN_TO_TYPE.get(word)
+        if obj_type is not None:
+            return word, obj_type
+    return None, None
+
+
+def _is_type_count_question(norm: str) -> bool:
+    return any(marker in norm for marker in _TYPE_COUNT_MARKERS)
+
+
+def retrieval_plan(question: str) -> RetrievalPlan:
+    """Deterministic multi-signal plan for one question (see module docs)."""
+    norm = normalize(question or "")
+    if not norm:
+        return RetrievalPlan(terms=())
+
+    # A. topic markers keep the existing marker behavior ("related to X").
+    for marker in _TOPIC_MARKERS:
+        if marker in norm:
+            return RetrievalPlan(terms=(formulate_query(question),))
+
+    # B. proper noun / entity — preserve it instead of a verb/auxiliary.
+    proper = _proper_noun(question, norm)
+    if proper:
+        return RetrievalPlan(terms=(proper,))
+
+    # C/D/E. domain noun -> type (+ year / count handling).
+    noun, obj_type = _domain_noun_type(norm)
+    if noun and obj_type is not None:
+        year_match = _YEAR_RE.search(norm)
+        if year_match:
+            # "which papers ... in 2025" -> type + year constraint.
+            return RetrievalPlan(terms=(noun, year_match.group(0)), object_type=obj_type.value)
+        if _is_type_count_question(norm):
+            # "how many publications do I have" -> type-scoped (text optional).
+            return RetrievalPlan(terms=(noun,), object_type=obj_type.value, type_question=True)
+        return RetrievalPlan(terms=(noun,), object_type=obj_type.value)
+
+    # F. fallback: existing behavior (unchanged).
+    return RetrievalPlan(terms=(formulate_query(question),))
 
 
 def formulate_query(question: str) -> str:
@@ -186,19 +308,13 @@ class AssistantRetrievalService:
         leg and the prompt. A deterministic singular fallback retries once
         when the formulated term yields zero hits ("grants" -> "grant").
         """
-        term = formulate_query(query)
-        hits = self._search.execute(
-            user=user, text=term, object_type=object_type, limit=search_limit
-        )
-        hits = self._exclude_internal_types(hits, object_type)
-        if not hits and term and term != query:
-            singular = _singularize(term)
-            if singular != term:
-                hits = self._search.execute(
-                    user=user, text=singular, object_type=object_type,
-                    limit=search_limit,
-                )
-                hits = self._exclude_internal_types(hits, object_type)
+        # Multi-signal plan (evidence-based fix): proper nouns, domain
+        # nouns + object_type, year constraints and type/count questions are
+        # extracted BEFORE the legacy single-token fallback. Caller-supplied
+        # object_type (memory recall) always wins over the plan's.
+        plan = retrieval_plan(query)
+        effective_type = object_type or plan.object_type
+        hits = self._search_by_plan(plan, user, effective_type, search_limit)
         graph_items = self._graph_items(
             hits, user, anchors=graph_anchors, depth=graph_depth
         )
@@ -209,18 +325,55 @@ class AssistantRetrievalService:
         )
 
     def _exclude_internal_types(self, hits, object_type: str | None):
-        """Drop internal/system hits from GENERAL AI retrieval.
+        """Drop internal/system hits from AI retrieval.
 
-        When a caller explicitly narrows to one object type (e.g. the
-        memory-recall path searches AI_CONVERSATION on purpose) the
-        explicit type wins and nothing is filtered. For general retrieval
-        (object_type=None) AI_CONVERSATION and USER hits are removed before
-        the graph leg, so internal conversation content can never become AI
+        Internal types (AI_CONVERSATION, USER) are excluded UNLESS the
+        caller explicitly requested one of them (the memory-recall path
+        searches AI_CONVERSATION on purpose). A general type-scoped search
+        (e.g. object_type=grant from the retrieval plan) still excludes
+        internal objects — conversation content can never become AI
         evidence or a cited source.
         """
-        if object_type is not None or not hits:
+        if not hits:
+            return hits
+        if object_type is not None and object_type in {
+            t.value for t in _RETRIEVAL_EXCLUDED_TYPES
+        }:
             return hits
         return [h for h in hits if h.object_type not in _RETRIEVAL_EXCLUDED_TYPES]
+
+    def _search_by_plan(self, plan, user, object_type, search_limit):
+        """Run the plan's term chain; each term + singular fallback, then a
+        type-only search for type/count questions. Internal types are
+        excluded at every step (AI_CONVERSATION/USER never become evidence).
+        Returns the first non-empty, permission-filtered hit set."""
+        terms = list(plan.terms) or [""]
+        for term in terms:
+            hits = self._search.execute(
+                user=user, text=term or None, object_type=object_type,
+                limit=search_limit,
+            )
+            hits = self._exclude_internal_types(hits, object_type)
+            if hits:
+                return hits
+            singular = _singularize(term) if term else term
+            if singular and singular != term:
+                hits = self._search.execute(
+                    user=user, text=singular, object_type=object_type,
+                    limit=search_limit,
+                )
+                hits = self._exclude_internal_types(hits, object_type)
+                if hits:
+                    return hits
+        if plan.type_question and object_type is not None:
+            # "how many publications do I have" -> all of the type.
+            hits = self._search.execute(
+                user=user, text=None, object_type=object_type, limit=search_limit
+            )
+            hits = self._exclude_internal_types(hits, object_type)
+            if hits:
+                return hits
+        return []
 
     # ------------------------------------------------------------- graph leg
     def _graph_items(

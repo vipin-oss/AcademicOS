@@ -56,6 +56,12 @@ class RecordingContentStore(DocumentContentStore):
     def delete(self, object_id) -> None:
         self.deletes.append(object_id)
 
+    def get_content(self, object_id) -> str | None:
+        for row in reversed(self.upserts):
+            if row["object_id"] == object_id:
+                return row["content_text"]
+        return None
+
 
 def _item_with_text_key(repo, session, storage, text: str) -> UniversalObject:
     # The commit gate reads the staged blob at the fixture's KEY_STAGED_KEY

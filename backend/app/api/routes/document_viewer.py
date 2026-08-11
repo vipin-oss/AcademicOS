@@ -35,6 +35,7 @@ from app.application.services.document_annotation_service import (
 from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -49,7 +50,9 @@ router = APIRouter(
 
 def _service(db: Session) -> DocumentAnnotationService:
     return DocumentAnnotationService(
-        SQLAlchemyObjectRepository(db), SQLAnnotationStore(db)
+        SQLAlchemyObjectRepository(db),
+        SQLAnnotationStore(db),
+        content_store=SQLDocumentContentStore(db),
     )
 
 

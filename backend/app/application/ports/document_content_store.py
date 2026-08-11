@@ -23,3 +23,12 @@ class DocumentContentStore(abc.ABC):
     @abc.abstractmethod
     def delete(self, object_id: str) -> None:
         """Remove the content projection (idempotent; missing rows are ignored)."""
+
+    @abc.abstractmethod
+    def get_content(self, object_id: str) -> str | None:
+        """The stored content text for ``object_id`` (``None`` when absent).
+
+        Read seam for consumers that need the projection without a linked
+        intake item (e.g. direct-upload documents in the annotation
+        service's extracted-text fallback).
+        """
