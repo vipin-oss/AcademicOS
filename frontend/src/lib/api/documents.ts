@@ -13,6 +13,7 @@
 import { API_BASE_URL } from "@/config/env";
 import { api, ApiError } from "@/lib/api/client";
 import type { RequestOptions } from "@/lib/api/client";
+import { getAccessToken } from "@/lib/auth/token";
 import { DEFAULT_DOC_PAGE_SIZE } from "@/lib/documents/constants";
 import type {
   DocumentResponse,
@@ -174,6 +175,14 @@ export function uploadDocument(
     xhr.onabort = () => reject(new ApiError("Upload cancelled.", { kind: "aborted" }));
 
     xhr.open("POST", `${API_BASE_URL}/documents`);
+    // Upload auth (P0): the raw XHR bypasses the shared client's
+    // attachAuthorization(), so attach the bearer token here — the SAME
+    // token the shared client sends (getAccessToken is the single source
+    // of truth). No token -> no header (public endpoints stay
+    // unauthenticated, matching the shared client). Content-Type is NOT
+    // set manually — the browser must generate the multipart boundary.
+    const token = getAccessToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.send(formData);
   });
 }
