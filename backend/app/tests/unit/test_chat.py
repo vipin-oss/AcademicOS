@@ -167,7 +167,7 @@ class TestHistoryCap:
 
 
 # ===========================================================================
-# streaming (leak-proof, inherited)
+# streaming (Phase B: provisional tokens + authoritative completion)
 # ===========================================================================
 
 
@@ -189,14 +189,18 @@ class TestStreaming:
         assert tokens == ["Hel", "lo"]
         assert len(completions) == 1 and completions[0]["result"].available is True
 
-    def test_failure_leaks_no_tokens(self):
+    def test_failure_marks_partial_preview_failed(self):
+        # Phase B: provisional tokens may be previewed; the authoritative
+        # completion still reports available=False (never a fake success).
         gw = _FakeGateway(events=[
             GenerationEvent(kind="token", delta="partial-"),
             GenerationEvent(kind="token", delta="leak"),
         ], raise_in_stream_at=1)
         use_case = _make(gw, texts={"obj:document:d1": "x"})
         events = list(use_case.stream("hi", [], _user()))
-        assert not any(e["type"] == "token" for e in events)
+        assert [e["delta"] for e in events if e["type"] == "token"] == [
+            "partial-", "leak",
+        ]
         assert events[-1]["result"].available is False
 
     def test_incomplete_stream_is_failure(self):
@@ -205,7 +209,9 @@ class TestStreaming:
         ])  # no complete event
         use_case = _make(gw, texts={"obj:document:d1": "x"})
         events = list(use_case.stream("hi", [], _user()))
-        assert not any(e["type"] == "token" for e in events)
+        assert [e["delta"] for e in events if e["type"] == "token"] == [
+            "partial",
+        ]
         assert events[-1]["result"].available is False
 
 

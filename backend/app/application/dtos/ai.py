@@ -95,6 +95,10 @@ class ProviderConfig:
     streaming_enabled: bool = True
     embedding_model: str = ""
     embedding_dimensions: int | None = None
+    # Model warmth (Phase E): an Ollama-compatible keep_alive value (e.g.
+    # "30m") passed through to the provider request body so the model stays
+    # loaded during active use. None = provider default.
+    keep_alive: str | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():

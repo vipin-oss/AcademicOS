@@ -64,7 +64,7 @@ from app.application.use_cases.ai.domain_assistant import (
 )
 from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
 from app.application.use_cases.ai.get_ai_health import GetAiHealthUseCase
-from app.application.use_cases.ai.grounded_qa import GroundedQAUseCase
+from app.application.use_cases.ai.grounded_qa import DEFAULT_MAX_OUTPUT_TOKENS, GroundedQAUseCase
 from app.application.use_cases.ai.handoff import SUPPORTED_TASKS, HandoffUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
@@ -416,6 +416,7 @@ def grounded_qa(
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
         storage=storage,
+        max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
     result = use_case.execute(body.question, user)
     return QAResponseModel(**qa_result_dict(result))
@@ -453,6 +454,7 @@ def grounded_qa_stream(
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
         storage=storage,
+        max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
 
     def events():
@@ -587,6 +589,7 @@ def _build_chat_use_case(core, db, repo, storage):
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
         storage=storage,
+        max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
     return ChatUseCase(grounded)
 
@@ -783,6 +786,10 @@ def _build_assistant_use_case(core, db, repo, storage, role: DomainAssistantRole
     embedder = get_embedder(core)
     vector_repository = get_vector_repository(embedder)
     retrieval = _qa_retrieval(db, repo, vector_repository, embedder)
+    # Domain assistants often draft (lesson plans, replies, sections) —
+    # a moderate budget above the factual QA default, still far below the
+    # old 1024 cap.
+    drafting_budget = 768
     grounded = GroundedQAUseCase(
         repo, retrieval, core,
         prompt_builder=AssistantPromptBuilder(
@@ -792,6 +799,7 @@ def _build_assistant_use_case(core, db, repo, storage, role: DomainAssistantRole
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db)),
         storage=storage,
+        max_output_tokens=drafting_budget,
     )
     return DomainAssistantUseCase(grounded, role)
 

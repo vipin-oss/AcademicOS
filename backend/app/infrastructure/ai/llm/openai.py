@@ -302,6 +302,11 @@ class OpenAIProvider:
         if stream:
             # Ask for usage in the terminal chunk so accounting is honest.
             body["stream_options"] = {"include_usage": True}
+        keep_alive = getattr(self._config, "keep_alive", None)
+        if keep_alive:
+            # Model warmth (Phase E): Ollama-compatible keep_alive keeps the
+            # model resident between requests — removes periodic cold loads.
+            body["keep_alive"] = keep_alive
         if structured:
             # Broadly-compatible JSON-object mode (OpenAI, vLLM, Ollama, ...).
             body["response_format"] = {"type": "json_object"}

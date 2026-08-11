@@ -190,8 +190,10 @@ class TestStreamingLeak:
         assert result.available is True
         assert result.answer == "full answer"
 
-    def test_gateway_failure_mid_stream_leaks_no_tokens(self):
-        """Tokens buffered before the failure must never be emitted."""
+    def test_gateway_failure_mid_stream_marks_partial_preview_failed(self):
+        """Phase B contract: provisional tokens MAY reach the UI, but a
+        mid-stream failure yields an authoritative completion with
+        available=False — the partial preview is never treated as final."""
         gw = _FakeGateway(
             events=[
                 GenerationEvent(kind="token", delta="partial-"),
@@ -202,14 +204,20 @@ class TestStreamingLeak:
         use_case, _ = _make_use_case(gw)
         events = self._drain(use_case)
 
-        assert not any(e["type"] == "token" for e in events), "tokens leaked"
-        assert len(events) == 1
-        result = events[0]["result"]
+        # Provisional preview tokens are allowed (they were produced);
+        # the authoritative completion marks the turn as failed.
+        token_deltas = [e["delta"] for e in events if e["type"] == "token"]
+        assert token_deltas == ["partial-", "leak"]
+        completions = [e for e in events if e["type"] == "complete"]
+        assert len(completions) == 1
+        result = completions[0]["result"]
         assert result.available is False
         assert result.answer == _FALLBACK_ANSWER
 
     def test_stream_without_completion_event_is_generation_failure(self):
-        """A stream that ends with no completion event is NOT a success."""
+        """A stream that ends with no completion event is NOT a success:
+        provisional tokens may have been previewed, the completion still
+        reports available=False."""
         gw = _FakeGateway(
             events=[
                 GenerationEvent(kind="token", delta="partial-"),
@@ -220,9 +228,11 @@ class TestStreamingLeak:
         use_case, _ = _make_use_case(gw)
         events = self._drain(use_case)
 
-        assert not any(e["type"] == "token" for e in events), "tokens leaked"
-        assert len(events) == 1
-        result = events[0]["result"]
+        token_deltas = [e["delta"] for e in events if e["type"] == "token"]
+        assert token_deltas == ["partial-", "answer"]
+        completions = [e for e in events if e["type"] == "complete"]
+        assert len(completions) == 1
+        result = completions[0]["result"]
         assert result.available is False
         assert result.answer == _FALLBACK_ANSWER
 

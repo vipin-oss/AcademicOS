@@ -38,6 +38,12 @@ export type AiMode =
 const NOT_CONFIGURED_TEXT =
   "AI is not configured. Set up a provider in Settings → AI, or use the external handoff.";
 
+// Shown when generation STARTED (provisional tokens arrived) but the stream
+// failed before a verified completion — the partial preview is discarded and
+// the failure is stated honestly instead of pretending it is final.
+const GENERATION_FAILED_TEXT =
+  "The AI response was interrupted before it could be completed. Please try again.";
+
 export function AiChatPanel({
   mode,
   description,
@@ -55,6 +61,10 @@ export function AiChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  // True streaming (Phase B): tracks whether any provisional token arrived,
+  // so a failed completion can be reported as an interrupted generation
+  // rather than "not configured".
+  const sawTokensRef = useRef(false);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -84,6 +94,7 @@ export function AiChatPanel({
 
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
     setDraft("");
+    sawTokensRef.current = false;
     setStreaming(true);
     setElapsed(0);
     timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
@@ -103,6 +114,7 @@ export function AiChatPanel({
         body,
         {
           onToken: (delta) => {
+            sawTokensRef.current = true;
             setDraft((prev) => prev + delta);
           },
           onCompletion: (data) => {
@@ -115,10 +127,15 @@ export function AiChatPanel({
               ...prev,
               {
                 role: "assistant",
-                content: available ? answer : NOT_CONFIGURED_TEXT,
+                content: available
+                  ? answer
+                  : sawTokensRef.current
+                    ? GENERATION_FAILED_TEXT
+                    : NOT_CONFIGURED_TEXT,
                 citations: available ? citations : undefined,
               },
             ]);
+            sawTokensRef.current = false;
             setDraft("");
             if (mode.type === "chat") {
               const cid = data.conversation_id;

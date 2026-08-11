@@ -49,6 +49,7 @@ def parse_provider_configs(raw: str) -> tuple[ProviderConfig, ...]:
             streaming_enabled=bool(entry.get("streaming_enabled", True)),
             embedding_model=str(entry.get("embedding_model") or ""),
             embedding_dimensions=(int(entry["embedding_dimensions"]) if entry.get("embedding_dimensions") else None),
+            keep_alive=(str(entry["keep_alive"]) if entry.get("keep_alive") else None),
         )
         seen.add(provider_id)
         configs.append(config)

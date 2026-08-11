@@ -69,6 +69,12 @@ _QA_SYSTEM_INSTRUCTIONS = (
 #: passage so one long document cannot crowd out the rest).
 _MAX_SOURCE_CHARS_PER_ITEM = 2000
 
+#: Default per-generation output budget (Phase C). Fast factual QA and
+#: grounded chat rarely exceed ~300 output tokens; 512 keeps typical answers
+#: well under the CPU latency cliff while leaving headroom. Task-specific
+#: routes may raise this (e.g. drafting) — see the route construction sites.
+DEFAULT_MAX_OUTPUT_TOKENS = 512
+
 #: Honest fallback answer shared by the synchronous and streaming paths so
 #: both report exactly the same unavailability contract.
 _FALLBACK_ANSWER = (
@@ -92,6 +98,7 @@ class GroundedQAUseCase:
         permission_evaluator: PermissionEvaluator | None = None,
         annotation_service: DocumentAnnotationService | None = None,
         storage: FileStorage | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self._repository = repository
         self._retrieval = retrieval
@@ -110,6 +117,8 @@ class GroundedQAUseCase:
         # injected then).
         self._annotation_service = annotation_service
         self._storage = storage
+        # Phase C: per-prompt output budget (None -> provider config default).
+        self._max_output_tokens = max_output_tokens
 
     def execute(self, question: str, user: UniversalObject, *, conversation=None) -> QAResult:
         """Synchronous grounded QA: retrieve → context → prompt → generate → verify.
@@ -133,33 +142,37 @@ class GroundedQAUseCase:
     def stream(self, question: str, user: UniversalObject, *, conversation=None) -> Iterator[dict]:
         """Streaming grounded QA with the leak-proof honesty contract.
 
-        Tokens are buffered and flushed ONLY after a confirmed completion
-        event, so a gateway failure or an incomplete stream can never expose
-        a partial answer. A stream that ends without a completion event is a
-        generation failure: buffered tokens are discarded and the honest
-        ``available=False`` fallback is yielded — exactly the synchronous
-        contract.
+        Contract (Phase B — true streaming, grounding preserved):
 
-        Yields ``{"type": "token", "delta": str}`` (only on confirmed
-        success, in order) then exactly one
-        ``{"type": "complete", "result": QAResult}``.
+        - **token** events carry each model delta IMMEDIATELY as the gateway
+          produces it (the provider already streams from Ollama; this use
+          case no longer buffers). The UI may display them provisionally.
+        - exactly one **complete** event follows, carrying the AUTHORITATIVE
+          ``QAResult``: the full answer text, verified citations, provenance
+          and ``available``. The final answer is the completion's result —
+          provisional tokens are a preview, never treated as final.
+        - a gateway failure or a stream that ends without a completion event
+          yields a single completion with ``available=False`` (the honest
+          fallback) — partial preview tokens are clearly NOT final, and the
+          conversation persists only the verified answer (never the
+          partial text).
+
+        Citation verification stays on the completion path (it needs the
+        full answer), so token streaming is decoupled from final validation:
+        preview latency is decoupled from verification correctness.
         """
         context, citations, prompt = self._prepare(question, user, conversation)
         try:
             gateway = self._ai_core.gateway()
             gen_prompt, source_truncated = self._build_prompt(prompt, context, citations)
-            chunks: list[str] = []
             for event in gateway.stream(gen_prompt):
                 if event.kind == "token" and event.delta:
-                    # Buffer only — never emit until success is confirmed.
-                    chunks.append(event.delta)
+                    # Provisional preview — reach the browser immediately.
+                    yield {"type": "token", "delta": event.delta}
                 elif event.kind == "complete" and event.result:
-                    # Success confirmed: flush the buffered tokens, then the
-                    # verified completion. Nothing leaked — no token event
-                    # was emitted before this point.
+                    # Authoritative completion: verified citations + full
+                    # answer + provenance.
                     verified = self._verify_citations(citations, user)
-                    for chunk in chunks:
-                        yield {"type": "token", "delta": chunk}
                     yield {
                         "type": "complete",
                         "result": self._success_result(
@@ -169,7 +182,6 @@ class GroundedQAUseCase:
                     }
                     return
             # Stream ended WITHOUT a completion event → generation failure.
-            # Discard buffered tokens; yield the honest fallback.
             yield {"type": "complete", "result": self._fallback(context, prompt)}
         except Exception:  # noqa: BLE001 — streaming must degrade gracefully
             yield {"type": "complete", "result": self._fallback(context, prompt)}
@@ -215,6 +227,7 @@ class GroundedQAUseCase:
             GenerationPrompt(
                 system=prompt.system,
                 user=prompt.user + source_section,
+                max_tokens=self._max_output_tokens,
                 extra_body={"citations": [asdict(c) for c in prompt.citations]},
             ),
             source_truncated,
