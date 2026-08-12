@@ -40,6 +40,12 @@ from app.infrastructure.outbox.relay import OutboxRelay
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.persistence.document_chunk_store import SQLDocumentChunkStore
+from app.infrastructure.persistence.document_identity_store import SQLDocumentIdentityStore
+from app.application.ports.document_identity_store import DocumentIdentityStore
+from app.application.services.document_chunking import content_hash
+from app.infrastructure.search.fts import SQLFTSRepository
+from sqlalchemy.exc import OperationalError as _OperationalError
+from app.infrastructure.persistence.document_chunk_store import SQLDocumentChunkStore
 from app.application.ports.document_chunk_store import DocumentChunkStore
 from app.application.services.document_chunking import chunk_text, content_hash
 from app.infrastructure.persistence.search_mapping import (
@@ -77,6 +83,7 @@ class SearchIndexApplier:
         vector_repository: VectorRepository | None = None,
         embedder: Embedder | None = None,
         chunk_store: DocumentChunkStore | None = None,
+        identity_store: DocumentIdentityStore | None = None,
     ) -> None:
         self._session = session
         self._relay = OutboxRelay(session)
@@ -89,9 +96,21 @@ class SearchIndexApplier:
         # (one indexing pipeline). The chunk store defaults to the SQL
         # implementation, exactly like the content store.
         self._chunks: DocumentChunkStore = chunk_store or SQLDocumentChunkStore(session)
+        # P1 scale & identity: the FULL-TEXT projection and the CONTENT
+        # IDENTITY registry ride the SAME consumer (one projection
+        # lifecycle). Graceful: a database without the 0011 tables simply
+        # skips FTS/registry writes — the drain never breaks.
+        self._fts = SQLFTSRepository(session)
+        self._identity: DocumentIdentityStore = (
+            identity_store or SQLDocumentIdentityStore(session)
+        )
+        self._fts_warned: list[bool] = [False]
         # P0 observability: per-drain counters (kept OFF the return dict so
         # existing ``apply_pending() == {"applied": n}`` contracts hold).
-        self.stats = {"chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0}
+        self.stats = {
+            "chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0,
+            "fts_updated": 0, "identity_synced": 0, "duplicates": 0,
+        }
         # Sprint-5 M2 — the semantic projection rides the same drain when a
         # vector store and embedder are wired; without them the applier is
         # exactly the M1 lexical consumer.
@@ -107,7 +126,10 @@ class SearchIndexApplier:
         marked) so the failure is visible and replayable.
         """
         applied = 0
-        self.stats = {"chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0}
+        self.stats = {
+            "chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0,
+            "fts_updated": 0, "identity_synced": 0, "duplicates": 0,
+        }
         while True:
             batch = self._relay.pending(limit=_BATCH_SIZE)
             if not batch:
@@ -122,6 +144,10 @@ class SearchIndexApplier:
 
             commit_with_retry(self._session, apply_batch)
             applied += len(batch)
+        try:
+            self.stats["duplicates"] = self._identity.duplicate_count()
+        except Exception:  # noqa: BLE001 — registry missing degrades silently
+            pass
         return {"applied": applied}
 
     def _apply_event(self, event: dict) -> None:
@@ -140,6 +166,13 @@ class SearchIndexApplier:
             # stale event: every event re-derives the aggregate, and the
             # re-derivation is None for deleted objects.
             self._chunks.delete_by_document(aggregate_id)
+            # P1: FTS row and identity entry are removed with the object
+            # (idempotent). A deleted document can never reappear through
+            # the FTS/content leg — every event re-derives the aggregate.
+            self._safe_fts(lambda: self._fts.delete(aggregate_id))
+            self._safe_identity(
+                lambda: self._remove_identity(aggregate_id)
+            )
             if self._vector_repository is not None:
                 self._safe_vector(lambda: self._vector_repository.delete(aggregate_id))
         else:
@@ -148,6 +181,13 @@ class SearchIndexApplier:
             # Hash-guarded: metadata-only updates re-derive search_documents
             # but do NOT re-chunk when the normalized content hash is equal.
             self._sync_chunks(aggregate_id, document.version)
+            # P1: full-text + identity projections from the SAME derived
+            # sources (title/metadata/content/chunks). Hash-guarded
+            # upstream: unchanged content skips chunk writes; FTS rows are
+            # simply re-derived (idempotent); the registry records the
+            # content identity (content_hash — never filename/version).
+            self._sync_fts(aggregate_id, document)
+            self._sync_identity(aggregate_id)
             if self._vector_repository is not None and self._embedder is not None:
                 vector = self._embedder.embed(to_search_text(document))
                 self._safe_vector(
@@ -192,6 +232,101 @@ class SearchIndexApplier:
         if projection.get("content_hash") != h:
             self._content.set_content_hash(object_id, h)
             self.stats["content_backfilled"] += 1
+
+    def _sync_fts(self, object_id: str, document) -> None:
+        """Re-derive the FTS row for one aggregate from the projections.
+
+        ``document`` is the SearchDocument (title/metadata/version). Content
+        text comes from the content projection; chunk text from the chunk
+        store. Missing content/chunks degrade to empty strings (structured
+        objects index title+metadata only — their searchable evidence).
+        """
+        projection = self._content.get_content_projection(object_id)
+        content_text = (projection or {}).get("content_text", "") or ""
+        chunk_rows = []
+        try:
+            chunk_rows = self._chunks.by_document(object_id)
+        except Exception:  # noqa: BLE001 — chunk read must never break FTS
+            chunk_rows = []
+        chunks_text = "\n".join(row["content"] for row in chunk_rows)
+        self._safe_fts(
+            lambda: self._fts.upsert(
+                object_id=object_id,
+                object_type=document.object_type,
+                version=document.version,
+                title=document.title,
+                metadata_text=document.metadata_text,
+                content_text=content_text,
+                chunks_text=chunks_text,
+            )
+        )
+        self.stats["fts_updated"] += 1
+
+    def _sync_identity(self, object_id: str) -> None:
+        """Record the document's content identity (content_hash only).
+
+        Identity is the sha256 of the NORMALIZED extracted text — never the
+        filename and never the object version. The registry's canonical is
+        the smallest object_id among the documents sharing the hash
+        (deterministic; duplicate uploads are detected, never merged).
+        """
+        projection = self._content.get_content_projection(object_id)
+        h = (projection or {}).get("content_hash")
+        if not h:
+            return
+        self._safe_identity(
+            lambda: self._identity.sync_document(content_hash=h, object_id=object_id)
+        )
+        self.stats["identity_synced"] += 1
+
+    def _remove_identity(self, object_id: str) -> None:
+        """Remove a document's identity contribution.
+
+        Deterministic recompute of the whole registry from the remaining
+        content projections (delete-all + re-insert, canonical = smallest
+        object_id per hash) — guarantees a deleted canonical is replaced by
+        the next representative and stale entries never survive. Delete
+        frequency is low; the scan is bounded by the content-projection
+        count.
+        """
+        from app.infrastructure.db.models.document_content_model import (
+            DocumentContentModel,
+        )
+
+        rows = self._session.execute(
+            select(DocumentContentModel.object_id, DocumentContentModel.content_hash)
+        ).all()
+        self._identity.recompute(
+            [
+                {"object_id": str(oid), "content_hash": h}
+                for oid, h in rows
+            ]
+        )
+
+    def _safe_fts(self, operation) -> None:
+        """Run an FTS write without breaking the drain.
+
+        A missing FTS table (pre-0011 database, or a harness that creates
+        tables without the FTS model) degrades to the LIKE path — the
+        lexical search index remains authoritative. Logged once per process.
+        """
+        try:
+            operation()
+        except _OperationalError:
+            if not self._fts_warned[0]:
+                self._fts_warned[0] = True
+                _log.warning(
+                    "document_search_fts table missing; full-text projection "
+                    "degraded (run alembic upgrade head / init_db)."
+                )
+
+    def _safe_identity(self, operation) -> None:
+        """Run an identity-registry write without breaking the drain
+        (missing 0011 table degrades silently)."""
+        try:
+            operation()
+        except _OperationalError:
+            pass
 
     def _safe_vector(self, operation) -> None:
         """Run a semantic-store operation without breaking the drain.

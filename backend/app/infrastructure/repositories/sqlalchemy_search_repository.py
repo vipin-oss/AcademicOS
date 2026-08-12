@@ -24,11 +24,17 @@ from sqlalchemy.orm import Session
 from app.domain.repositories.search_repository import SearchRepository
 from app.domain.value_objects.search import SearchDocument
 from app.infrastructure.db.models.search_document_model import SearchDocumentModel
+from app.infrastructure.search.fts import SQLFTSRepository
 
 _LIKE_ESCAPE = "\\"
 
 #: Once-per-process guard so a missing 0009 table is logged once, not per query.
 _content_leg_warned: list[bool] = [False]
+
+#: P1 scale: hard cap on the legacy LIKE content-leg merge. A common term
+#: must never return thousands of complete document rows into the candidate
+#: set (measured: 6k docs -> 6,000 rows loaded per query).
+_CONTENT_LEG_CAP = 200
 
 
 def _escape_like(value: str) -> str:
@@ -59,6 +65,11 @@ class SQLAlchemySearchRepository(SearchRepository):
             if session.get_bind().dialect.name == "postgresql"
             else sqlite_insert
         )
+        # P1 scale: full-text search projection (dialect-aware). ``None``
+        # until the first probe; a missing FTS table degrades to the LIKE
+        # path. FTS is authoritative when available (a miss returns no
+        # candidates, never an unbounded LIKE fallback).
+        self._fts = SQLFTSRepository(session)
 
     def upsert(self, document: SearchDocument) -> None:
         """Version-aware upsert: never regress the stored projection."""
@@ -90,6 +101,22 @@ class SQLAlchemySearchRepository(SearchRepository):
         )
         self._session.execute(statement)
         self._expire_cached(document.object_id)
+
+    def _fetch_fts_documents(self, hits: list[tuple[str, float]]) -> list[SearchDocumentModel]:
+        """SearchDocument rows for FTS hits, preserving rank order.
+
+        FTS already applied exclude_types and the limit; this only maps
+        ranked object_ids back to the canonical projection rows. Ties in
+        rank keep the FTS ordering (object_id asc) — deterministic.
+        """
+        if not hits:
+            return []
+        ids = [object_id for object_id, _rank in hits]
+        rows = self._session.execute(
+            select(SearchDocumentModel).where(SearchDocumentModel.object_id.in_(ids))
+        ).scalars().all()
+        by_id = {row.object_id: row for row in rows}
+        return [by_id[oid] for oid in ids if oid in by_id]
 
     def delete(self, object_id: str) -> None:
         self._session.execute(
@@ -148,6 +175,20 @@ class SQLAlchemySearchRepository(SearchRepository):
             )
         content_hits: set[str] = set()
         if text:
+            # P1 scale: full-text search first — bounded, ranked,
+            # prefix-matched, exclude_types applied in the FTS query. When
+            # the FTS projection is available its result is authoritative
+            # (an FTS miss returns no candidates, never a LIKE fallback).
+            fts_hits = (
+                self._fts.search(text, exclude_types=exclude_types, limit=limit)
+                if self._fts.available
+                else None
+            )
+            if fts_hits is not None:
+                if not fts_hits:
+                    return []
+                rows = self._fetch_fts_documents(fts_hits)
+                return [_to_document(r) for r in rows]
             pattern = f"%{_escape_like(text.lower())}%"
             statement = statement.where(
                 or_(
@@ -176,12 +217,17 @@ class SQLAlchemySearchRepository(SearchRepository):
             )
 
             try:
+                # P1 scale bound: the legacy LIKE content leg is capped — a
+                # common term must never pull thousands of ids into the
+                # merge (applied at the SQL boundary, not a Python slice).
                 content_ids = self._session.execute(
-                    select(DocumentContentModel.object_id).where(
+                    select(DocumentContentModel.object_id)
+                    .where(
                         func.lower(DocumentContentModel.content_text).like(
                             pattern, escape=_LIKE_ESCAPE
                         )
                     )
+                    .limit(_CONTENT_LEG_CAP)
                 ).scalars().all()
             except OperationalError:
                 # A database that predates the 0009 migration (or a harness
@@ -227,4 +273,13 @@ class SQLAlchemySearchRepository(SearchRepository):
                 rows = sorted(
                     rows + list(extra), key=lambda r: r.object_id
                 )
+            # P1 scale bound: the merged candidate set is capped at the
+            # limit with deterministic ordering (title-exact first, then
+            # object_id) — the window never exceeds the caller's limit.
+            rows = sorted(
+                rows, key=lambda r: (
+                    (text is not None and r.title.lower() == text.lower()),
+                    r.object_id,
+                )
+            )[:_CONTENT_LEG_CAP if limit > _CONTENT_LEG_CAP else limit]
         return [_to_document(row) for row in rows]

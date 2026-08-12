@@ -35,6 +35,12 @@ from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType, RelationshipKind
 from app.infrastructure.db.models.document_chunk_model import DocumentChunkModel
 from app.infrastructure.db.models.document_content_model import DocumentContentModel
+from app.infrastructure.db.models.document_identity_model import DocumentIdentityModel
+from app.infrastructure.persistence.mapper import SnapshotMapper
+from app.infrastructure.persistence.search_mapping import to_search_document
+from app.infrastructure.persistence.document_identity_store import SQLDocumentIdentityStore
+from app.infrastructure.search.fts import SQLFTSRepository
+from sqlalchemy.exc import OperationalError as _OperationalError
 from app.infrastructure.extraction import build_document_parsers
 from app.application.dtos.extraction import format_of
 from app.application.dtos.document import KEY_FILE_PATH, KEY_FILE_NAME
@@ -67,6 +73,9 @@ def rebuild_document_contents(session: Session, storage: FileStorage) -> dict:
     chunked = 0
     content_rows: list[DocumentContentModel] = []
     chunk_rows: list[DocumentChunkModel] = []
+    # P1: FTS rows + identity entries derived from the SAME objects/content.
+    fts_rows: list[dict] = []
+    identity_entries: list[dict] = []
 
     for doc in documents:
         text, source_item_id = _resolve_text(repo, storage, doc)
@@ -85,6 +94,20 @@ def rebuild_document_contents(session: Session, storage: FileStorage) -> dict:
             )
         )
         indexed += 1
+        # P1: FTS row (title/metadata from the object snapshot — same
+        # derivation as the applier) and identity entry (content hash).
+        search_doc = to_search_document(SnapshotMapper.to_snapshot(doc))
+        fts_rows.append(
+            {
+                "object_id": str(doc.id),
+                "object_type": ObjectType.DOCUMENT.value,
+                "version": doc.version,
+                "title": search_doc.title,
+                "metadata_text": search_doc.metadata_text,
+                "content_text": text,
+            }
+        )
+        identity_entries.append({"object_id": str(doc.id), "content_hash": h})
         chunks = chunk_text(text)
         if not chunks:
             continue
@@ -109,16 +132,49 @@ def rebuild_document_contents(session: Session, storage: FileStorage) -> dict:
     def write() -> None:
         session.execute(delete(DocumentContentModel))
         session.execute(delete(DocumentChunkModel))
+        session.execute(delete(DocumentIdentityModel))
         for row in content_rows:
             session.add(row)
         for row in chunk_rows:
             session.add(row)
+        # P1: rebuild the identity registry in the SAME transaction
+        # (deterministic canonical = smallest object_id per content hash).
+        SQLDocumentIdentityStore(session).recompute(identity_entries)
+        # P1: rebuild the FTS projection for the documents being rebuilt —
+        # ownership-scoped (delete_many of exactly these rows, never rows
+        # owned by other objects). Graceful: a missing FTS table (pre-0011)
+        # logs once and degrades to the LIKE path.
+        try:
+            fts = SQLFTSRepository(session)
+            fts.delete_many([row["object_id"] for row in fts_rows])
+            for row in fts_rows:
+                doc_chunks = [c for c in chunk_rows if c.document_id == row["object_id"]]
+                fts.upsert(
+                    object_id=row["object_id"],
+                    object_type=row["object_type"],
+                    version=row["version"],
+                    title=row["title"],
+                    metadata_text=row["metadata_text"],
+                    content_text=row["content_text"],
+                    chunks_text="\n".join(c.content for c in doc_chunks),
+                )
+        except _OperationalError:
+            _log.warning(
+                "document_search_fts table missing; FTS rebuild degraded "
+                "(run alembic upgrade head / init_db)."
+            )
 
     commit_with_retry(session, write)
+    duplicates = sum(
+        1
+        for entries in _group_by_hash(identity_entries).values()
+        if len(entries) > 1 for oid in entries if oid != min(entries)
+    )
     return {
         "indexed": indexed,
         "skipped": skipped,
         "chunked": chunked,
+        "duplicates": duplicates,
     }
 
 
@@ -181,6 +237,16 @@ def _resolve_text(repo, storage, doc) -> tuple[str | None, str]:
     if not text:
         return None, ""
     return text, ""
+
+
+def _group_by_hash(entries):
+    from collections import defaultdict
+
+    by_hash: dict[str, list[str]] = defaultdict(list)
+    for entry in entries:
+        if entry.get("content_hash"):
+            by_hash[entry["content_hash"]].append(entry["object_id"])
+    return dict(by_hash)
 
 
 def _json_decode(raw, default):

@@ -23,6 +23,6 @@ class DocumentContentModel(Base):
     # authority (re-chunk/re-embed decision). NULL for pre-migration rows
     # until rebuild backfills it. Source-file SHA-256 (intake KEY_SHA256)
     # is a separate, complementary fact.
-    content_hash = Column(String, nullable=True)
+    content_hash = Column(String, nullable=True, index=True)
     source_item_id = Column(String, nullable=False)
     created_at = Column(String, nullable=False)

@@ -37,6 +37,9 @@ from app.infrastructure.db.models.document_content_model import (  # noqa: F401
 from app.infrastructure.db.models.document_chunk_model import (  # noqa: F401
     DocumentChunkModel,
 )
+from app.infrastructure.db.models.document_identity_model import (  # noqa: F401
+    DocumentIdentityModel,
+)
 from app.infrastructure.db.models.eval_run_model import EvalRunModel  # noqa: F401
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.models.object_relationship_model import (  # noqa: F401
@@ -53,13 +56,18 @@ from app.infrastructure.db.models.search_document_model import (  # noqa: F401
     SearchDocumentModel,
 )
 
-CURRENT_MIGRATION = "0010_document_chunks"
+CURRENT_MIGRATION = "0011_search_fts_identity"
 
 
 def main() -> None:
     url = os.environ.get("DATABASE_URL", "sqlite:///./academicos.db")
     engine = sa.create_engine(url)
     Base.metadata.create_all(engine)
+    # P1: the full-text search projection (FTS5 virtual table on SQLite;
+    # PostgreSQL gets the same schema via alembic 0011).
+    from app.infrastructure.search.fts import ensure_fts_schema
+
+    ensure_fts_schema(engine)
     with engine.begin() as conn:
         conn.execute(
             sa.text(
