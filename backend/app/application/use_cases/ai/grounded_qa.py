@@ -329,7 +329,15 @@ class GroundedQAUseCase:
         context = self._context_builder.build(
             conversation, question, retrieval_result,
         )
-        citations = self._citation_builder.build(retrieval_result.items)
+        # P1 maintenance: citations must represent SUPPORTING EVIDENCE —
+        # the search hits that reached the prompt — never every object that
+        # entered the merged candidate set. Graph-only neighbors (related-
+        # object discovery via the graph leg) remain available as unnumbered
+        # contextual information but are NOT citable. Search-hit objects
+        # (including structured objects such as events) keep their citation
+        # and metadata behavior unchanged.
+        citable = [it for it in retrieval_result.items if "search" in it.sources]
+        citations = self._citation_builder.build(citable)
         prompt = self._prompt_builder.build(question, context, citations=citations)
         return retrieval_result, context, citations, prompt
 
@@ -440,7 +448,14 @@ class GroundedQAUseCase:
             return "", False
         lines: list[str] = []
         truncated = False
-        for index, item in enumerate(context.retrieved):
+        # P1 maintenance: source blocks exist ONLY for numbered/citable items
+        # (search hits). A graph-only neighbor — even a document with text —
+        # is never rendered as SOURCE CONTENT, because it is not citable.
+        number_by_id = {c.object_id: c.number for c in citations}
+        for item in context.retrieved:
+            number = number_by_id.get(item.object_id)
+            if number is None:
+                continue
             provenance_note = ""
             text = self._chunk_evidence(item, evidence_term)
             if text is None:
@@ -453,7 +468,6 @@ class GroundedQAUseCase:
             if len(text) > _MAX_SOURCE_CHARS_PER_ITEM:
                 truncated = True
                 text = text[:_MAX_SOURCE_CHARS_PER_ITEM]
-            number = citations[index].number if index < len(citations) else index + 1
             header = f"[{number}] {item.title}"
             if provenance_note:
                 header += f" ({provenance_note})"
@@ -575,6 +589,10 @@ class GroundedQAUseCase:
         if retrieval_result is None:
             return texts
         for item in retrieval_result.items:
+            if "search" not in item.sources:
+                # P1 maintenance: identical scope to the prompt's SOURCE
+                # CONTENT — graph-only neighbors are never evidence.
+                continue
             try:
                 chunk_evidence = self._chunk_evidence(item, evidence_term)
                 text = chunk_evidence[0] if chunk_evidence else self._source_text(item)

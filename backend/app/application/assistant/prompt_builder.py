@@ -136,10 +136,16 @@ class AssistantPromptBuilder:
             sections.append("RETRIEVED KNOWLEDGE (untrusted data):\n" + "\n".join(lines))
         if context is not None and context.retrieved:
             lines = []
-            for index, item in enumerate(context.retrieved):
-                marker = ""
-                if citations and index < len(citations):
-                    marker = f"[{citations[index].number}] "
+            # P1 maintenance: citations represent SUPPORTING EVIDENCE (search
+            # hits that reached the prompt). Numbering is by object_id so an
+            # unnumbered graph-only neighbor between two search hits never
+            # shifts the markers.
+            number_by_id = (
+                {c.object_id: c.number for c in citations} if citations else {}
+            )
+            for item in context.retrieved:
+                number = number_by_id.get(item.object_id)
+                marker = f"[{number}] " if number is not None else ""
                 lines.append(
                     f"- {marker}[{item.object_type}] {item.title} "
                     f"(id={item.object_id}, source={','.join(item.sources)}, "
@@ -147,8 +153,16 @@ class AssistantPromptBuilder:
                 )
                 # P0-2: deterministic metadata evidence (same ``key: value``
                 # shape as the search projection), truncated per item so the
-                # budget guards still hold.
-                if getattr(item, "metadata_text", ""):
+                # budget guards still hold. P1 maintenance: metadata is
+                # rendered ONLY for citable search-hit items — a graph-only
+                # related object's structured metadata must not leak into
+                # the prompt as evidence (it caused internal-looking labels
+                # such as ``**Organizer**:`` in model answers).
+                if (
+                    number is not None
+                    and "search" in item.sources
+                    and getattr(item, "metadata_text", "")
+                ):
                     snippet = _truncate_metadata(item.metadata_text)
                     lines.append(f"    {snippet}")
             sections.append(
