@@ -55,6 +55,7 @@ from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
 from app.infrastructure.extraction import build_document_parsers
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+from app.application.services.document_chunking import content_hash
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -176,6 +177,7 @@ def _index_direct_upload_content(
         # Self-provenance: a direct upload has no intake item, so the row
         # records the document itself as its source (NOT NULL column).
         source_item_id=document_id,
+        content_hash=content_hash(text),
     )
     db.commit()
 

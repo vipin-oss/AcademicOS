@@ -26,7 +26,13 @@ class SQLDocumentContentStore(DocumentContentStore):
         self._session = session
 
     def upsert(
-        self, *, object_id: str, version: int, content_text: str, source_item_id: str
+        self,
+        *,
+        object_id: str,
+        version: int,
+        content_text: str,
+        source_item_id: str,
+        content_hash: str | None = None,
     ) -> None:
         row = self._session.get(DocumentContentModel, object_id)
         if row is None:
@@ -35,6 +41,7 @@ class SQLDocumentContentStore(DocumentContentStore):
                     object_id=object_id,
                     version=version,
                     content_text=content_text,
+                    content_hash=content_hash,
                     source_item_id=source_item_id,
                     created_at=_utcnow_iso(),
                 )
@@ -43,6 +50,8 @@ class SQLDocumentContentStore(DocumentContentStore):
             row.version = version
             row.content_text = content_text
             row.source_item_id = source_item_id
+            if content_hash is not None:
+                row.content_hash = content_hash
 
     def delete(self, object_id: str) -> None:
         self._session.execute(
@@ -57,3 +66,20 @@ class SQLDocumentContentStore(DocumentContentStore):
         if row is None:
             return None
         return row.content_text
+
+    def get_content_projection(self, object_id: str) -> dict | None:
+        """The content projection row (text, hash, provenance) or ``None``."""
+        row = self._session.get(DocumentContentModel, object_id)
+        if row is None:
+            return None
+        return {
+            "content_text": row.content_text,
+            "content_hash": row.content_hash,
+            "source_item_id": row.source_item_id,
+        }
+
+    def set_content_hash(self, object_id: str, content_hash: str) -> None:
+        """Backfill the normalized-content hash on an existing row."""
+        row = self._session.get(DocumentContentModel, object_id)
+        if row is not None:
+            row.content_hash = content_hash

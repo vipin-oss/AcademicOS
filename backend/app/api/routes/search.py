@@ -219,10 +219,11 @@ def sync_search_index(
 
 
 class ContentRebuildResponseModel(BaseModel):
-    """Result of the document-content projection rebuild (M27)."""
+    """Result of the document-content + chunk projection rebuild (M27+P0)."""
 
     indexed: int
     skipped: int
+    chunked: int = 0
 
 
 @router.post("/content/rebuild", response_model=ContentRebuildResponseModel)

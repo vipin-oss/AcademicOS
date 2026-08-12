@@ -43,13 +43,14 @@ class RecordingContentStore(DocumentContentStore):
         self.upserts: list[dict] = []
         self.deletes: list[str] = []
 
-    def upsert(self, *, object_id, version, content_text, source_item_id) -> None:
+    def upsert(self, *, object_id, version, content_text, source_item_id, content_hash=None) -> None:
         self.upserts.append(
             {
                 "object_id": object_id,
                 "version": version,
                 "content_text": content_text,
                 "source_item_id": source_item_id,
+                "content_hash": content_hash,
             }
         )
 
@@ -61,6 +62,22 @@ class RecordingContentStore(DocumentContentStore):
             if row["object_id"] == object_id:
                 return row["content_text"]
         return None
+
+    def get_content_projection(self, object_id) -> dict | None:
+        for row in reversed(self.upserts):
+            if row["object_id"] == object_id:
+                return {
+                    "content_text": row["content_text"],
+                    "content_hash": row.get("content_hash"),
+                    "source_item_id": row["source_item_id"],
+                }
+        return None
+
+    def set_content_hash(self, object_id, content_hash) -> None:
+        for row in reversed(self.upserts):
+            if row["object_id"] == object_id:
+                row["content_hash"] = content_hash
+                return
 
 
 def _item_with_text_key(repo, session, storage, text: str) -> UniversalObject:

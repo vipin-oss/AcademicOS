@@ -39,6 +39,9 @@ from app.infrastructure.db.models.search_document_model import SearchDocumentMod
 from app.infrastructure.outbox.relay import OutboxRelay
 from app.infrastructure.persistence.mapper import SnapshotMapper
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+from app.infrastructure.persistence.document_chunk_store import SQLDocumentChunkStore
+from app.application.ports.document_chunk_store import DocumentChunkStore
+from app.application.services.document_chunking import chunk_text, content_hash
 from app.infrastructure.persistence.search_mapping import (
     to_search_document,
     to_search_text,
@@ -73,6 +76,7 @@ class SearchIndexApplier:
         *,
         vector_repository: VectorRepository | None = None,
         embedder: Embedder | None = None,
+        chunk_store: DocumentChunkStore | None = None,
     ) -> None:
         self._session = session
         self._relay = OutboxRelay(session)
@@ -81,6 +85,13 @@ class SearchIndexApplier:
         # M27: the document-content projection rides the same consumer —
         # deletions remove the derived content row (idempotent).
         self._content = SQLDocumentContentStore(session)
+        # P0 knowledge projection — the SINGLE chunk writer is this applier
+        # (one indexing pipeline). The chunk store defaults to the SQL
+        # implementation, exactly like the content store.
+        self._chunks: DocumentChunkStore = chunk_store or SQLDocumentChunkStore(session)
+        # P0 observability: per-drain counters (kept OFF the return dict so
+        # existing ``apply_pending() == {"applied": n}`` contracts hold).
+        self.stats = {"chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0}
         # Sprint-5 M2 — the semantic projection rides the same drain when a
         # vector store and embedder are wired; without them the applier is
         # exactly the M1 lexical consumer.
@@ -96,6 +107,7 @@ class SearchIndexApplier:
         marked) so the failure is visible and replayable.
         """
         applied = 0
+        self.stats = {"chunk_created": 0, "chunk_skipped": 0, "content_backfilled": 0}
         while True:
             batch = self._relay.pending(limit=_BATCH_SIZE)
             if not batch:
@@ -122,10 +134,20 @@ class SearchIndexApplier:
             # the M27 document-content row (idempotent).
             self._index.delete(aggregate_id)
             self._content.delete(aggregate_id)
+            # P0: chunks are derived from the content projection — they are
+            # removed with it (explicit delete; FK cascade is a second net
+            # on PostgreSQL). Deleted objects can never be resurrected by a
+            # stale event: every event re-derives the aggregate, and the
+            # re-derivation is None for deleted objects.
+            self._chunks.delete_by_document(aggregate_id)
             if self._vector_repository is not None:
                 self._safe_vector(lambda: self._vector_repository.delete(aggregate_id))
         else:
             self._index.upsert(document)
+            # P0: keep the chunk projection in sync (single chunk writer).
+            # Hash-guarded: metadata-only updates re-derive search_documents
+            # but do NOT re-chunk when the normalized content hash is equal.
+            self._sync_chunks(aggregate_id, document.version)
             if self._vector_repository is not None and self._embedder is not None:
                 vector = self._embedder.embed(to_search_text(document))
                 self._safe_vector(
@@ -133,6 +155,43 @@ class SearchIndexApplier:
                         _to_vector_document(document, vector)
                     )
                 )
+
+    def _sync_chunks(self, object_id: str, version: int) -> None:
+        """Create/replace the chunk projection for one document (idempotent).
+
+        - content projection missing or empty (direct-upload crash window:
+          the outbox event can be drained before the route's second commit)
+          -> skip; NO empty/incorrect chunks are created; the rebuild
+          repairs the content row and chunks.
+        - content hash unchanged AND chunks already present -> skip
+          (metadata-only updates never re-chunk).
+        - otherwise: deterministic chunk_text over the NORMALIZED content,
+          delete-then-insert for the document in the caller's transaction,
+          and backfill the content row's hash when it was NULL/stale.
+        """
+        projection = self._content.get_content_projection(object_id)
+        if not projection or not projection.get("content_text", "").strip():
+            self.stats["chunk_skipped"] += 1
+            return
+        text = projection["content_text"]
+        h = content_hash(text)
+        if (
+            projection.get("content_hash") == h
+            and self._chunks.count(object_id) > 0
+        ):
+            self.stats["chunk_skipped"] += 1
+            return
+        chunks = chunk_text(text)
+        self._chunks.replace(
+            document_id=object_id,
+            version=version,
+            source_item_id=projection.get("source_item_id"),
+            chunks=chunks,
+        )
+        self.stats["chunk_created"] += 1
+        if projection.get("content_hash") != h:
+            self._content.set_content_hash(object_id, h)
+            self.stats["content_backfilled"] += 1
 
     def _safe_vector(self, operation) -> None:
         """Run a semantic-store operation without breaking the drain.

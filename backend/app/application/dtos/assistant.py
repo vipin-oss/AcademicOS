@@ -340,11 +340,20 @@ class RetrievedItem:
 
 @dataclass(frozen=True)
 class AssistantRetrievalResult:
-    """Merged, deduplicated, deterministically ordered retrieval."""
+    """Merged, deduplicated, deterministically ordered retrieval.
+
+    P0 evidence contract: when ``document_reference`` is set, the query
+    named a specific document (filename/title). ``document_reference_resolved``
+    is True only when that exact document survived into ``items``; the
+    evidence gate in grounded QA refuses to answer otherwise.
+    """
 
     items: tuple[RetrievedItem, ...]
     search_count: int
     graph_count: int
+    document_reference: str | None = None
+    document_reference_resolved: bool = False
+    resolved_document_id: str | None = None
 
 
 @dataclass(frozen=True)

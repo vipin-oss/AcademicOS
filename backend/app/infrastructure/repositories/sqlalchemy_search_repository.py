@@ -118,11 +118,30 @@ class SQLAlchemySearchRepository(SearchRepository):
         text: str | None = None,
         object_type: str | None = None,
         title: str | None = None,
+        filename: str | None = None,
+        exclude_types: set[str] | None = None,
         limit: int = 50,
     ) -> list[SearchDocument]:
-        statement = select(SearchDocumentModel).order_by(SearchDocumentModel.object_id)
+        """Candidate generation for one query leg.
+
+        P0 foundation:
+        - ``exclude_types`` is applied IN THE WHERE clause (never after a
+          limit), so internal/workflow objects (ai_conversation, user,
+          intake_item, intake_session) can never consume the candidate
+          window and starve real evidence.
+        - ordering is relevance-based, never the arbitrary ``object_id``:
+          an EXACT title match ranks first, then title/metadata LIKE
+          matches (object_id only as a deterministic tie-break).
+        - ``filename`` performs an exact filename lookup against the
+          ``file_name:`` metadata entry (document-reference resolution).
+        """
+        statement = select(SearchDocumentModel)
         if object_type:
             statement = statement.where(SearchDocumentModel.object_type == object_type)
+        if exclude_types:
+            statement = statement.where(
+                SearchDocumentModel.object_type.notin_(sorted(exclude_types))
+            )
         if title:
             statement = statement.where(
                 func.lower(SearchDocumentModel.title) == title.lower()
@@ -139,6 +158,13 @@ class SQLAlchemySearchRepository(SearchRepository):
                         pattern, escape=_LIKE_ESCAPE
                     ),
                 )
+            )
+            # P0: relevance ordering — exact title match first (a user
+            # naming an object/file must get it first), then deterministic
+            # object_id tie-break. No arbitrary ordering can decide top-k.
+            statement = statement.order_by(
+                (func.lower(SearchDocumentModel.title) == text.lower()).desc(),
+                SearchDocumentModel.object_id,
             )
             # M27: the document-content projection leg. Extracted text lives
             # in document_contents (a derived projection written at intake
@@ -171,6 +197,19 @@ class SQLAlchemySearchRepository(SearchRepository):
                     )
                 content_ids = ()
             content_hits = {str(cid) for cid in content_ids}
+        if filename:
+            # Exact filename lookup (document-reference intent): the upload
+            # stores the original file name in the ``file_name:`` metadata
+            # entry; match it literally (normalised case), never fuzzily.
+            fpat = f"%{_escape_like(filename.lower())}%"
+            statement = statement.where(
+                func.lower(SearchDocumentModel.metadata_text).like(
+                    fpat, escape=_LIKE_ESCAPE
+                )
+            )
+            statement = statement.order_by(SearchDocumentModel.object_id)
+        if not text and not filename:
+            statement = statement.order_by(SearchDocumentModel.object_id)
         statement = statement.limit(limit)
         rows = list(self._session.execute(statement).scalars().all())
         if content_hits:

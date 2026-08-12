@@ -54,7 +54,7 @@ class _FakeSearch:
         self.hits_by_text = hits_by_text
         self.calls: list[tuple] = []
 
-    def execute(self, *, user, text, object_type=None, limit=8):
+    def execute(self, *, user, text, object_type=None, exclude_types=None, limit=8):
         self.calls.append((text, object_type))
         # object_type-aware lookup, mirroring the real SQL filter.
         return self.hits_by_text.get((text, object_type), self.hits_by_text.get(text, []))

@@ -66,19 +66,24 @@ class SearchObjectsUseCase:
         text: str | None = None,
         object_type: str | None = None,
         title: str | None = None,
+        filename: str | None = None,
+        exclude_types: set[str] | None = None,
         limit: int = 50,
     ) -> list[SearchHit]:
         text = text.strip() if text else None
         title = title.strip() if title else None
+        filename = filename.strip() if filename else None
         object_type = object_type.strip() if object_type else None
-        if text is None and title is None and object_type is None:
+        if text is None and title is None and object_type is None and filename is None:
             raise ValidationError("At least one search criterion is required.")
 
         lexical = self._search_repository.search(
-            text=text, object_type=object_type, title=title, limit=limit
+            text=text, object_type=object_type, title=title, filename=filename,
+            exclude_types=exclude_types, limit=limit,
         )
         semantic = self._semantic_candidates(
-            text=text, object_type=object_type, title=title, limit=limit
+            text=text, object_type=object_type, title=title, limit=limit,
+            exclude_types=exclude_types,
         )
         hits = _fuse(lexical, semantic, limit=limit)
         if not hits:
@@ -115,6 +120,7 @@ class SearchObjectsUseCase:
         object_type: str | None,
         title: str | None,
         limit: int,
+        exclude_types: set[str] | None = None,
     ) -> list:
         """Nearest neighbours for a free-text query, or ``[]`` when the
         semantic layer is unavailable (graceful degradation to M1)."""
@@ -138,6 +144,8 @@ class SearchObjectsUseCase:
             candidates = [c for c in candidates if c.object_type == object_type]
         if title:
             candidates = [c for c in candidates if c.title.lower() == title.lower()]
+        if exclude_types:
+            candidates = [c for c in candidates if c.object_type not in exclude_types]
         return candidates
 
 

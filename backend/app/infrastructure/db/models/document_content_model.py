@@ -19,5 +19,10 @@ class DocumentContentModel(Base):
     object_id = Column(String, primary_key=True)
     version = Column(Integer, nullable=False)
     content_text = Column(Text, nullable=False)
+    # P0: sha256 of the NORMALIZED extracted text — the content-change
+    # authority (re-chunk/re-embed decision). NULL for pre-migration rows
+    # until rebuild backfills it. Source-file SHA-256 (intake KEY_SHA256)
+    # is a separate, complementary fact.
+    content_hash = Column(String, nullable=True)
     source_item_id = Column(String, nullable=False)
     created_at = Column(String, nullable=False)

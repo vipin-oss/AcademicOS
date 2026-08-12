@@ -44,6 +44,7 @@ from app.application.exceptions import (
     ValidationError,
 )
 from app.application.ports.document_content_store import DocumentContentStore
+from app.application.services.document_chunking import content_hash
 from app.application.ports.file_storage import FileStorage
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.validators.document import DOCUMENT_TYPES
@@ -185,6 +186,7 @@ class CommitItemUseCase:
                         version=document.version,
                         content_text=text,
                         source_item_id=str(item.id),
+                        content_hash=content_hash(text),
                     )
 
         # --- mark committed (idempotent terminal state) ---------------------
