@@ -80,6 +80,7 @@ from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+from app.infrastructure.persistence.document_chunk_store import SQLDocumentChunkStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
@@ -416,6 +417,7 @@ def grounded_qa(
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
+        chunk_store=SQLDocumentChunkStore(db),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -454,6 +456,7 @@ def grounded_qa_stream(
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
+        chunk_store=SQLDocumentChunkStore(db),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -589,6 +592,7 @@ def _build_chat_use_case(core, db, repo, storage):
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
+        chunk_store=SQLDocumentChunkStore(db),
         storage=storage,
         max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     )
@@ -799,6 +803,7 @@ def _build_assistant_use_case(core, db, repo, storage, role: DomainAssistantRole
         citation_builder=CitationBuilder(),
         verifier=AnswerVerifier(ObjectPermissionEvaluator()),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
+        chunk_store=SQLDocumentChunkStore(db),
         storage=storage,
         max_output_tokens=drafting_budget,
     )
@@ -964,6 +969,7 @@ def ai_handoff(
         repo, retrieval, core,
         citation_builder=CitationBuilder(),
         annotation_service=DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)),
+        chunk_store=SQLDocumentChunkStore(db),
         storage=storage,
     )
     use_case = HandoffUseCase(grounded)

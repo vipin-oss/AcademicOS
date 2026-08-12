@@ -396,6 +396,15 @@ class QAResult:
     token_usage_estimated: bool = True
     latency_ms: int = 0
     confidence: str = ""
+    # Evidence contract (P0, reconciled): whether the generated claims are
+    # supported by the cited evidence. ``None`` = not evaluated (no evidence
+    # available); ``False`` = unsupported (the answer was refused in
+    # extraction mode, or flagged in general mode). ``claim_mode`` records
+    # the verification mode; ``claim_coverage`` the deterministic
+    # content-token coverage in general mode.
+    claim_supported: bool | None = None
+    claim_mode: str = ""
+    claim_coverage: float | None = None
 
     def __post_init__(self) -> None:
         if self.retrieved_count < 0:
@@ -631,6 +640,9 @@ def qa_result_dict(result: QAResult) -> dict:
         "token_usage_estimated": result.token_usage_estimated,
         "latency_ms": result.latency_ms,
         "confidence": result.confidence,
+        "claim_supported": result.claim_supported,
+        "claim_mode": result.claim_mode,
+        "claim_coverage": result.claim_coverage,
     }
 
 
