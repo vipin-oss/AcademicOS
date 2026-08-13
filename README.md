@@ -7,13 +7,18 @@ grounded AI assistant.
 
 ## Release status
 
-**Active branch: `feature/m11-ai-workspace` (HEAD `26c5f80`+)** — M1–M25
-delivered: object-centric knowledge graph, documents + intake with human
-review, ERP modules (students, teaching, research, grants, publications,
-faculty, committees, finance, events, reports, productivity, settings),
-global hybrid search, and the AI layer (AI Core, grounded QA, chat,
-summarization, enrichment, related documents, external handoff, and the
-M21–M25 domain assistants).
+**Active branch: `feature/ai-knowledge-projection-p0` (frozen baseline
+`07c434cad05ae87db741c191cc914625801147ea`).** Architecture is frozen at
+**L0** — see [`docs/architecture/`](docs/architecture/) (Part 13 Freeze
+Contract, level register, ADR-019…022, capability evaluation). Do not add
+regexes, intents, or answer builders for failed questions.
+
+M1–M25 delivered: object-centric knowledge graph, documents + intake with
+human review, ERP modules (students, teaching, research, grants,
+publications, faculty, committees, finance, events, reports, productivity,
+settings), global hybrid search, and the AI layer (AI Core, grounded QA,
+chat, summarization, enrichment, related documents, external handoff, and
+the M21–M25 domain assistants).
 
 Status legend used throughout this repository:
 

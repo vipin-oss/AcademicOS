@@ -1,3 +1,28 @@
+# AcademicOS — L0 Changelog (Architecture Freeze + Evaluation Foundation)
+
+Release: **L0** · Baseline `07c434cad05ae87db741c191cc914625801147ea` · Date: 2026-08-13
+Status: **architecture freeze + capability evaluation foundation. No runtime AI behavior change.**
+
+## What & why
+
+The Final Audit & Freeze Contract (Part 13) is now the in-repo architectural
+authority. L0 records the freeze, the ADR-019…022 laws, the 1M scale doctrine,
+a capability-level evaluation catalog (data + harness, not routing), and
+anti-patch ceilings so `rules-v1` / regex / `retrieval_plan` cannot grow.
+
+## Not changed
+
+`rules-v1` behavior · intent parser logic · retrieval plan logic · grounded QA
+· claim store (none) · PDF/OCR · planner · frontend · migrations ·
+dependencies.
+
+## Verification
+
+See the L0 implementation report. Baseline suites must remain green
+(1864 passed / 2 skipped backend; 101 frontend; tsc clean) plus new L0 tests.
+
+---
+
 # AcademicOS — Sprint M16.1 Changelog (Local/Free AI Verification + Documentation)
 
 Release: **M16.1** · Baseline `cda5f58` (M16) · Commit `801941a` · Date: 2026-08-08

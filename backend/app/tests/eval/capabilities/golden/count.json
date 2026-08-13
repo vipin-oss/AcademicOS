@@ -1,0 +1,50 @@
+{
+  "capability_id": "count",
+  "cases": [
+    {
+      "case_id": "count.en.how-many-pubs",
+      "language": "en",
+      "question": "How many publications do I have?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "count.en.number-of-grants",
+      "language": "en",
+      "question": "What is the number of research grants?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "count.hi-en.kitni-publications",
+      "language": "hi-en",
+      "question": "meri publications kitni hain?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "count.en.total-events",
+      "language": "en",
+      "question": "Count the events I attended.",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "count.hi-en.kitne-projects",
+      "language": "hi-en",
+      "question": "active projects kitne hain?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

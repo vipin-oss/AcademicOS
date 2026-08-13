@@ -1,5 +1,10 @@
 """Deterministic intent parser for the Academic Intelligence Assistant.
 
+LEGACY / TRANSITIONAL (L0 freeze). Frozen at L0. Do not add patterns,
+rules, or intents. Scheduled for deletion at L4 cutover (ADR-020). New
+natural-language formulations belong in
+``tests/eval/capabilities/golden/``, not here.
+
 Version 1 is entirely local: an ordered rule table of compiled regular
 expressions over the normalized question. No probability, no external calls —
 which is exactly what makes the module unit-testable end to end. The parser

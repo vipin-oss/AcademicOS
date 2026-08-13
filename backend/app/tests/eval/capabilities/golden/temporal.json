@@ -1,0 +1,50 @@
+{
+  "capability_id": "temporal",
+  "cases": [
+    {
+      "case_id": "temporal.en.this-year",
+      "language": "en",
+      "question": "What did I publish this year?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "temporal.en.after-2023",
+      "language": "en",
+      "question": "Events I attended after 2023.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "temporal.hi-en.is-saal-kya",
+      "language": "hi-en",
+      "question": "is saal maine kya publish kiya?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "temporal.en.as-of",
+      "language": "en",
+      "question": "As of March 2024, what was the sanctioned amount?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "temporal.hi-en.2023-ke-baad",
+      "language": "hi-en",
+      "question": "2023 ke baad ke events kaunse hain?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

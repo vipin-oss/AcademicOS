@@ -1,0 +1,50 @@
+{
+  "capability_id": "lookup",
+  "cases": [
+    {
+      "case_id": "lookup.en.fetch-grant",
+      "language": "en",
+      "question": "Look up grant G-2024-011.",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "lookup.en.by-id",
+      "language": "en",
+      "question": "Fetch the publication with title Quantum Dots Review.",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "lookup.hi-en.grant-dikhao",
+      "language": "hi-en",
+      "question": "G-2024-011 grant dikhao.",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "lookup.en.who-is-pi",
+      "language": "en",
+      "question": "Who is the PI of the HSRF project?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "lookup.hi-en.kaun-pi",
+      "language": "hi-en",
+      "question": "HSRF project ka PI kaun hai?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

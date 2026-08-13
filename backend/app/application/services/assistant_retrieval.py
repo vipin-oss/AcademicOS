@@ -1,5 +1,11 @@
 """Assistant Retrieval Service (Sprint-6 M1).
 
+LEGACY / TRANSITIONAL (L0 freeze). ``retrieval_plan`` tables (stopwords,
+domain nouns, topic markers, type-count markers, capitalized-common
+words, document-ref regexes) are frozen. Question-specific vocabulary
+changes are L0 violations. New language belongs in capability golden
+sets, not here.
+
 Pure application service — no prompt construction, no provider calls, no
 streaming. It composes the TWO existing retrieval engines, both already
 permission-filtered through the SAME R4 evaluator:

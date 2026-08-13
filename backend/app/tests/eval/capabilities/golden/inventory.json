@@ -1,0 +1,63 @@
+{
+  "capability_id": "inventory",
+  "cases": [
+    {
+      "case_id": "inventory.en.available-data",
+      "language": "en",
+      "question": "What data is available in my system?",
+      "checks": {
+        "output_kind": "inventory",
+        "must_not_require_named_document": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "inventory.hi-en.kaunsa-data",
+      "language": "hi-en",
+      "question": "mere system mein kaunsa data available hai?",
+      "checks": {
+        "output_kind": "inventory",
+        "must_not_require_named_document": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "inventory.en.kinds-of-knowledge",
+      "language": "en",
+      "question": "What kinds of knowledge can you search?",
+      "checks": {
+        "output_kind": "inventory",
+        "must_not_require_named_document": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "inventory.en.list-domains",
+      "language": "en",
+      "question": "List the domains you know about.",
+      "checks": {
+        "output_kind": "inventory"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "inventory.hi-en.kya-kya-hai",
+      "language": "hi-en",
+      "question": "system me kya kya hai?",
+      "checks": {
+        "output_kind": "inventory",
+        "must_not_require_named_document": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "inventory.en.what-can-i-query",
+      "language": "en",
+      "question": "What can I query in AcademicOS?",
+      "checks": {
+        "output_kind": "inventory"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

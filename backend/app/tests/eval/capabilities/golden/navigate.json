@@ -1,0 +1,50 @@
+{
+  "capability_id": "navigate",
+  "cases": [
+    {
+      "case_id": "navigate.en.open-grants",
+      "language": "en",
+      "question": "Take me to research grants.",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "navigate.en.where-budget",
+      "language": "en",
+      "question": "Where do I see remaining budget?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "navigate.hi-en.grants-kahan",
+      "language": "hi-en",
+      "question": "research grants kahan kholen?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "navigate.en.go-to-minutes",
+      "language": "en",
+      "question": "Navigate to committee meetings.",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "navigate.hi-en.budget-kahan",
+      "language": "hi-en",
+      "question": "remaining budget kahan dikhega?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

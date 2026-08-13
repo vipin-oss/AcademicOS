@@ -1,5 +1,10 @@
 """Rule-based assistant provider — the V1 adapter of the AssistantProvider port.
 
+LEGACY / TRANSITIONAL (L0 freeze). ``rules-v1`` and its ``_answer_*``
+builders are frozen. Do not add builders. Not the target architecture.
+Deleted at L4 (ADR-020). New capabilities go in
+``application/capabilities/registry.py``.
+
 Entirely local and deterministic: the intent parser routes the question to a
 builder, and every builder is a READ-ONLY composition over the frozen modules'
 own computations — ``ProductivitySnapshot`` + ``build_calendar_feed`` /

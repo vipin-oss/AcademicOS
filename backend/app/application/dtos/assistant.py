@@ -1,5 +1,9 @@
 """DTOs for the Academic Intelligence Assistant module.
 
+LEGACY / TRANSITIONAL (L0 freeze). The ``INTENT_*`` catalogue is
+transitional. Do not add intent codes. New capabilities go in
+``application/capabilities/registry.py``.
+
 Mirrors ``dtos/settings.py`` / ``dtos/productivity.py``: option catalogues as
 tuples, per-operation input dataclasses (``None`` = untouched), and outputs.
 Conversations are ``ObjectType.AI_CONVERSATION`` objects; messages live inside

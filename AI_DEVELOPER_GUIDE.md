@@ -4,6 +4,19 @@ How the AI Core works and how to extend it. The core contract:
 **adding a new provider (or a new AI capability) requires implementing an
 adapter — nothing else in the system changes.**
 
+## L0 — frozen architecture (read this first)
+
+The architectural contract lives in
+[`docs/architecture/`](docs/architecture/) (Freeze Contract Part 13).
+
+- A failed user question is diagnosed at the **capability** level.
+  Add a phrasing under `backend/app/tests/eval/capabilities/golden/`.
+- **Do not** add a regex, `INTENT_*`, `_answer_*` builder, or
+  `retrieval_plan` special case.
+- `rules-v1` is legacy: frozen, not the target, deleted at L4 (ADR-020).
+- Run `python scripts/eval_capabilities.py --check` from `backend/` to
+  validate the capability catalog (no model required).
+
 ---
 
 ## 1. The architecture in one picture

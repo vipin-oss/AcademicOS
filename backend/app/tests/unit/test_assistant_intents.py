@@ -1,5 +1,9 @@
 """Unit tests for the assistant's deterministic intent parser (no DB).
 
+LEGACY / TRANSITIONAL (L0 freeze). Do not grow ``ROUTING_CASES`` or
+``PRECEDENCE_CASES``. New language belongs in
+``tests/eval/capabilities/golden/``.
+
 The parser is the module's routing layer: an ordered rule table over the
 normalized question. These batteries pin (a) every intent's positive cases,
 (b) shadow-precedence pairs (the ordering IS the semantics), and (c) the

@@ -1,5 +1,9 @@
 """Focused tests: multi-signal retrieval plan (evidence-based fix).
 
+LEGACY / TRANSITIONAL (L0 freeze). Do not add phrase cases to fix a user
+question. New formulations are capability golden data, not retrieval
+routing tests.
+
 Covers the representative queries from the second forensic analysis:
 - type/count questions resolve to object_type-scoped search
 - proper nouns (CBLU) are preserved as the retrieval entity
