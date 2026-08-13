@@ -60,8 +60,11 @@ from app.infrastructure.db.models.review_decision_model import (  # noqa: F401
 from app.infrastructure.db.models.search_document_model import (  # noqa: F401
     SearchDocumentModel,
 )
+from app.infrastructure.db.models.tool_call_log_model import (  # noqa: F401
+    ToolCallLogModel,
+)
 
-CURRENT_MIGRATION = "0013_claim_cdm_decisions"
+CURRENT_MIGRATION = "0014_tool_call_log"
 
 
 def main() -> None:

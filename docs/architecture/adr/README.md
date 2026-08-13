@@ -21,6 +21,8 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-022 | API / OpenAPI contract freeze for new surfaces | [ADR-022](ADR-022-api-contract-freeze.md) (L0) | L1 |
 | ADR-035 | Model-driven query-understanding planner | [ADR-035](ADR-035-query-understanding-planner.md) (L4) | L4 |
 | ADR-036 | Frozen deterministic fast-path | [ADR-036](ADR-036-frozen-fast-path.md) (L4) | L4 |
+| ADR-037 | Tool registry & execution | [ADR-037](ADR-037-tool-registry-execution.md) (L5) | L5 |
+| ADR-038 | Tool evaluation gate | [ADR-038](ADR-038-tool-evaluation-gate.md) (L5) | L5 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

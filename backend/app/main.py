@@ -36,6 +36,7 @@ from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
+from app.api.routes.tools import router as tools_router
 from app.application.use_cases.auth.helpers import bootstrap_admin
 from app.core.config import settings
 from app.core.exceptions import AcademicosError
@@ -131,6 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(cdm_router, prefix=settings.api_v1_prefix)
     app.include_router(confirmations_router, prefix=settings.api_v1_prefix)
     app.include_router(plans_router, prefix=settings.api_v1_prefix)
+    app.include_router(tools_router, prefix=settings.api_v1_prefix)
     return app
 
 
