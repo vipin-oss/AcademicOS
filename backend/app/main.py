@@ -14,7 +14,10 @@ from fastapi.responses import JSONResponse
 from app.api.routes.ai import router as ai_router
 from app.api.routes.assistant import router as assistant_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.cdm import router as cdm_router
+from app.api.routes.claims import router as claims_router
 from app.api.routes.committees import router as committees_router
+from app.api.routes.confirmations import router as confirmations_router
 from app.api.routes.document_viewer import router as document_viewer_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.eval_history import router as eval_history_router
@@ -122,6 +125,10 @@ def create_app() -> FastAPI:
     app.include_router(intake_router, prefix=settings.api_v1_prefix)
     app.include_router(search_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
+    # L1 knowledge-plane surfaces (ADR-022 OpenAPI contracts).
+    app.include_router(claims_router, prefix=settings.api_v1_prefix)
+    app.include_router(cdm_router, prefix=settings.api_v1_prefix)
+    app.include_router(confirmations_router, prefix=settings.api_v1_prefix)
     return app
 
 

@@ -96,3 +96,47 @@ class ObjectDeleted(DomainEvent):
 class ObjectSuperseded(DomainEvent):
     by_object_id: ObjectId | None = None
     actor: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# L1 knowledge-plane events (ADR-002 / ADR-021 / ADR-009).
+# These ride the same durable outbox relay as the object events and are
+# projected by the single index consumer. They are additive; the object
+# events above are unchanged.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ClaimProposed(DomainEvent):
+    claim_id: str | None = None
+    predicate_id: str | None = None
+    source_document_id: str | None = None
+    status: str | None = None
+
+
+@dataclass(frozen=True)
+class ClaimStatusChanged(DomainEvent):
+    claim_id: str | None = None
+    old_status: str | None = None
+    new_status: str | None = None
+    reviewer: str | None = None
+
+
+@dataclass(frozen=True)
+class CdmBlockWritten(DomainEvent):
+    document_id: str | None = None
+    version: int | None = None
+    block_type: str | None = None
+    block_count: int | None = None
+
+
+@dataclass(frozen=True)
+class AclScopeChanged(DomainEvent):
+    scope: str | None = None
+
+
+@dataclass(frozen=True)
+class SourceRegistered(DomainEvent):
+    source_id: str | None = None
+    media_kind: str | None = None
+    container_source_id: str | None = None

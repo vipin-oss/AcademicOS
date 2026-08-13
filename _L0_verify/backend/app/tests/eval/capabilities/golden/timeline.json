@@ -1,0 +1,50 @@
+{
+  "capability_id": "timeline",
+  "cases": [
+    {
+      "case_id": "timeline.en.project-timeline",
+      "language": "en",
+      "question": "Show the HSRF project timeline.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "timeline.en.publication-dates",
+      "language": "en",
+      "question": "Timeline of my publications.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "timeline.hi-en.timeline-do",
+      "language": "hi-en",
+      "question": "HSRF project ki timeline do.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "timeline.en.committee-history",
+      "language": "en",
+      "question": "Order the committee decisions by date.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "timeline.hi-en.kab-kab",
+      "language": "hi-en",
+      "question": "meri publications kab kab hui, timeline mein batao.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

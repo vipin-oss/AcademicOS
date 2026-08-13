@@ -1,0 +1,50 @@
+{
+  "capability_id": "summarize",
+  "cases": [
+    {
+      "case_id": "summarize.en.summarize-report",
+      "language": "en",
+      "question": "Summarize the publications report.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "summarize.en.summarize-project",
+      "language": "en",
+      "question": "Give a summary of the HSRF project.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "summarize.hi-en.summary-do",
+      "language": "hi-en",
+      "question": "HSRF project ka summary do.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "summarize.en.condense-minutes",
+      "language": "en",
+      "question": "Summarize the latest committee minutes.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "summarize.hi-en.report-samjhhao",
+      "language": "hi-en",
+      "question": "publications report ko short mein samjhao.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

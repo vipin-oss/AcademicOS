@@ -1,0 +1,50 @@
+{
+  "capability_id": "aggregate",
+  "cases": [
+    {
+      "case_id": "aggregate.en.total-sanctioned",
+      "language": "en",
+      "question": "What is the total sanctioned amount across grants?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "aggregate.en.sum-budget",
+      "language": "en",
+      "question": "Aggregate remaining budget by funding agency.",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "aggregate.hi-en.kul-amount",
+      "language": "hi-en",
+      "question": "saari grants ka kul sanctioned amount kitna hai?",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "aggregate.en.avg-attendance",
+      "language": "en",
+      "question": "Average attendance across my classes.",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "aggregate.hi-en.total-budget",
+      "language": "hi-en",
+      "question": "total remaining budget batao.",
+      "checks": {
+        "output_kind": "count"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

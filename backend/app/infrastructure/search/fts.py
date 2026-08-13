@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS document_search_fts (
     metadata_text TEXT NOT NULL DEFAULT '',
     content_text TEXT NOT NULL DEFAULT '',
     chunks_text TEXT NOT NULL DEFAULT '',
+    acl_scope VARCHAR,
     search_vector tsvector GENERATED ALWAYS AS (
         to_tsvector(
             'simple',
@@ -65,7 +66,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS document_search_fts USING fts5(
     title,
     metadata_text,
     content_text,
-    chunks_text
+    chunks_text,
+    acl_scope UNINDEXED
 );
 """
 
@@ -132,6 +134,7 @@ class SQLFTSRepository:
         metadata_text: str,
         content_text: str,
         chunks_text: str,
+        acl_scope: str | None = None,
     ) -> None:
         """Insert/replace one FTS row (idempotent; caller owns the tx)."""
         if self._session.get_bind().dialect.name == "postgresql":
@@ -140,21 +143,22 @@ class SQLFTSRepository:
                     f"""
                     INSERT INTO {FTS_TABLE}
                         (object_id, object_type, version, title, metadata_text,
-                         content_text, chunks_text)
-                    VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks)
+                         content_text, chunks_text, acl_scope)
+                    VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, :acl)
                     ON CONFLICT (object_id) DO UPDATE SET
                         object_type = EXCLUDED.object_type,
                         version = EXCLUDED.version,
                         title = EXCLUDED.title,
                         metadata_text = EXCLUDED.metadata_text,
                         content_text = EXCLUDED.content_text,
-                        chunks_text = EXCLUDED.chunks_text
+                        chunks_text = EXCLUDED.chunks_text,
+                        acl_scope = EXCLUDED.acl_scope
                     """
                 ),
                 {
                     "oid": object_id, "otype": object_type, "ver": version,
                     "title": title, "meta": metadata_text,
-                    "content": content_text, "chunks": chunks_text,
+                    "content": content_text, "chunks": chunks_text, "acl": acl_scope,
                 },
             )
         else:
@@ -167,13 +171,13 @@ class SQLFTSRepository:
                 text(
                     f"INSERT INTO {FTS_TABLE} "
                     "(object_id, object_type, version, title, metadata_text, "
-                    "content_text, chunks_text) "
-                    "VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks)"
+                    "content_text, chunks_text, acl_scope) "
+                    "VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, :acl)"
                 ),
                 {
                     "oid": object_id, "otype": object_type, "ver": version,
                     "title": title, "meta": metadata_text,
-                    "content": content_text, "chunks": chunks_text,
+                    "content": content_text, "chunks": chunks_text, "acl": acl_scope,
                 },
             )
 

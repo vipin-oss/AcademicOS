@@ -26,3 +26,5 @@ class DocumentContentModel(Base):
     content_hash = Column(String, nullable=True, index=True)
     source_item_id = Column(String, nullable=False)
     created_at = Column(String, nullable=False)
+    # L1 / ADR-009: derived rows carry the source ACL scope.
+    acl_scope = Column(String, nullable=True, index=True)

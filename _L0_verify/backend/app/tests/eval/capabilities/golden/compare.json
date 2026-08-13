@@ -1,0 +1,50 @@
+{
+  "capability_id": "compare",
+  "cases": [
+    {
+      "case_id": "compare.en.compare-years",
+      "language": "en",
+      "question": "Compare this year's publications with last year.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "compare.en.compare-grants",
+      "language": "en",
+      "question": "Compare the HSRF and DST grants.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "compare.hi-en.compare-projects",
+      "language": "hi-en",
+      "question": "HSRF aur DST grants compare karo.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "compare.en.compare-docs",
+      "language": "en",
+      "question": "Compare the two sanction letters.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "compare.hi-en.donon-saal",
+      "language": "hi-en",
+      "question": "is saal aur pichhle saal ki publications mein farak kya hai?",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

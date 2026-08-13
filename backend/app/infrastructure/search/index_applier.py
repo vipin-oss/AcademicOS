@@ -57,6 +57,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
     commit_with_retry,
 )
+from app.infrastructure.persistence.acl_scope_propagator import AclScopePropagator
 from app.infrastructure.repositories.sqlalchemy_search_repository import (
     SQLAlchemySearchRepository,
 )
@@ -188,6 +189,10 @@ class SearchIndexApplier:
             # content identity (content_hash — never filename/version).
             self._sync_fts(aggregate_id, document)
             self._sync_identity(aggregate_id)
+            # L1 / ADR-009: stamp the source ACL scope onto every derived
+            # row for this aggregate (search/content/chunks/FTS/claims/cdm),
+            # so retrieval/evidence can pre-filter without an object lookup.
+            self._propagate_acl(aggregate_id)
             if self._vector_repository is not None and self._embedder is not None:
                 vector = self._embedder.embed(to_search_text(document))
                 self._safe_vector(
@@ -261,6 +266,24 @@ class SearchIndexApplier:
             )
         )
         self.stats["fts_updated"] += 1
+
+    def _propagate_acl(self, object_id: str) -> None:
+        """Stamp acl_scope on every derived row of one aggregate (ADR-009).
+
+        Loads the authoritative object (the single source of its ACL) and
+        propagates its scope to the derived projections. Best-effort: a
+        missing object is skipped; the FTS leg degrades silently.
+        """
+        try:
+            obj = self._objects.get_by_id(ObjectId.parse(object_id))
+        except Exception:  # noqa: BLE001 — never let ACL stamping break a drain
+            return
+        if obj is None:
+            return
+        try:
+            AclScopePropagator(self._session).propagate(obj)
+        except Exception:  # noqa: BLE001 — never let ACL stamping break a drain
+            _log.warning("ACL scope propagation failed for %r", object_id, exc_info=True)
 
     def _sync_identity(self, object_id: str) -> None:
         """Record the document's content identity (content_hash only).

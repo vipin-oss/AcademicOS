@@ -1,0 +1,50 @@
+{
+  "capability_id": "cross_domain",
+  "cases": [
+    {
+      "case_id": "cross_domain.en.docs-and-pubs",
+      "language": "en",
+      "question": "Summarize HSRF project documents and publications together.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "cross_domain.en.teaching-and-research",
+      "language": "en",
+      "question": "How do my teaching load and research grants overlap this year?",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "cross_domain.hi-en.docs-aur-pubs",
+      "language": "hi-en",
+      "question": "mere HSRF project ke documents aur publications ka summary do.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "cross_domain.en.budget-and-outputs",
+      "language": "en",
+      "question": "Relate remaining grant budget to publications this year.",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "cross_domain.hi-en.donon-domain",
+      "language": "hi-en",
+      "question": "teaching aur research dono mila ke is saal kya scene hai?",
+      "checks": {
+        "output_kind": "summary"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

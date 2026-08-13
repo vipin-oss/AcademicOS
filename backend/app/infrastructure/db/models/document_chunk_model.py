@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from sqlalchemy import Column, Integer, String, Text
 
+from app.infrastructure.db.types import JSONBType
+
 from app.infrastructure.db.models.object_model import Base
 
 
@@ -29,3 +31,11 @@ class DocumentChunkModel(Base):
     version = Column(Integer, nullable=False)
     source_item_id = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
+    # L1 polymorphic span anchors (ADR-003): ``page`` for paged sources and a
+    # generic region payload (bbox / cell / equation ...) for non-paged ones.
+    # These are source-local anchors, never the universal model — a chunk may
+    # belong to a page, a slide, a cell range, or a raw region.
+    page = Column(Integer, nullable=True)
+    region_json = Column(JSONBType, nullable=True)
+    # ADR-009: every derived artifact carries the source's ACL scope.
+    acl_scope = Column(String, nullable=True, index=True)

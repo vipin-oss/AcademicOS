@@ -1,0 +1,55 @@
+{
+  "capability_id": "clarify",
+  "cases": [
+    {
+      "case_id": "clarify.en.which-hsrf",
+      "language": "en",
+      "question": "Tell me about HSRF.",
+      "checks": {
+        "output_kind": "clarification",
+        "clarify_expected": true
+      },
+      "gate_level": "l4"
+    },
+    {
+      "case_id": "clarify.en.which-letter",
+      "language": "en",
+      "question": "What does the letter say?",
+      "checks": {
+        "output_kind": "clarification",
+        "clarify_expected": true
+      },
+      "gate_level": "l4"
+    },
+    {
+      "case_id": "clarify.hi-en.kaunsa-hsrf",
+      "language": "hi-en",
+      "question": "HSRF ke baare mein batao.",
+      "checks": {
+        "output_kind": "clarification",
+        "clarify_expected": true
+      },
+      "gate_level": "l4"
+    },
+    {
+      "case_id": "clarify.en.ambiguous-grant",
+      "language": "en",
+      "question": "How much was sanctioned?",
+      "checks": {
+        "output_kind": "clarification",
+        "clarify_expected": true
+      },
+      "gate_level": "l4"
+    },
+    {
+      "case_id": "clarify.hi-en.kaunsi-letter",
+      "language": "hi-en",
+      "question": "letter mein kya likha hai?",
+      "checks": {
+        "output_kind": "clarification",
+        "clarify_expected": true
+      },
+      "gate_level": "l4"
+    }
+  ]
+}

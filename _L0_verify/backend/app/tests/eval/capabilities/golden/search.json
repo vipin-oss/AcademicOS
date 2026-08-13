@@ -1,0 +1,50 @@
+{
+  "capability_id": "search",
+  "cases": [
+    {
+      "case_id": "search.en.find-quantum",
+      "language": "en",
+      "question": "Find documents about quantum dots.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "search.en.search-hsrf",
+      "language": "en",
+      "question": "Search for HSRF.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "search.hi-en.dhoondo",
+      "language": "hi-en",
+      "question": "quantum dots wale documents dhoondo.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "search.en.look-up-metadata",
+      "language": "en",
+      "question": "Look up the metadata framework notes.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "search.hi-en.hsrf-khojo",
+      "language": "hi-en",
+      "question": "HSRF se related kuch khojo.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

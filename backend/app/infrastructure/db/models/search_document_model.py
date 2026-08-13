@@ -36,3 +36,6 @@ class SearchDocumentModel(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     metadata_text: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # L1 / ADR-009: every derived artifact carries the source's ACL scope so
+    # retrieval can pre-filter without a second object lookup.
+    acl_scope: Mapped[str | None] = mapped_column(String, nullable=True)
