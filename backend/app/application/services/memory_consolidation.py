@@ -204,13 +204,20 @@ class MemoryConsolidationService:
             # Canonical policy:
             #   1. review quality
             #   2. newest created_at
+            #   3. object ID as a deterministic total-order tiebreak ONLY.
             #
-            # Do NOT use object ID as a proxy for creation order.
+            # Do NOT use object ID as a proxy for creation order — created_at
+            # always dominates it. The ID term merely guarantees that if two
+            # members ever carry the exact same created_at (impossible in a
+            # single process after the monotonic audit clock; possible only
+            # across processes), selection is still fully deterministic rather
+            # than depending on ``max``'s iteration order.
             canonical = max(
                 members,
                 key=lambda obj: (
                     _REVIEW_QUALITY.get(_review_status(obj), 1),
                     obj.audit.created_at if obj.audit else "",
+                    str(obj.id),
                 ),
             )
 

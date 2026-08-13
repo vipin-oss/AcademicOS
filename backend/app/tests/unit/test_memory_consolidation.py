@@ -240,3 +240,76 @@ def test_consolidation_after_human_approval(repo):
     report = MemoryConsolidationService(repo).consolidate(actor="system")
     pairs = {p.conversation_id: p.canonical_id for p in report.superseded}
     assert pairs[str(newer.id)] == str(older.id)  # approved wins
+
+
+# ---------------------------------------------------------------------------
+# Determinism fix — monotonic audit clock + total-order canonical selection
+# ---------------------------------------------------------------------------
+def test_audit_created_at_is_strictly_monotonic():
+    """Root-cause guard: consecutive audit timestamps never tie.
+
+    Memory consolidation picks the newest ``created_at`` as canonical. If the
+    wall clock yields identical instants for back-to-back creations, the
+    choice becomes nondeterministic. This asserts the clock is strictly
+    increasing, so sequential creations always order correctly.
+    """
+    from itertools import pairwise
+
+    from app.domain.value_objects import audit as audit_mod
+
+    stamps = [audit_mod._utcnow() for _ in range(1000)]
+    assert all(b > a for a, b in pairwise(stamps))
+
+
+def test_canonical_selection_is_deterministic_on_timestamp_tie(repo):
+    """Exact-timestamp tie cannot produce nondeterministic canonical choice.
+
+    Two duplicate conversations are forced to carry the *identical*
+    ``created_at`` (the cross-process scenario where even a monotonic
+    in-process clock cannot guarantee distinct instants). Canonical selection
+    must still be deterministic — resolved by the documented total-order
+    tiebreak (created_at, then object ID) — never by ``max``'s iteration order.
+    """
+    import datetime as dt
+
+    from app.application.use_cases.assistant.helpers import all_conversations
+    from app.domain.value_objects.audit import AuditFields
+
+    first = _conversation(repo)
+    second = _conversation(repo)
+
+    # Force an identical created_at on both objects.
+    tied_at = dt.datetime(2026, 8, 13, 10, 0, 0, tzinfo=dt.UTC)
+    for obj in (first, second):
+        obj.audit = AuditFields(created_by="u:1", created_at=tied_at)
+        repo.save(obj)
+
+    report = MemoryConsolidationService(repo).consolidate(actor="system")
+    assert report.consolidated == 1
+
+    active = {
+        str(o.id)
+        for o in all_conversations(repo)
+        if o.status is ObjectStatus.ACTIVE
+    }
+    superseded = {
+        str(o.id)
+        for o in all_conversations(repo)
+        if o.status is ObjectStatus.SUPERSEDED
+    }
+    # Exactly one remains canonical; the other is superseded.
+    assert active | superseded == {str(first.id), str(second.id)}
+    assert len(active) == 1
+    assert len(superseded) == 1
+
+    # The winner is the documented deterministic total-order maximum
+    # (review quality, created_at, object ID) — reproducible every run.
+    expected_canonical = max(
+        [first, second],
+        key=lambda obj: (
+            1,
+            obj.audit.created_at if obj.audit else "",
+            str(obj.id),
+        ),
+    )
+    assert active == {str(expected_canonical.id)}
