@@ -27,6 +27,7 @@ from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
 from app.api.routes.intake import router as intake_router
 from app.api.routes.objects import router as objects_router
+from app.api.routes.plans import router as plans_router
 from app.api.routes.productivity import router as productivity_router
 from app.api.routes.publications import router as publications_router
 from app.api.routes.reports import router as reports_router
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(claims_router, prefix=settings.api_v1_prefix)
     app.include_router(cdm_router, prefix=settings.api_v1_prefix)
     app.include_router(confirmations_router, prefix=settings.api_v1_prefix)
+    app.include_router(plans_router, prefix=settings.api_v1_prefix)
     return app
 
 

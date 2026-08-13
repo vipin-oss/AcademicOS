@@ -90,3 +90,79 @@ def make_docx_bytes(
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# L2 fixtures — compact, generated in-memory (no large binary collections).
+# Restored from the authoritative L2 artifact (the committed tree was missing
+# these; the committed L2/L3 tests reference them).
+# ---------------------------------------------------------------------------
+
+def make_xlsx_bytes(rows, *, sheet: str = "Sheet1") -> bytes:
+    """A real .xlsx whose first sheet has exactly `rows` (list of row lists)."""
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet
+    for r, row in enumerate(rows, start=1):
+        for c, value in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=value)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def make_pptx_bytes(slides, *, title: str | None = None) -> bytes:
+    """A real .pptx with one slide per entry; each entry is a title text."""
+    import io
+
+    from pptx import Presentation
+
+    prs = Presentation()
+    for s in slides:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        try:
+            slide.shapes.title.text = s
+        except Exception:  # noqa: BLE001
+            pass
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def make_png_bytes(size: int = 8) -> bytes:
+    """A tiny PNG (white) via Pillow."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (size, size), "white")
+    buffer = io.BytesIO()
+    img.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def make_zip_bytes(members: dict[str, bytes], *, nested: dict | None = None) -> bytes:
+    """A zip whose entries are `members` (path -> bytes). Optionally nests one."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path, data in members.items():
+            z.writestr(path, data)
+        if nested:
+            inner = io.BytesIO()
+            with zipfile.ZipFile(inner, "w") as zin:
+                for path, data in nested.items():
+                    zin.writestr(path, data)
+            z.writestr("nested.zip", inner.getvalue())
+    return buf.getvalue()
+
+
+def make_scanned_pdf_bytes() -> bytes:
+    """A scanned/image-only PDF: a page with an image and no text layer."""
+    return make_pdf_bytes("")

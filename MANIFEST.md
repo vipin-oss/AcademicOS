@@ -1,33 +1,41 @@
-# AcademicOS — L3 Human-in-the-Loop (Confirmation / Correction)
+# AcademicOS — L4 Query Understanding v2
 
-**Scope:** the L3 HITL confirmation/correction layer (ADR-032..034) on top of the
-committed L1 knowledge-plane and L2 document-intelligence layers. Deterministic,
-ACL-safe, auditable. No planner/retrieval/agent/frontend/OCR work.
+**Scope:** the L4 model-driven query-understanding layer (ADR-035/036) on top of
+the committed L0-L3 baseline. Model-driven planner → deterministic validation →
+frozen ≤15-command fast-path → clarify/refuse → dispatch. Active assistant path
+no longer regex-routes intents (ADR-020).
 
 ## What this milestone establishes
-- **Extraction→claim bridge (ADR-034):** deterministic predicate-driven
-  `NirMapper.write_claims` + `fact_extraction.py`; the orchestrator now proposes
-  PROPOSED claims (with polymorphic spans, confidence, acl_scope) during
-  ingestion for both documents and package members. Claims stay PROPOSED,
-  distinct from human-confirmed facts.
-- **Confirmation/correction queue (ADR-032/033):** `ConfirmationQueueService`
-  (triaged by confidence + OCR, paginated, ACL-filtered), `ClaimConfirmationService`
-  (approve/reject/correct), `CdmConfirmationService` (CDM-block approve/reject).
-- **Corrections as data:** `ClaimService.correct` creates a new ASSERTED claim
-  that SUPERSEDES the candidate (ADR-021) — never destructive.
-- **Decision audit:** `claim_decisions` + `cdm_decisions` tables (append-only,
-  idempotent by `decision_id`, reviewer/previous/resulting status, notes,
-  acl_scope, eval_run_id). Claim-scoped — NOT coupled to conversation reviews.
-- **ACL:** confirmation actions gated by `reviewer_can_decide` (owner/writer/
-  manager); legacy null-scope candidates open-by-default (Freeze Contract
-  ADR-017 note).
-- **API (ADR-022):** `/confirmations/pending`, `/approve`, `/reject`, `/correct`,
-  `/decisions`, `/cdm/{block}/approve|reject` — all additive; existing
-  `/claims`/`/cdm` routes preserved.
-- **Migration 0013:** `claim_decisions` + `cdm_decisions` (additive, reversible).
-- **L2 closed:** LEVELS.md L2 `done`, L3 `in_progress`; ADR-032..034 ratified.
+- **Plan schema (ADR-035):** `Plan` DTO matching Freeze Contract §16
+  (`operation, domains[], entities[], time_range, filters{}, output_kind,
+  evidence_required, sub_plans[]`); `PlanValidator` (deterministic, bounded,
+  operation ∈ frozen capability registry).
+- **Planner:** `PlannerService` calls `AiCore.gateway().structured_generate()`
+  (ADR-001) with the frozen plan JSON schema; model output is untrusted and
+  always validated before dispatch.
+- **Frozen fast-path (ADR-036):** `FAST_PATH_COMMANDS` — exactly 15 commands,
+  cannot grow (guardrail-pinned). `FastPathExecutor` + offline keyword router.
+- **Clarify/refuse:** `ClarifyRefuse` produces explicit machine-readable
+  outcomes (never generic assistant text).
+- **QueryUnderstanding orchestration:** planner → validate → fast-path /
+  clarify / refuse; never executes raw model output.
+- **Active path (ADR-020):** `QueryUnderstandingAssistantProvider` + rewired
+  `provider_factory`; the active assistant answering path no longer uses
+  `parse_question`/`rules-v1` regex routing. A deterministic offline answer
+  seam (fast-path executor) preserves offline data answering.
+- **API (ADR-022):** `POST /plans` + `POST /plans/validate` (additive);
+  existing assistant routes preserved.
+- **L4 eval gate:** golden `gate_level="l4"` cases resolve to deterministic
+  outcomes (reuses the frozen L0 capability framework, unmodified).
+- **Milestone:** LEVELS L3 `done`, L4 `in_progress`; ADR-035/036 ratified.
 
 ## Verification
-Backend pytest: 2038 passed, 2 skipped (includes 30 new L3 tests + guardrails).
-Frontend vitest: 101 passed. tsc --noEmit: clean. git diff --check: clean.
-L0/L1/L2/memory-fix/patch-farm boundaries unchanged.
+Backend pytest: 2075 passed, 2 skipped (includes 37 L4 tests + restored L2
+fixtures). Frontend vitest: 101 passed. tsc: clean. Architecture guardrails:
+77 passed. git diff --check: clean. No new migrations (0013 head unchanged).
+L0/L1/L2/L3/memory-fix boundaries unchanged.
+
+## Note
+`backend/app/tests/unit/extraction_fixtures.py` was restored with the missing
+L2 fixture builders (make_xlsx_bytes etc.) from the authoritative L2 artifact —
+the committed tree was missing them; the committed L2/L3 tests reference them.

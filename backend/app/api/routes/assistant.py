@@ -118,12 +118,30 @@ def get_assistant_provider(
     rules provider answers (degrade, never disappear). Integration tests
     override this dependency to inject stubs/transports."""
     if not ai_core.provider_ids:
-        return build_assistant_provider(_NULL_GATEWAY, repo)
+        return build_assistant_provider(
+            _NULL_GATEWAY, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+        )
     try:
         gateway = ai_core.gateway()
     except UnknownProviderError:
-        return build_assistant_provider(_NULL_GATEWAY, repo)
-    return build_assistant_provider(gateway, repo)
+        return build_assistant_provider(
+            _NULL_GATEWAY, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+        )
+    return build_assistant_provider(
+        gateway, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+    )
+
+
+def _offline_answerer(repo) -> AssistantProvider:
+    """The deterministic offline fast-path answer seam (ADR-020).
+
+    Answers the common data queries offline (no LLM) deterministically, WITHOUT
+    regex ``parse_question`` intent routing. This is the fast-path executor the
+    frozen contract mandates for the offline path — not a phrase→intent table.
+    """
+    from app.infrastructure.assistant.offline_answerer import OfflineFastPathAnswerer
+
+    return OfflineFastPathAnswerer(repo, permission_evaluator=ObjectPermissionEvaluator())
 
 
 def get_assistant_provider_factory(ai_core=Depends(get_ai_core)):
@@ -131,7 +149,7 @@ def get_assistant_provider_factory(ai_core=Depends(get_ai_core)):
     builds a provider for a resolved provider id. Overridable in tests."""
     def factory(provider_id, repository, *, fallback=None):
         return build_assistant_provider(
-            ai_core.gateway(provider_id), repository, fallback=fallback
+            ai_core.gateway(provider_id), repository, ai_core=ai_core, fallback=fallback
         )
     return factory
 

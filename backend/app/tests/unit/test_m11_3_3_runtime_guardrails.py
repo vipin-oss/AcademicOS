@@ -11,9 +11,11 @@ from __future__ import annotations
 import threading
 from unittest.mock import patch
 
-from app.application.assistant.providers import RuleBasedAssistantProvider
 from app.application.dtos.ai import ProviderHealth
 from app.infrastructure.assistant.provider_factory import build_assistant_provider
+from app.infrastructure.llm.query_understanding_provider import (
+    QueryUnderstandingAssistantProvider,
+)
 
 # ---------------------------------------------------------------------------
 # Fix #1: non-executable providers never become runtime primaries
@@ -44,28 +46,29 @@ class _FakeGateway:
 class TestAssistantReadiness:
     def test_declared_not_executable_does_not_become_primary(self):
         """A provider that is declared (configured=True) but NOT executable must
-        NOT become the primary — the rules provider is used instead."""
+        NOT become the primary — the deterministic query-understanding provider
+        (planner + fast-path) is used instead (ADR-020)."""
         gw = _FakeGateway(configured=True, executable=False)
         provider = build_assistant_provider(gw, None)  # type: ignore[arg-type]
-        assert isinstance(provider, RuleBasedAssistantProvider)
+        assert isinstance(provider, QueryUnderstandingAssistantProvider)
 
     def test_executable_provider_becomes_primary(self):
-        """An executable provider wraps in the LLM fallback chain."""
-        from app.application.assistant.providers import FallbackAssistantProvider
-
+        """An executable provider wraps in the L4 query-understanding layer."""
         gw = _FakeGateway(configured=True, executable=True)
         provider = build_assistant_provider(gw, None)  # type: ignore[arg-type]
-        assert isinstance(provider, FallbackAssistantProvider)
+        assert isinstance(provider, QueryUnderstandingAssistantProvider)
 
-    def test_broken_gateway_degrades_to_rules(self):
-        """A gateway whose health() raises degrades to the rules provider."""
+    def test_broken_gateway_degrades_to_fast_path(self):
+        """A gateway whose health() raises degrades to the deterministic
+        query-understanding provider (fast-path/clarify/refuse), never rules-v1
+        (ADR-020)."""
 
         class _Boom:
             def health(self):
                 raise RuntimeError("broken")
 
         provider = build_assistant_provider(_Boom(), None)  # type: ignore[arg-type]  # type: ignore[arg-type]
-        assert isinstance(provider, RuleBasedAssistantProvider)
+        assert isinstance(provider, QueryUnderstandingAssistantProvider)
 
 
 # ---------------------------------------------------------------------------
