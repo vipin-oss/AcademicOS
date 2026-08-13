@@ -1,41 +1,46 @@
-# AcademicOS — L1 Knowledge-Plane Contracts
+# AcademicOS — L2 Document Intelligence Engines
 
-**Scope:** the corrected L1 from the second-pass architecture audit. Format-
-agnostic, image/package-aware contracts that L2 engines (PDF/OCR/vision) will
-write into. No parser/OCR/vision/classification/planner engine is implemented.
+**Scope:** first actual document/media intelligence engine layer, format-agnostic
+(ADR-028..031). L2 reuses all L1 contracts (Source/MediaKind, polymorphic spans,
+claims, CDM, acl_scope, confidence split, version supersession) — no parallel
+storage model. No PDF-only pipeline; engines are infrastructure adapters.
 
 ## What this milestone establishes
-- **Source contract (ADR-023):** format-agnostic Source + MediaKind (incl.
-  raster_image / spreadsheet / slides / package) + original-blob evidence
-  binding + container/package provenance.
-- **Polymorphic spans (ADR-024):** page/block/text_range/bbox/table_cell/
-  image_region/equation/diagram/slide/spreadsheet_cell; not page-only.
-- **Confidence split (ADR-025):** extraction_confidence vs fact_confidence;
-  OCR-derived fact confidence capped at medium.
-- **acl_scope on every derived artifact (ADR-026):** search_documents,
-  document_contents, document_chunks, document_search_fts, claims, cdm_blocks.
-  Propagated by the single index consumer; stricter-of semantics.
-- **Claim store (ADR-002/019):** claims + polymorphic claim_spans, bound to
-  the predicate catalogue, raw fallback, PROPOSED/CONFIRMED/REJECTED/SUPERSEDED.
-- **CDM block store (Blueprint §11):** format-agnostic blocks incl. equation,
-  table, image_region, diagram, slide.
-- **Version-replacement cascade (ADR-021/027):** new file version supersedes
-  old claims/CDM and reproposes; supersede-not-delete.
-- **OpenAPI surfaces (ADR-022):** /claims, /cdm, /confirmations routes.
-- **L0 closed:** LEVELS.md marks L0 `done`, L1 `in_progress` (doc-only).
-- **ADR-023..027** ratified.
+- **NIR (ADR-028):** transient, format-agnostic engine output contract
+  (`app/application/dtos/nir.py`) that can represent text, regions, tables,
+  spreadsheet cells/ranges, slides, images/regions, equations, diagrams,
+  bboxes, source offsets, page/slide/sheet/member identity, extraction
+  confidence, and source/version binding. NIR mapper writes into L1 CDM/span.
+- **Engines (infrastructure):** pdfplumber (PDF text/tables/regions + scanned
+  detection), python-docx (DOCX paragraphs/headings/tables), openpyxl (XLSX
+  workbook/sheet/cell/range/formula), python-pptx (PPTX slides/text/tables/
+  images/notes), Pillow (images, first-class), text family (TXT/MD/CSV/JSON),
+  OCR adapter (ADR-030, optional + OFF by default).
+- **Format detection (ADR-031):** extension + magic-bytes cross-check, honest
+  MIME mismatch, never content-re-routing.
+- **Container/package (ADR-029):** safe zipfile expander with member identity/
+  provenance, path-traversal/bomb/depth/count/duplicate protection; corrupt or
+  unsupported members explicitly reported, never silently dropped.
+- **Security/resource limits:** `extraction_limits.py` + `container_policy.py`
+  (max file/package/member/page/slide/sheet/cell/image/dimension/depth/ratio).
+- **Ingestion integration:** `POST /documents/ingest` composes the existing
+  document-creation flow with the L2 orchestrator (CDM + content projection);
+  L1 version supersession cascade reused.
+- **L1 closed:** LEVELS.md L1 `done`, L2 `in_progress`; ADR-028..031 ratified.
 
-## Migration
-`backend/alembic/versions/0012_claims_cdm_spans_acl_scope.py` (chains off 0011).
-Run `python -m alembic upgrade head` (PostgreSQL) or `python scripts/init_db.py`
-(SQLite quickstart, stamps 0012). Additive; downgrade drops only L1 objects.
+## Dependencies added (all MIT/HPND, pure-pip, pinned)
+pdfplumber==0.11.10, openpyxl==3.1.5, python-pptx==1.0.2, Pillow==12.3.0.
+OCR (pytesseract) is OPTIONAL/OFF by default and NOT added to requirements.
+
+## Migrations
+None. L1 storage (claims/claim_spans/cdm_blocks/acl_scope) is reused; container
+provenance/media-kind live on document metadata. Alembic head stays 0012.
 
 ## L2 boundary (NOT implemented)
-PDF parser / OCR / DOCX / XLSX / PPTX / image vision / ZIP extraction /
-classification / entity / relationship / planner / retrieval — all future work
-that writes into these L1 contracts.
+Classification, entity/relationship extraction, planner, retrieval rewrite,
+frontend, L0/patch-farm changes — all out of scope.
 
 ## Verification
-Backend pytest: 1966 passed, 2 skipped (includes 37 new L1 tests + architecture
-guardrails). Frontend vitest: 101 passed. tsc --noEmit: clean. git diff --check:
-clean. L0 artifacts, patch-farm allowlist, and the 9879d08 memory fix unchanged.
+Backend pytest: 2008 passed, 2 skipped (includes 42 new L2 tests + guardrails).
+Frontend vitest: 101 passed. tsc --noEmit: clean. git diff --check: clean.
+L0/patch-farm/memory-fix/L1 boundaries unchanged.

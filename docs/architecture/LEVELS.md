@@ -8,8 +8,8 @@ rewrite L1. PDF/OCR is the first **engine** of L2, not a level of its own.
 | Level | Name | Status | Produces | Must not start until |
 |---|---|---|---|---|
 | L0 | Freeze & Evaluation Harness | `done` | contract in-repo, capability catalog + harness, anti-patch ceilings, ADR-019…022 law text, scale law | — |
-| L1 | Knowledge-Plane Contracts | `in_progress` | claim/CDM/span/acl_scope schemas and ports; OpenAPI for new surfaces | L0 `done` |
-| L2 | Document Intelligence Engines | `not_started` | PDF digital structure, scanned detection, OCR port, CDM writer (PDF/OCR first) | L1 `done` |
+| L1 | Knowledge-Plane Contracts | `done` | claim/CDM/span/acl_scope schemas and ports; OpenAPI for new surfaces | L0 `done` |
+| L2 | Document Intelligence Engines | `in_progress` | NIR, format detection, PDF/DOCX/XLSX/PPTX/image/OCR adapters, container/package expander, CDM writer | L1 `done` |
 | L3 | Human-in-the-Loop | `not_started` | confirmation / correction queues | L1 `done` |
 | L4 | Query Understanding v2 | `not_started` | model planner, frozen ≤15 fast-path, `rules-v1` deletion (ADR-020 enforcement) | L1 `done` (parallel with L2) |
 | L5 | Tool Layer | `not_started` | ACL-filtered tools (inventory, SQL, FTS, vector, graph, …) | L1 `done` |
