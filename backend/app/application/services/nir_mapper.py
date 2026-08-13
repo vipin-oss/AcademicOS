@@ -12,7 +12,14 @@ import uuid
 
 from app.application.dtos.nir import NirDocument, NirElementType
 from app.application.services.cdm_service import CdmService
+from app.application.services.claim_service import ClaimService
+from app.application.services.fact_extraction import (
+    candidate_from_field,
+    candidate_from_sheet_cells,
+    candidate_from_table,
+)
 from app.domain.value_objects.cdm import CdmBlock, CdmBlockType
+from app.domain.value_objects.claim import Claim
 from app.domain.value_objects.span import Span
 
 #: NIR element type -> CDM block type (best-effort, format-agnostic).
@@ -132,3 +139,69 @@ class NirMapper:
             acl_scope=acl_scope,
         )
         return len(blocks)
+
+    def write_claims(
+        self,
+        nir: NirDocument,
+        *,
+        document_id: str,
+        acl_scope: str | None = None,
+        claim_service: ClaimService | None = None,
+        ocr_derived: bool = False,
+    ) -> list[Claim]:
+        """Deterministically propose claims from NIR elements (ADR-034).
+
+        Uses the predicate-driven fact-extraction rule over NIR elements
+        (tables, key/value fields, spreadsheet cells). Each claim is PROPOSED
+        with polymorphic spans + confidence + acl_scope. Idempotent for
+        identical input. Requires a ``ClaimService``; returns the proposed
+        claims (or [] if none wired).
+        """
+        if claim_service is None:
+            return []
+        candidates = self._collect_candidates(nir)
+        spans = self.element_spans(nir)
+        claims: list[Claim] = []
+        for cand in candidates:
+            claim = claim_service.propose(
+                predicate_id=cand.predicate_id,
+                raw_value=cand.raw_value,
+                source_text=cand.source_text,
+                source_document_id=document_id,
+                source_version=nir.version,
+                spans=spans,
+                acl_scope=acl_scope,
+                fact_confidence=cand.fact_confidence,
+                extraction_confidence=cand.extraction_confidence,
+                ocr_derived=ocr_derived,
+            )
+            claims.append(claim)
+        return claims
+
+    @staticmethod
+    def _collect_candidates(nir: NirDocument) -> list:
+        """Gather fact candidates from NIR elements (deterministic, predicate-driven)."""
+        from app.application.services.fact_extraction import Candidate
+
+        out: list[Candidate] = []
+        for element in nir.elements:
+            if element.element_type is NirElementType.TABLE:
+                rows = element.value.get("rows") or []
+                out.extend(candidate_from_table(rows))
+            elif element.element_type is NirElementType.SHEET_CELL:
+                # collect all sheet cells in order, then pair label/value
+                pass
+        # sheet-cell label/value pairing
+        cells: list[dict] = []
+        for element in nir.elements:
+            if element.element_type is NirElementType.SHEET_CELL:
+                cells.append({"text": element.text})
+        out.extend(candidate_from_sheet_cells(cells))
+        # key/value metadata fields
+        for element in nir.elements:
+            if element.element_type is NirElementType.METADATA:
+                for key, val in (element.value or {}).items():
+                    cand = candidate_from_field(key, val)
+                    if cand is not None:
+                        out.append(cand)
+        return out

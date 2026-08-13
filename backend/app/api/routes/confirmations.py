@@ -1,24 +1,36 @@
-"""Confirmation inbox API (L1, ADR-004 / ADR-006 / ADR-022).
+"""Confirmation API (L3, ADR-022 / ADR-032 / ADR-033).
 
-A thin read surface over the claim store exposing the human-confirmation
-queue: proposed (candidate) claims that are not yet canonical. Promoting /
-rejecting happens through the claims routes (``/claims/{id}/confirm|reject``);
-this route keeps the "extracted candidate vs confirmed canonical knowledge"
-distinction visible as an inbox (ADR-010 of the product pipeline).
+Human-in-the-loop confirmation/correction over the L1 claim plane:
+  - GET /confirmations/pending        triaged, ACL-filtered, paginated queue
+  - POST /confirmations/{claim_id}/approve
+  - POST /confirmations/{claim_id}/reject
+  - POST /confirmations/{claim_id}/correct   (new ASSERTED supersedes candidate)
+  - GET  /confirmations/{claim_id}/decisions  audit history
+  - POST /confirmations/cdm/{block_id}/approve|reject   (CDM-block decisions)
 
-OpenAPI contract surface (ADR-022): the frontend/L3 UI consumes only this and
-the claims contract.
+Every action writes a durable, attributable decision row (ADR-032) and is
+ACL-gated: the reviewer must hold WRITE/MANAGE on the source document's scope
+(``require_object_access``). Candidates outside the reviewer's scopes are never
+returned (no cross-scope leakage, ADR-033).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from collections.abc import Callable
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
-from app.domain.value_objects.claim import ClaimStatus
+from app.application.services.cdm_confirmation import CdmConfirmationService
+from app.application.services.claim_confirmation import ClaimConfirmationService
+from app.application.services.confirmation_queue import ConfirmationQueue
+from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
+from app.infrastructure.persistence.cdm_decision_store import SQLCdmDecisionStore
+from app.infrastructure.persistence.claim_decision_store import SQLClaimDecisionStore
 from app.infrastructure.persistence.claim_store import SQLClaimStore
 
 router = APIRouter(
@@ -28,26 +40,172 @@ router = APIRouter(
 )
 
 
-class PendingClaimOut(BaseModel):
+class PendingOut(BaseModel):
     claim_id: str
     predicate_id: str
+    value_schema: str
     source_document_id: str
     source_version: int
-    value_schema: str
-    status: str
+    fact_confidence: float | None
+    extraction_confidence: float | None
+    acl_scope: str | None
+    tier: str
 
 
-@router.get("/pending", response_model=list[PendingClaimOut])
-def pending_claims(db: Session = Depends(get_db)) -> list[PendingClaimOut]:
-    claims = SQLClaimStore(db).by_status(ClaimStatus.PROPOSED)
+class DecisionOut(BaseModel):
+    decision_id: str
+    subject_id: str
+    decision: str
+    reviewer: str
+    previous_status: str
+    resulting_status: str
+    notes: str
+    acl_scope: str | None
+    eval_run_id: str | None
+    created_at: str
+
+
+class CorrectBody(BaseModel):
+    raw_value: Any = None
+    source_text: str = ""
+    notes: str = Field(default="", max_length=1000)
+
+
+def _claim_confirm_service(db: Session) -> ClaimConfirmationService:
+    from app.application.services.claim_service import ClaimService
+
+    return ClaimConfirmationService(
+        ClaimService(SQLClaimStore(db)), SQLClaimDecisionStore(db)
+    )
+
+
+def _cdm_confirm_service(db: Session) -> CdmConfirmationService:
+    return CdmConfirmationService(SQLCdmDecisionStore(db))
+
+
+def _can_decide(user: UniversalObject) -> Callable[[str | None], bool]:
+    """A predicate: can this reviewer decide on a candidate with acl_scope?"""
+    from app.application.services.confirmation_acl import reviewer_can_decide
+
+    reviewer = str(user.id)
+    return lambda scope: reviewer_can_decide(scope, reviewer)
+
+
+@router.get("/pending", response_model=list[PendingOut])
+def pending(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    needs_ocr_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> list[PendingOut]:
+    """Triaged, ACL-filtered, paginated PROPOSED claim candidates."""
+    queue = ConfirmationQueue(SQLClaimStore(db))
+    items = queue.pending(
+        page=page, page_size=page_size, can_decide=_can_decide(user),
+    )
     return [
-        PendingClaimOut(
-            claim_id=c.claim_id,
-            predicate_id=c.predicate_id,
-            source_document_id=c.source_document_id,
-            source_version=c.source_version,
-            value_schema=c.value_schema,
-            status=c.status.value,
+        PendingOut(
+            claim_id=i.claim_id, predicate_id=i.predicate_id,
+            value_schema=i.value_schema, source_document_id=i.source_document_id,
+            source_version=i.source_version, fact_confidence=i.fact_confidence,
+            extraction_confidence=i.extraction_confidence, acl_scope=i.acl_scope,
+            tier=i.tier,
         )
-        for c in claims
+        for i in items
     ]
+
+
+@router.post("/{claim_id}/approve", response_model=DecisionOut)
+def approve_claim(
+    claim_id: str,
+    notes: str = Query(default="", max_length=1000),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> DecisionOut:
+    try:
+        record = _claim_confirm_service(db).approve(
+            claim_id, reviewer=str(user.id), notes=notes
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return _to_decision(record)
+
+
+@router.post("/{claim_id}/reject", response_model=DecisionOut)
+def reject_claim(
+    claim_id: str,
+    notes: str = Query(default="", max_length=1000),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> DecisionOut:
+    try:
+        record = _claim_confirm_service(db).reject(
+            claim_id, reviewer=str(user.id), notes=notes
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_decision(record)
+
+
+@router.post("/{claim_id}/correct", response_model=DecisionOut)
+def correct_claim(
+    claim_id: str,
+    body: CorrectBody,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> DecisionOut:
+    try:
+        record = _claim_confirm_service(db).correct(
+            claim_id, reviewer=str(user.id), raw_value=body.raw_value,
+            source_text=body.source_text, notes=body.notes,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_decision(record)
+
+
+@router.get("/{claim_id}/decisions", response_model=list[DecisionOut])
+def claim_decisions(
+    claim_id: str,
+    db: Session = Depends(get_db),
+) -> list[DecisionOut]:
+    records = SQLClaimDecisionStore(db).by_claim(claim_id)
+    return [_to_decision(r) for r in records]
+
+
+@router.post("/cdm/{block_id}/approve", response_model=DecisionOut)
+def approve_cdm(
+    block_id: str,
+    notes: str = Query(default="", max_length=1000),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> DecisionOut:
+    record = _cdm_confirm_service(db).approve(
+        block_id, reviewer=str(user.id), notes=notes
+    )
+    return _to_decision(record)
+
+
+@router.post("/cdm/{block_id}/reject", response_model=DecisionOut)
+def reject_cdm(
+    block_id: str,
+    notes: str = Query(default="", max_length=1000),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> DecisionOut:
+    record = _cdm_confirm_service(db).reject(
+        block_id, reviewer=str(user.id), notes=notes
+    )
+    return _to_decision(record)
+
+
+def _to_decision(r) -> DecisionOut:
+    return DecisionOut(
+        decision_id=r.decision_id, subject_id=r.subject_id, decision=r.decision,
+        reviewer=r.reviewer, previous_status=r.previous_status,
+        resulting_status=r.resulting_status, notes=r.notes, acl_scope=r.acl_scope,
+        eval_run_id=r.eval_run_id, created_at=r.created_at,
+    )

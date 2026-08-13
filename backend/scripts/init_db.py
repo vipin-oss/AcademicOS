@@ -32,7 +32,9 @@ from app.infrastructure.db.models.annotation_model import (  # noqa: F401
     DocumentAnnotationModel,
 )
 from app.infrastructure.db.models.cdm_block_model import CdmBlockModel  # noqa: F401
+from app.infrastructure.db.models.cdm_decision_model import CdmDecisionModel  # noqa: F401
 from app.infrastructure.db.models.claim_model import ClaimModel  # noqa: F401
+from app.infrastructure.db.models.claim_decision_model import ClaimDecisionModel  # noqa: F401
 from app.infrastructure.db.models.claim_span_model import ClaimSpanModel  # noqa: F401
 from app.infrastructure.db.models.document_content_model import (  # noqa: F401
     DocumentContentModel,
@@ -59,7 +61,7 @@ from app.infrastructure.db.models.search_document_model import (  # noqa: F401
     SearchDocumentModel,
 )
 
-CURRENT_MIGRATION = "0012_claims_cdm_spans_acl_scope"
+CURRENT_MIGRATION = "0013_claim_cdm_decisions"
 
 
 def main() -> None:

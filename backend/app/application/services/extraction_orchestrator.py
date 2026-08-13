@@ -27,6 +27,7 @@ from app.application.ports.container_expander import ContainerExpander, Containe
 from app.application.ports.document_content_store import DocumentContentStore
 from app.application.ports.nir_parser import NirParser
 from app.application.services.nir_mapper import NirMapper
+from app.application.services.claim_service import ClaimService
 from app.application.services.source_service import register_source
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.source import MediaKind, SourceContract
@@ -72,11 +73,13 @@ class ExtractionOrchestrator:
         expander: ContainerExpander,
         mapper: NirMapper,
         content_store: DocumentContentStore | None = None,
+        claim_service: "ClaimService | None" = None,
     ) -> None:
         self._parsers = parsers
         self._expander = expander
         self._mapper = mapper
         self._content_store = content_store
+        self._claim_service = claim_service
 
     def ingest_blob(
         self,
@@ -151,6 +154,15 @@ class ExtractionOrchestrator:
         block_count = self._mapper.write_cdm(
             nir, document_id=str(document.id), acl_scope=acl_scope
         )
+        # extraction→claim bridge (ADR-034): propose PROPOSED claims
+        if self._claim_service is not None:
+            self._mapper.write_claims(
+                nir,
+                document_id=str(document.id),
+                acl_scope=acl_scope,
+                claim_service=self._claim_service,
+                ocr_derived=nir.needs_ocr,
+            )
         # content projection for search
         if self._content_store is not None and nir.text:
             self._content_store.upsert(
@@ -254,6 +266,15 @@ class ExtractionOrchestrator:
         block_count = self._mapper.write_cdm(
             nir, document_id=member_doc_id, acl_scope=acl_scope
         )
+        # propose claims for the member too (ADR-034)
+        if self._claim_service is not None:
+            self._mapper.write_claims(
+                nir,
+                document_id=member_doc_id,
+                acl_scope=acl_scope,
+                claim_service=self._claim_service,
+                ocr_derived=nir.needs_ocr,
+            )
         if self._content_store is not None and nir.text:
             self._content_store.upsert(
                 object_id=member_doc_id, version=version,

@@ -1,46 +1,33 @@
-# AcademicOS — L2 Document Intelligence Engines
+# AcademicOS — L3 Human-in-the-Loop (Confirmation / Correction)
 
-**Scope:** first actual document/media intelligence engine layer, format-agnostic
-(ADR-028..031). L2 reuses all L1 contracts (Source/MediaKind, polymorphic spans,
-claims, CDM, acl_scope, confidence split, version supersession) — no parallel
-storage model. No PDF-only pipeline; engines are infrastructure adapters.
+**Scope:** the L3 HITL confirmation/correction layer (ADR-032..034) on top of the
+committed L1 knowledge-plane and L2 document-intelligence layers. Deterministic,
+ACL-safe, auditable. No planner/retrieval/agent/frontend/OCR work.
 
 ## What this milestone establishes
-- **NIR (ADR-028):** transient, format-agnostic engine output contract
-  (`app/application/dtos/nir.py`) that can represent text, regions, tables,
-  spreadsheet cells/ranges, slides, images/regions, equations, diagrams,
-  bboxes, source offsets, page/slide/sheet/member identity, extraction
-  confidence, and source/version binding. NIR mapper writes into L1 CDM/span.
-- **Engines (infrastructure):** pdfplumber (PDF text/tables/regions + scanned
-  detection), python-docx (DOCX paragraphs/headings/tables), openpyxl (XLSX
-  workbook/sheet/cell/range/formula), python-pptx (PPTX slides/text/tables/
-  images/notes), Pillow (images, first-class), text family (TXT/MD/CSV/JSON),
-  OCR adapter (ADR-030, optional + OFF by default).
-- **Format detection (ADR-031):** extension + magic-bytes cross-check, honest
-  MIME mismatch, never content-re-routing.
-- **Container/package (ADR-029):** safe zipfile expander with member identity/
-  provenance, path-traversal/bomb/depth/count/duplicate protection; corrupt or
-  unsupported members explicitly reported, never silently dropped.
-- **Security/resource limits:** `extraction_limits.py` + `container_policy.py`
-  (max file/package/member/page/slide/sheet/cell/image/dimension/depth/ratio).
-- **Ingestion integration:** `POST /documents/ingest` composes the existing
-  document-creation flow with the L2 orchestrator (CDM + content projection);
-  L1 version supersession cascade reused.
-- **L1 closed:** LEVELS.md L1 `done`, L2 `in_progress`; ADR-028..031 ratified.
-
-## Dependencies added (all MIT/HPND, pure-pip, pinned)
-pdfplumber==0.11.10, openpyxl==3.1.5, python-pptx==1.0.2, Pillow==12.3.0.
-OCR (pytesseract) is OPTIONAL/OFF by default and NOT added to requirements.
-
-## Migrations
-None. L1 storage (claims/claim_spans/cdm_blocks/acl_scope) is reused; container
-provenance/media-kind live on document metadata. Alembic head stays 0012.
-
-## L2 boundary (NOT implemented)
-Classification, entity/relationship extraction, planner, retrieval rewrite,
-frontend, L0/patch-farm changes — all out of scope.
+- **Extraction→claim bridge (ADR-034):** deterministic predicate-driven
+  `NirMapper.write_claims` + `fact_extraction.py`; the orchestrator now proposes
+  PROPOSED claims (with polymorphic spans, confidence, acl_scope) during
+  ingestion for both documents and package members. Claims stay PROPOSED,
+  distinct from human-confirmed facts.
+- **Confirmation/correction queue (ADR-032/033):** `ConfirmationQueueService`
+  (triaged by confidence + OCR, paginated, ACL-filtered), `ClaimConfirmationService`
+  (approve/reject/correct), `CdmConfirmationService` (CDM-block approve/reject).
+- **Corrections as data:** `ClaimService.correct` creates a new ASSERTED claim
+  that SUPERSEDES the candidate (ADR-021) — never destructive.
+- **Decision audit:** `claim_decisions` + `cdm_decisions` tables (append-only,
+  idempotent by `decision_id`, reviewer/previous/resulting status, notes,
+  acl_scope, eval_run_id). Claim-scoped — NOT coupled to conversation reviews.
+- **ACL:** confirmation actions gated by `reviewer_can_decide` (owner/writer/
+  manager); legacy null-scope candidates open-by-default (Freeze Contract
+  ADR-017 note).
+- **API (ADR-022):** `/confirmations/pending`, `/approve`, `/reject`, `/correct`,
+  `/decisions`, `/cdm/{block}/approve|reject` — all additive; existing
+  `/claims`/`/cdm` routes preserved.
+- **Migration 0013:** `claim_decisions` + `cdm_decisions` (additive, reversible).
+- **L2 closed:** LEVELS.md L2 `done`, L3 `in_progress`; ADR-032..034 ratified.
 
 ## Verification
-Backend pytest: 2008 passed, 2 skipped (includes 42 new L2 tests + guardrails).
+Backend pytest: 2038 passed, 2 skipped (includes 30 new L3 tests + guardrails).
 Frontend vitest: 101 passed. tsc --noEmit: clean. git diff --check: clean.
-L0/patch-farm/memory-fix/L1 boundaries unchanged.
+L0/L1/L2/memory-fix/patch-farm boundaries unchanged.

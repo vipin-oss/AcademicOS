@@ -140,6 +140,42 @@ class ClaimService:
         """Supersede one claim by another (ADR-021, no delete)."""
         return self._store.supersede(claim_id, by_claim_id, now=_utcnow_iso())
 
+    def correct(
+        self,
+        claim_id: str,
+        *,
+        reviewer: str,
+        raw_value: object,
+        source_text: str = "",
+        notes: str = "",
+    ) -> Claim:
+        """Create a new ASSERTED claim (human value) that SUPERSEDES the
+        candidate ``claim_id`` (ADR-006 / ADR-021 correction-as-data).
+
+        The original candidate is preserved (SUPERSEDED); the correction is a
+        new authoritative fact, never a destructive edit of history.
+        """
+        stored = self._store.get(claim_id)
+        if stored is None:
+            raise KeyError(f"Claim not found: {claim_id}")
+        candidate, _ = stored
+
+        corrected = self.propose(
+            predicate_id=candidate.predicate_id,
+            raw_value=raw_value,
+            source_text=source_text,
+            source_document_id=candidate.source_document_id,
+            source_version=candidate.source_version,
+            spans=list(candidate.spans),
+            acl_scope=candidate.acl_scope,
+            fact_confidence=1.0,  # human-asserted correction
+            extraction_confidence=candidate.extraction_confidence,
+            provenance=Provenance.ASSERTED,
+        )
+        # Supersede the candidate by the correction.
+        self._store.supersede(claim_id, corrected.claim_id, now=_utcnow_iso())
+        return corrected
+
     def supersede_for_source_version(
         self,
         source_document_id: str,

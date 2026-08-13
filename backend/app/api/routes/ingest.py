@@ -37,6 +37,7 @@ from app.infrastructure.extraction.registry import (
     build_structured_parsers,
 )
 from app.infrastructure.persistence.cdm_store import SQLCdmStore
+from app.infrastructure.persistence.claim_store import SQLClaimStore
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
@@ -124,14 +125,18 @@ def ingest_document(
     if document is None:
         raise HTTPException(status_code=500, detail="Document not found after create.")
 
-    # L2 orchestrator
+    # L2 orchestrator (+ L3 extraction→claim bridge via ClaimService)
+    from app.application.services.claim_service import ClaimService
+
     cdm_service = CdmService(SQLCdmStore(db))
+    claim_service = ClaimService(SQLClaimStore(db))
     mapper = NirMapper(cdm_service)
     orchestrator = ExtractionOrchestrator(
         parsers=build_structured_parsers(),
         expander=build_container_expander(),
         mapper=mapper,
         content_store=SQLDocumentContentStore(db),
+        claim_service=claim_service,
     )
     result = orchestrator.ingest_blob(
         document=document,

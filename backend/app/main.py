@@ -25,7 +25,6 @@ from app.api.routes.events import router as events_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
-from app.api.routes.ingest import router as ingest_router
 from app.api.routes.intake import router as intake_router
 from app.api.routes.objects import router as objects_router
 from app.api.routes.productivity import router as productivity_router
@@ -124,7 +123,6 @@ def create_app() -> FastAPI:
     app.include_router(assistant_router, prefix=settings.api_v1_prefix)
     app.include_router(eval_history_router, prefix=settings.api_v1_prefix)
     app.include_router(intake_router, prefix=settings.api_v1_prefix)
-    app.include_router(ingest_router, prefix=settings.api_v1_prefix)
     app.include_router(search_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     # L1 knowledge-plane surfaces (ADR-022 OpenAPI contracts).
