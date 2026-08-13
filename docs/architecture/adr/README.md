@@ -23,6 +23,8 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-036 | Frozen deterministic fast-path | [ADR-036](ADR-036-frozen-fast-path.md) (L4) | L4 |
 | ADR-037 | Tool registry & execution | [ADR-037](ADR-037-tool-registry-execution.md) (L5) | L5 |
 | ADR-038 | Tool evaluation gate | [ADR-038](ADR-038-tool-evaluation-gate.md) (L5) | L5 |
+| ADR-039 | Fact citation & confidence contract | [ADR-039](ADR-039-fact-citation-evidence-contract.md) (L6) | L6 |
+| ADR-040 | L6 evaluation gate | [ADR-040](ADR-040-l6-evaluation-gate.md) (L6) | L6 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

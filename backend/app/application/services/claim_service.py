@@ -102,7 +102,7 @@ class ClaimService:
         stored = self._store.get(claim_id)
         if stored is None:
             raise KeyError(f"Claim not found: {claim_id}")
-        claim, _ = stored
+        claim, spans = stored
         if claim.status is ClaimStatus.REJECTED:
             raise ValueError("Rejected claims cannot be promoted without a correction.")
         updated = Claim(
@@ -119,7 +119,7 @@ class ClaimService:
             extraction_confidence=claim.extraction_confidence,
             acl_scope=claim.acl_scope,
             supersedes_claim_id=claim.supersedes_claim_id,
-            spans=claim.spans,
+            spans=tuple(spans),
         )
         # Full upsert so provenance (ASSERTED for human confirmation) and the
         # preserved spans persist atomically (ADR-006 / FR-MET-009).

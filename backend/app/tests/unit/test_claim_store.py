@@ -126,6 +126,35 @@ def test_spans_roundtrip(service):
     assert spans[0].table_id == "t1"
 
 
+def test_confirm_preserves_source_spans(service):
+    """L3 regression: confirm must preserve the proposed claim's source spans.
+
+    propose(span) -> confirm() -> get() must return the original span. This
+    guards the pre-existing bug where confirm() re-persisted with an empty
+    span list (discarding stored spans), which the L6 fact-citation contract
+    depends on.
+    """
+    span = _span(kind=SpanKind.PAGE, source_id="obj:document:1", page=7)
+    claim = service.propose(
+        predicate_id="sanctioned_amount",
+        raw_value=5000,
+        source_text="Sanctioned amount.",
+        source_document_id="obj:document:1",
+        source_version=1,
+        spans=[span],
+        acl_scope='{"owner":"u:1"}',
+        fact_confidence=0.9,
+    )
+    confirmed = service.confirm(claim.claim_id, reviewer="u:1", assert_human=True)
+    assert confirmed.status is ClaimStatus.CONFIRMED
+    # spans survive confirm (original source span still present)
+    _, spans = service._store.get(claim.claim_id)
+    assert len(spans) == 1
+    assert spans[0].kind is SpanKind.PAGE
+    assert spans[0].source_id == "obj:document:1"
+    assert spans[0].page == 7
+
+
 def test_supersede_without_delete(service):
     old = service.propose(
         predicate_id="sanctioned_amount",
