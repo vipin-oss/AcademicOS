@@ -36,7 +36,7 @@ system was created. No migration was required (alembic head remains `0014`).
 14. `docs/architecture/adr/ADR-040-l6-evaluation-gate.md`
 15. `docs/architecture/adr/README.md`
 
-This matches exactly the L6 commit diff (`git diff d9c0ad0..HEAD`) plus
+This matches exactly the L6 commit diff (`git diff d9c0ad0..b79c296`) plus
 `MANIFEST.md`.
 
 ## Test results (verified in the commit environment)
@@ -45,10 +45,9 @@ This matches exactly the L6 commit diff (`git diff d9c0ad0..HEAD`) plus
 - **L1–L4 claim/span/evidence regression** (claim, span, evidence, confirmation, decision): **144 passed**
 - **Intake module (in isolation):** **11 passed** (pre-existing pause/resume timing
   test, unrelated to L6, passes when run in isolation)
-- **Full backend suite:** documented at `2108–2109 passed, 2 skipped` for the
-  non-intake portion plus `11 passed` for intake in isolation. The only
-  full-suite failure is the pre-existing flaky/timing
-  `test_intake_queue_api.py::TestPauseResumeRestart::test_finished_items_are_never_restarted`
+- **Full backend suite:** non-intake portion `2108–2109 passed, 2 skipped`; intake
+  `11 passed` in isolation. The only full-suite failure is the pre-existing
+  flaky/timing `test_intake_queue_api.py::TestPauseResumeRestart::test_finished_items_are_never_restarted`
   (classification D — flaky; passes in isolation). 2 skips are PostgreSQL-only
   JSONB cases (environment C).
 - `git diff --check`: clean. `git diff --cached --check`: clean.
