@@ -176,6 +176,15 @@ def test_migration_0015_chains_off_0014() -> None:
     assert "document_chunks" in text  # the composite-PK table is named explicitly
 
 
-def test_init_db_stamp_is_0015() -> None:
+def test_init_db_stamp_tracks_migration_head() -> None:
+    # init_db.py stamps the CURRENT migration head (0015 at M3; later milestones
+    # advance it — e.g. 0016 typed claims at M5). Assert it points at a real
+    # migration file rather than pinning a specific number.
     text = (REPO / "backend" / "scripts" / "init_db.py").read_text(encoding="utf-8")
-    assert 'CURRENT_MIGRATION = "0015_tenancy_stamping"' in text
+    import re
+
+    match = re.search(r'CURRENT_MIGRATION = "([0-9a-z_]+)"', text)
+    assert match is not None, "init_db.py must stamp a migration revision"
+    revision = match.group(1)
+    versions = REPO / "backend" / "alembic" / "versions"
+    assert any(p.name.startswith(revision) for p in versions.glob("*.py")), revision

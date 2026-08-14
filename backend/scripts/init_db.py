@@ -64,7 +64,7 @@ from app.infrastructure.db.models.tool_call_log_model import (  # noqa: F401
     ToolCallLogModel,
 )
 
-CURRENT_MIGRATION = "0015_tenancy_stamping"
+CURRENT_MIGRATION = "0016_typed_claims"
 
 
 def main() -> None:

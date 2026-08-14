@@ -26,7 +26,35 @@ def _utcnow_iso() -> str:
     return dt.datetime.now(dt.UTC).isoformat()
 
 
+def _typed_columns(value: dict) -> tuple[float | None, str | None, str | None]:
+    """V3 M5 (audit A1): the writer-populated typed projections of ``value``.
+
+    ``value_number`` carries the ``amount`` of a money value; ``value_date``
+    and ``value_text`` carry the ``value`` string of date/text values. These
+    columns make rung-0 fact lookups an indexed scan instead of a JSONB scan.
+    Unknown/raw values project to ``(None, None, None)`` — never dropped.
+    """
+
+    if not isinstance(value, dict):
+        return (None, None, None)
+    kind = value.get("kind")
+    if kind == "money":
+        amount = value.get("amount")
+        number = float(amount) if isinstance(amount, int | float) and not isinstance(amount, bool) else None
+        return (number, None, None)
+    if kind == "date":
+        text = value.get("value")
+        s = str(text) if text is not None else None
+        return (None, s, s)
+    if kind == "text":
+        text = value.get("value")
+        s = str(text) if text is not None else None
+        return (None, s, None)
+    return (None, None, None)
+
+
 def _to_model(claim: Claim, now: str) -> ClaimModel:
+    value_number, value_text, value_date = _typed_columns(claim.value)
     return ClaimModel(
         claim_id=claim.claim_id,
         predicate_id=claim.predicate_id,
@@ -41,6 +69,9 @@ def _to_model(claim: Claim, now: str) -> ClaimModel:
         extraction_confidence=claim.extraction_confidence,
         acl_scope=claim.acl_scope,
         supersedes_claim_id=claim.supersedes_claim_id,
+        value_number=value_number,
+        value_text=value_text,
+        value_date=value_date,
         created_at=now,
         updated_at=now,
     )
@@ -113,6 +144,7 @@ class SQLClaimStore(ClaimStore):
         ).scalars().first()
         if existing is not None:
             # idempotent in-place update
+            value_number, value_text, value_date = _typed_columns(claim.value)
             existing.predicate_id = claim.predicate_id
             existing.predicate_version = claim.predicate_version
             existing.value_schema = claim.value_schema
@@ -124,6 +156,9 @@ class SQLClaimStore(ClaimStore):
             existing.extraction_confidence = claim.extraction_confidence
             existing.acl_scope = claim.acl_scope
             existing.supersedes_claim_id = claim.supersedes_claim_id
+            existing.value_number = value_number
+            existing.value_text = value_text
+            existing.value_date = value_date
             existing.updated_at = now
         else:
             self._session.add(_to_model(claim, now))
@@ -207,3 +242,25 @@ class SQLClaimStore(ClaimStore):
             )
         ).scalars().all()
         return [_from_model(r) for r in rows]
+
+    def confirmed_by_predicate(
+        self, predicate_id: str
+    ) -> list[tuple[Claim, list[Span]]]:
+        rows = self._session.execute(
+            select(ClaimModel)
+            .where(
+                ClaimModel.predicate_id == predicate_id,
+                ClaimModel.status == ClaimStatus.CONFIRMED.value,
+            )
+            .order_by(ClaimModel.created_at, ClaimModel.claim_id)
+        ).scalars().all()
+        if not rows:
+            return []
+        ids = [r.claim_id for r in rows]
+        span_rows = self._session.execute(
+            select(ClaimSpanModel).where(ClaimSpanModel.claim_id.in_(ids))
+        ).scalars().all()
+        spans_by_claim: dict[str, list[Span]] = {}
+        for s in span_rows:
+            spans_by_claim.setdefault(s.claim_id, []).append(_from_span_model(s))
+        return [(_from_model(r), spans_by_claim.get(r.claim_id, [])) for r in rows]

@@ -69,9 +69,11 @@ from app.application.use_cases.ai.handoff import SUPPORTED_TASKS, HandoffUseCase
 from app.application.use_cases.ai.list_ai_models import ListAiModelsUseCase
 from app.application.use_cases.ai.list_ai_providers import ListAiProvidersUseCase
 from app.application.use_cases.ai.related_documents import RelatedDocumentsUseCase
+from app.application.use_cases.ai.rung0 import Rung0ClaimAnswerer
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
 from app.application.use_cases.assistant.helpers import append_message, derive_title
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
+from app.core.config import settings
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.vector_repository import VectorRepository
 from app.domain.value_objects.enums import ObjectType
@@ -79,6 +81,7 @@ from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
 from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
 from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+from app.infrastructure.persistence.claim_store import SQLClaimStore
 from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
 from app.infrastructure.persistence.document_chunk_store import SQLDocumentChunkStore
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
@@ -345,6 +348,13 @@ class QAResponseModel(BaseModel):
     output_tokens: int = 0
     token_usage_estimated: bool = True
     latency_ms: int = 0
+    # V3 M5 — answering-ladder contract (blueprint §M5). Optional/defaulted so
+    # existing clients are unaffected. rung=0 means a confirmed-claims answer
+    # (source_class="claims", cost 0, no model). LLM answers report rung=None.
+    rung: int | None = None
+    source_class: str = ""
+    cost: float = 0.0
+    evidence: list[dict] = Field(default_factory=list)
 
 
 def _qa_retrieval(
@@ -402,6 +412,24 @@ def grounded_qa(
     """
     if not core.config.enabled or not core.config.feature_flags.get("qa", False):
         raise HTTPException(status_code=404)
+
+    # V3 M5 rung-0: answer from CONFIRMED claims before any retrieval or LLM
+    # (blueprint §B1 answering ladder, §M5 fast path). Deterministic and free;
+    # a miss simply falls through to the grounded pipeline. Feature-flagged
+    # (ai_rung0_enabled) for rollback; no LLM is ever invoked here.
+    if settings.ai_rung0_enabled:
+        rung0 = Rung0ClaimAnswerer(SQLClaimStore(db)).answer(body.question, str(user.id))
+        if rung0 is not None:
+            return QAResponseModel(
+                answer=rung0.value,
+                available=True,
+                retrieved_count=0,
+                citations=[],
+                rung=rung0.rung,
+                source_class=rung0.source_class,
+                cost=0.0,
+                evidence=rung0.to_dict()["evidence"],
+            )
 
     # M13.3.1 full-system audit: resolve the embedder/vector AFTER the gate
     # (the same get_embedder/get_vector_repository functions /search uses) so a

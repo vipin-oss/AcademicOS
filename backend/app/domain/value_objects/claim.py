@@ -18,6 +18,10 @@ The Claim lifecycle (ADR-006 / ADR-021):
 - ``CONFIRMED`` — human-approved (or ASSERTED); the only auto-usable truth.
 - ``REJECTED`` — human-rejected; kept for audit, never auto-usable.
 - ``SUPERSEDED`` — replaced by a newer version/fact (never deleted).
+- ``AUTO_SUGGESTED`` — machine-suggested with high confidence (V3 M5, audit
+  A10): searchable, AI-readable, shown with a "not yet confirmed" badge — but
+  NEVER authoritative, never cited as institutional fact, never exported.
+  Bulk review still needs a human confirmation to create CONFIRMED truth.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ class ClaimStatus(str, Enum):
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
     SUPERSEDED = "superseded"
+    AUTO_SUGGESTED = "auto_suggested"
 
 
 #: OCR/vision-derived fact confidence is capped at medium (ADR-004).
