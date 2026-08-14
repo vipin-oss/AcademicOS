@@ -32,6 +32,8 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-045 | L9 hard capability gates | [ADR-045](ADR-045-l9-hard-capability-gates.md) (L9) | L9 |
 | ADR-046 | L9 isolation matrix & scale budgets | [ADR-046](ADR-046-l9-isolation-matrix-and-scale-budgets.md) (L9) | L9 |
 | ADR-047 | Q5 claim-store scaling decision | [ADR-047](ADR-047-claim-store-scaling-measurements.md) (L9) | L9 |
+| ADR-048 | L10 ingestion scale worker pool & DLQ | [ADR-048](ADR-048-l10-ingestion-scale-worker-pool.md) (L10) | L10 |
+| ADR-049 | L10 evaluation gate | [ADR-049](ADR-049-l10-evaluation-gate.md) (L10) | L10 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

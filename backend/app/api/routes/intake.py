@@ -133,6 +133,7 @@ def get_job_manager(request: Request) -> IntakeJobManager:
             _repository_factory,
             LocalFileStorage(settings.storage_dir),
             build_document_parsers(),
+            max_workers=settings.intake_max_workers,
         )
         manager.reconcile_interrupted()
         request.app.state.intake_jobs = manager
@@ -184,6 +185,48 @@ def list_intake_sessions(
         total_count=result.total_count,
         page=result.page,
         page_size=result.page_size,
+    )
+
+
+class DeadLetterEntryModel(BaseModel):
+    kind: str
+    id: str
+    status: str
+    session_id: str | None = None
+    relative_path: str | None = None
+    error: str = ""
+    reason: str = ""
+    attempts: int = 0
+    retryable: bool = False
+    resumable: bool = False
+
+
+class DeadLetterResponseModel(BaseModel):
+    sessions: list[DeadLetterEntryModel]
+    items: list[DeadLetterEntryModel]
+    total: int
+
+
+@router.get("/dead-letter", response_model=DeadLetterResponseModel)
+def intake_dead_letter(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    limit: int = Query(100, ge=1, le=500),
+) -> DeadLetterResponseModel:
+    """L10 DLQ view: failed sessions (resumable) and failed items (retryable).
+    Surfaces the existing failed/reconcile state as a queryable, actionable
+    dead-letter queue — no second persistence system (ADR-048)."""
+    from app.application.use_cases.intake.dead_letter import ListDeadLetterUseCase
+
+    view = ListDeadLetterUseCase(repo).execute(limit=limit)
+    to_model = lambda e: DeadLetterEntryModel(  # noqa: E731
+        kind=e.kind, id=e.id, status=e.status, session_id=e.session_id,
+        relative_path=e.relative_path, error=e.error, reason=e.reason,
+        attempts=e.attempts, retryable=e.retryable, resumable=e.resumable,
+    )
+    return DeadLetterResponseModel(
+        sessions=[to_model(e) for e in view.sessions],
+        items=[to_model(e) for e in view.items],
+        total=view.total,
     )
 
 

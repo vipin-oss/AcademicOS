@@ -16,8 +16,8 @@ rewrite L1. PDF/OCR is the first **engine** of L2, not a level of its own.
 | L6 | Evidence & Citation Extension | `done` | fact citations, confidence UI | L1 + L5 |
 | L7 | Memory v2 | `done` | persistent memory | L1 + L5 |
 | L8 | Cross-Domain Completion | `done` | multi-hop, absence, temporal, compare | L4 + L5 |
-| L9 | Evaluation v1 | `in_progress` | hard capability gates, isolation matrix, scale budgets | L1–L8 |
-| L10 | Ingestion Scale | `not_started` | worker pool, DLQ | L2 |
+| L9 | Evaluation v1 | `done` | hard capability gates, isolation matrix, scale budgets | L1–L8 |
+| L10 | Ingestion Scale | `in_progress` | worker pool, DLQ | L2 |
 | L11 | Storage Scale | `not_started` | object storage behind port | L2 |
 | L12 | Tenancy | `not_started` | partition keys, isolation | L1 stamping |
 | L13 | Semantic Retrieval Upgrade | `not_started` | real embedder + alias swap | L1 |

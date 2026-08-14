@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # File storage (local adapter; Drive/OneDrive adapters plug into the same port)
     storage_dir: str = "./storage"
 
+    # L10 — bounded intake worker pool size (default 1 = single dispatcher).
+    intake_max_workers: int = 1
+
     # Public base URL of this API, used to build absolute download links
     public_base_url: str = "http://localhost:8000"
 
