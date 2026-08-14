@@ -80,19 +80,20 @@ Write-Host "root: $ProjectRoot"
 
 Push-Location $Backend
 try {
+    # Pre-existing flaky test (NOT introduced by V3): a CPU-timing budget that
+    # fails intermittently on shared/virtualised hardware. Verified failing on
+    # pristine R1 with zero V3 code. Shared by every milestone gate.
+    $deselect = @()
+    if ($SkipFlaky) {
+        $deselect = @(
+            "--deselect",
+            "app/tests/eval/test_l10_scale_budgets.py::test_l10_dlq_scale_ci_safe[10000]"
+        )
+    }
+
     switch ($Milestone.ToUpper()) {
 
         "M1" {
-            # Pre-existing flaky test (NOT introduced by M1): a CPU-timing
-            # budget that fails intermittently on shared/virtualised hardware.
-            # Verified failing on pristine R1 with zero M1 code.
-            $deselect = @()
-            if ($SkipFlaky) {
-                $deselect = @(
-                    "--deselect",
-                    "app/tests/eval/test_l10_scale_budgets.py::test_l10_dlq_scale_ci_safe[10000]"
-                )
-            }
 
             Invoke-Step "Application imports" {
                 & $Python -c "from app.main import app; assert len(app.routes) > 300"
@@ -123,8 +124,59 @@ assert names and names[0] == 'TelemetryMiddleware', names
             }
         }
 
+        # V3 M2..M5 share one gate shape: milestone suite + architecture
+        # guardrails + full regression (the known-flaky CPU-timing budget test
+        # is deselected via -SkipFlaky, as in M1).
+        "M2" {
+            Invoke-Step "M2 suite (PDF repair / dead-route removal)" {
+                & $Python -m pytest app/tests/unit/test_intake_extraction_engines.py -q -p no:cacheprovider
+            }
+            Invoke-Step "Architecture guardrails" {
+                & $Python -m pytest app/tests/architecture -q -p no:cacheprovider
+            }
+            Invoke-Step "Full regression" {
+                & $Python -m pytest -q -p no:cacheprovider @deselect
+            }
+        }
+
+        "M3" {
+            Invoke-Step "M3 suite (tenancy stamping)" {
+                & $Python -m pytest app/tests/integration/test_m3_tenancy_stamping.py -q -p no:cacheprovider
+            }
+            Invoke-Step "Architecture guardrails" {
+                & $Python -m pytest app/tests/architecture -q -p no:cacheprovider
+            }
+            Invoke-Step "Full regression" {
+                & $Python -m pytest -q -p no:cacheprovider @deselect
+            }
+        }
+
+        "M4" {
+            Invoke-Step "M4 suite (Hindi search / tokenizer)" {
+                & $Python -m pytest app/tests/unit/test_tokenizer.py app/tests/integration/test_m4_hindi_search.py -q -p no:cacheprovider
+            }
+            Invoke-Step "Architecture guardrails" {
+                & $Python -m pytest app/tests/architecture -q -p no:cacheprovider
+            }
+            Invoke-Step "Full regression" {
+                & $Python -m pytest -q -p no:cacheprovider @deselect
+            }
+        }
+
+        "M5" {
+            Invoke-Step "M5 suite (typed claims / rung-0)" {
+                & $Python -m pytest app/tests/integration/test_m5_typed_claims.py -q -p no:cacheprovider
+            }
+            Invoke-Step "Architecture guardrails" {
+                & $Python -m pytest app/tests/architecture -q -p no:cacheprovider
+            }
+            Invoke-Step "Full regression" {
+                & $Python -m pytest -q -p no:cacheprovider @deselect
+            }
+        }
+
         default {
-            Write-Error "Unknown milestone '$Milestone'. Known: M1"
+            Write-Error "Unknown milestone '$Milestone'. Known: M1 M2 M3 M4 M5"
             exit 2
         }
     }
