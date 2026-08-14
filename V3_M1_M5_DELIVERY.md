@@ -34,10 +34,10 @@
 | `9e268ec` | `9e268ec2d802e50e55b68bccf2ef14c5a12f33ff` | `feat(v3-m5)` — typed claims + rung-0 fast path |
 | `7d37876` | `7d3787688fde3b622af5a57f4b442fef242f8edd` | `audit` — rung-0 ACL pre-filter, deterministic CI, rung-0 baseline |
 | `105fad7` | `105fad7…` | `chore` — verify gate extended to M2–M5 |
-| `053ca0c` | `053ca0c97e723416758d13d68a2b8ec4f4909231` | `docs` — delivery package |
+| `…` | `…` | `docs` — this delivery package (top of `V3-M2-M5`) |
 
 **Base SHA:** `d14be4ffe0de2272861a4fee438ef0f25ce196b7` (R1)
-**Final SHA:** `053ca0c97e723416758d13d68a2b8ec4f4909231` (HEAD of `V3-M2-M5`)
+**Final SHA (HEAD of `V3-M2-M5`):** reported in the hand-off message (the last commit is this document itself). The functional final is `7d37876` (post-M5 audit); the two commits above it are docs-only.
 
 ---
 
