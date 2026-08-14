@@ -172,15 +172,20 @@ class IntakeJobManager:
             flags["deleted"] = True
 
     def _is_active(self, session_id: str) -> bool:
-        """True when ``session_id`` is actively draining on any worker."""
-        with self._lock:
-            active_ids = getattr(self, "_active_ids", None)
-            if active_ids is not None:
-                return session_id in active_ids
-            return self._active_id == session_id
+        """True when ``session_id`` is actively draining on any worker.
+
+        Lock-free pure read. Callers that need consistency must hold
+        ``self._lock`` themselves (e.g. ``enqueue``); the public
+        ``is_active`` acquires it for the lock-free caller.
+        """
+        active_ids = getattr(self, "_active_ids", None)
+        if active_ids is not None:
+            return session_id in active_ids
+        return self._active_id == session_id
 
     def is_active(self, session_id: str) -> bool:
-        return self._is_active(session_id)
+        with self._lock:
+            return self._is_active(session_id)
 
     def queued_count(self) -> int:
         with self._lock:
