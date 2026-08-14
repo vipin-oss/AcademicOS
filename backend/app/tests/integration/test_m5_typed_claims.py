@@ -133,7 +133,7 @@ def test_rung0_answers_from_confirmed_claim_with_evidence(db) -> None:
     db.commit()
 
     answerer = Rung0ClaimAnswerer(store)
-    answer = answerer.answer("HSRF letter mein sanctioned amount kya hai?", "u:1")
+    answer = answerer.answer("HSRF letter mein sanctioned amount kya hai?", principal={"sub": "u:1", "roles": []})
     assert answer is not None
     assert answer.rung == 0
     assert answer.source_class == "claims"
@@ -154,7 +154,7 @@ def test_rung0_never_returns_auto_suggested(db) -> None:
     store.set_status(suggested.claim_id, ClaimStatus.AUTO_SUGGESTED)
     db.commit()
 
-    answer = Rung0ClaimAnswerer(store).answer("What is the sanctioned amount?", "u:1")
+    answer = Rung0ClaimAnswerer(store).answer("What is the sanctioned amount?", principal={"sub": "u:1", "roles": []})
     assert answer is None  # AUTO_SUGGESTED is never authoritative
 
 
@@ -165,9 +165,41 @@ def test_rung0_misses_without_matching_predicate(db) -> None:
     service.confirm(claim.claim_id)
     db.commit()
 
-    answer = Rung0ClaimAnswerer(store).answer("Who is the principal investigator?", "u:1")
+    answer = Rung0ClaimAnswerer(store).answer("Who is the principal investigator?", principal={"sub": "u:1", "roles": []})
     # No CONFIRMED principal_investigator claim exists -> fall through.
     assert answer is None
+
+
+def test_rung0_respects_acl_read_scope(db) -> None:
+    # A confirmed claim whose source scope denies the caller must NOT be served
+    # (permission is a pre-filter, never a post-filter — same contract as
+    # retrieval).
+    from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+
+    store = SQLClaimStore(db)
+    service = ClaimService(store)
+    claim = _propose(service, "sanctioned_amount", "₹50,00,000", "Amount.")
+    service.confirm(claim.claim_id)
+    # Restrict the claim's source ACL to a different owner + an explicit
+    # reader grant that excludes u:1 (so the evaluator's grant-checking path
+    # applies; owner-only scopes are intentionally fail-open legacy data until
+    # M9 flips to deny-by-default).
+    store._session.execute(
+        sqlalchemy.text(
+            "UPDATE claims SET acl_scope = :scope WHERE claim_id = :cid"
+        ),
+        {"scope": '{"owner":"u:999","readers":["u:777"],"writers":[],"managers":[]}',
+         "cid": claim.claim_id},
+    )
+    db.commit()
+
+    answerer = Rung0ClaimAnswerer(store, permission_evaluator=ObjectPermissionEvaluator())
+    # Caller u:1 is not the owner and has no reader grant -> denied.
+    denied = answerer.answer("sanctioned amount?", principal={"sub": "u:1", "roles": []})
+    assert denied is None
+    # The owner u:999 is allowed.
+    allowed = answerer.answer("sanctioned amount?", principal={"sub": "u:999", "roles": []})
+    assert allowed is not None and allowed.predicate_id == "sanctioned_amount"
 
 
 def test_rung0_p95_smoke_budget(db) -> None:
@@ -184,7 +216,7 @@ def test_rung0_p95_smoke_budget(db) -> None:
     latencies = []
     for _ in range(50):
         t0 = time.perf_counter()
-        assert answerer.answer("sanctioned amount?", "u:1") is not None
+        assert answerer.answer("sanctioned amount?", principal={"sub": "u:1", "roles": []}) is not None
         latencies.append((time.perf_counter() - t0) * 1000.0)
     p95 = sorted(latencies)[int(len(latencies) * 0.95)]
     assert p95 < 500.0, f"rung-0 p95 {p95:.2f}ms exceeded budget"

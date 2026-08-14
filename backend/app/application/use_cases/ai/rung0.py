@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 
 from app.application.knowledge.predicate_catalogue import CATALOGUE
 from app.application.ports.claim_store import ClaimStore
+from app.application.ports.permission import PermissionEvaluator
 from app.domain.value_objects.claim import Claim
+from app.domain.value_objects.enums import PermissionAction
 from app.domain.value_objects.span import Span
 
 #: Word tokens (Unicode letters/digits, no underscore) — sufficient for
@@ -105,17 +107,29 @@ def _evidence(spans: list[Span]) -> tuple[Rung0Evidence, ...]:
 
 
 class Rung0ClaimAnswerer:
-    """Deterministic confirmed-claims fast path (no LLM, no retrieval)."""
+    """Deterministic confirmed-claims fast path (no LLM, no retrieval).
 
-    def __init__(self, claim_store: ClaimStore) -> None:
+    Permission-aware: a claim is served only when the caller may READ its
+    source scope (the same ``PermissionEvaluator`` contract the retrieval path
+    uses — permission is a pre-filter, never a post-filter). When no evaluator
+    is supplied, no claim is filtered (callers that do not yet enforce ACL may
+    inject ``None``), matching the retrieval default.
+    """
+
+    def __init__(
+        self,
+        claim_store: ClaimStore,
+        permission_evaluator: PermissionEvaluator | None = None,
+    ) -> None:
         self._claim_store = claim_store
+        self._permission_evaluator = permission_evaluator
 
-    def answer(self, question: str, asked_by: str) -> Rung0Answer | None:
-        """Answer from a confirmed claim, or ``None`` to fall through.
+    def answer(self, question: str, principal: dict | None = None) -> Rung0Answer | None:
+        """Answer from a confirmed claim the principal may READ, or ``None``.
 
-        ``asked_by`` is accepted for a stable signature but is intentionally
-        unused: rung-0 consults only CONFIRMED claims, whose authority comes
-        from human confirmation, not from the caller's identity.
+        ``principal`` is ``{"sub": ..., "roles": [...]}`` (the same shape the
+        retrieval path uses). A claim whose ``acl_scope`` denies the principal
+        is skipped, so rung-0 never leaks a restricted fact.
         """
         tokens = _question_tokens(question)
         if not tokens:
@@ -126,16 +140,20 @@ class Rung0ClaimAnswerer:
             if not predicate_tokens or not predicate_tokens.issubset(tokens):
                 continue
             confirmed = self._claim_store.confirmed_by_predicate(spec.predicate_id)
-            if not confirmed:
-                continue
-            claim, spans = confirmed[0]  # newest-first deterministic order
-            return Rung0Answer(
-                predicate_id=claim.predicate_id,
-                value=_claim_value_text(claim),
-                source_document_id=claim.source_document_id,
-                source_version=claim.source_version,
-                evidence=_evidence(spans),
-            )
+            for claim, spans in confirmed:
+                if self._permission_evaluator is not None and not self._permission_evaluator.can(
+                    principal=principal,
+                    scope=claim.acl_scope,
+                    action=PermissionAction.READ,
+                ):
+                    continue
+                return Rung0Answer(
+                    predicate_id=claim.predicate_id,
+                    value=_claim_value_text(claim),
+                    source_document_id=claim.source_document_id,
+                    source_version=claim.source_version,
+                    evidence=_evidence(spans),
+                )
         return None
 
 

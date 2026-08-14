@@ -72,6 +72,7 @@ from app.application.use_cases.ai.related_documents import RelatedDocumentsUseCa
 from app.application.use_cases.ai.rung0 import Rung0ClaimAnswerer
 from app.application.use_cases.ai.summarize_document import SummarizeDocumentUseCase
 from app.application.use_cases.assistant.helpers import append_message, derive_title
+from app.application.use_cases.auth.helpers import get_roles
 from app.application.use_cases.search.search_objects import SearchObjectsUseCase
 from app.core.config import settings
 from app.domain.entities.object import UniversalObject
@@ -416,9 +417,17 @@ def grounded_qa(
     # V3 M5 rung-0: answer from CONFIRMED claims before any retrieval or LLM
     # (blueprint §B1 answering ladder, §M5 fast path). Deterministic and free;
     # a miss simply falls through to the grounded pipeline. Feature-flagged
-    # (ai_rung0_enabled) for rollback; no LLM is ever invoked here.
+    # (ai_rung0_enabled) for rollback; no LLM is ever invoked here. Permission
+    # is a pre-filter: a claim is served only if the caller may READ its scope
+    # (the same ObjectPermissionEvaluator the retrieval path uses).
     if settings.ai_rung0_enabled:
-        rung0 = Rung0ClaimAnswerer(SQLClaimStore(db)).answer(body.question, str(user.id))
+        rung0 = Rung0ClaimAnswerer(
+            SQLClaimStore(db),
+            permission_evaluator=ObjectPermissionEvaluator(),
+        ).answer(
+            body.question,
+            principal={"sub": str(user.id), "roles": get_roles(user)},
+        )
         if rung0 is not None:
             return QAResponseModel(
                 answer=rung0.value,
