@@ -71,7 +71,15 @@ def _registry(db: Session):
     from app.application.services.persistent_memory import PersistentMemoryService
 
     memory = PersistentMemoryService(repo, ObjectPermissionEvaluator())
-    return build_tool_registry(repo, memory=memory)
+    # L8: cross-domain tools are exposed through the same executor seam
+    # (additive; backward compatible when not wired).
+    from app.application.services.cross_domain import CrossDomainService
+    from app.application.services.graph_runtime import GraphRuntimeService
+
+    cross_domain = CrossDomainService(
+        repo, GraphRuntimeService(repo, ObjectPermissionEvaluator()), ObjectPermissionEvaluator()
+    )
+    return build_tool_registry(repo, memory=memory, cross_domain=cross_domain)
 
 
 def _executor(db: Session) -> ToolExecutor:

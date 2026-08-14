@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 
 ALLOWED_LANGUAGES = frozenset({"en", "hi-en"})
-ALLOWED_GATE_LEVELS = frozenset({"l0_data", "l4", "l5", "l7", "l9"})
+ALLOWED_GATE_LEVELS = frozenset({"l0_data", "l4", "l5", "l7", "l8", "l9"})
 FORBIDDEN_CASE_KEYS = frozenset(
     {"intent", "INTENT_", "expected_intent", "intent_code", "parsed_intent"}
 )
