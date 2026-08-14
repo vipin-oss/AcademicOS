@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.middleware.telemetry import TelemetryMiddleware
 from app.api.routes.ai import router as ai_router
 from app.api.routes.assistant import router as assistant_router
 from app.api.routes.auth import router as auth_router
@@ -22,6 +23,7 @@ from app.api.routes.document_viewer import router as document_viewer_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.eval_history import router as eval_history_router
 from app.api.routes.events import router as events_router
+from app.api.routes.evidence import router as evidence_router
 from app.api.routes.faculty import router as faculty_router
 from app.api.routes.finance import router as finance_router
 from app.api.routes.health import router as health_router
@@ -36,7 +38,6 @@ from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
-from app.api.routes.evidence import router as evidence_router
 from app.api.routes.tools import router as tools_router
 from app.application.use_cases.auth.helpers import bootstrap_admin
 from app.core.config import settings
@@ -51,11 +52,36 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifecycle: on shutdown, release AI Core gateway resources
-    exactly once (M11.3.3). The AI Core owns the gateway lifecycle; this wires
-    that ownership into the FastAPI shutdown so httpx clients are closed
-    gracefully. Best-effort - cleanup never blocks shutdown."""
+    """Application lifecycle.
+
+    Startup (V3 M1): pre-warm the default AI provider with one minimal
+    generation so the first real user request never pays the model-load cost.
+    Best-effort — a failed warm-up is reported by ``/health/ready`` and must
+    never block startup.
+
+    Shutdown (M11.3.3): release AI Core gateway resources exactly once. The
+    AI Core owns the gateway lifecycle; this wires that ownership into the
+    FastAPI shutdown so httpx clients are closed gracefully. Best-effort —
+    cleanup never blocks shutdown.
+    """
+    try:
+        from app.api.dependencies.ai import get_ai_core
+        from app.application.ai.warmup import prewarm
+
+        # Composition root: the API layer resolves the AI Core and injects it,
+        # keeping the application layer free of api-layer imports.
+        state = prewarm(get_ai_core())
+        if state.resident:
+            logger.info(
+                "AI pre-warm complete (model=%s, %.0fms)", state.model, state.warmup_ms or 0.0
+            )
+        else:
+            logger.info("AI pre-warm skipped: %s", state.detail or "not configured")
+    except Exception:  # noqa: BLE001 - warm-up must never block startup
+        logger.exception("AI pre-warm failed")
+
     yield
+
     try:
         from app.api.dependencies.ai import reset_ai_core_cache
 
@@ -80,6 +106,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # V3 M1: request identity + total_ms on every request. Added AFTER CORS so
+    # it runs outermost (Starlette applies middleware in reverse), meaning the
+    # measured duration covers the whole request including CORS handling.
+    app.add_middleware(TelemetryMiddleware)
 
     @app.exception_handler(AcademicosError)
     async def handle_academicos_error(
