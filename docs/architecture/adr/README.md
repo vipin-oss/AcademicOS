@@ -29,6 +29,9 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-042 | L7 evaluation gate | [ADR-042](ADR-042-l7-evaluation-gate.md) (L7) | L7 |
 | ADR-043 | L8 cross-domain completion | [ADR-043](ADR-043-l8-cross-domain-completion.md) (L8) | L8 |
 | ADR-044 | L8 evaluation gate | [ADR-044](ADR-044-l8-evaluation-gate.md) (L8) | L8 |
+| ADR-045 | L9 hard capability gates | [ADR-045](ADR-045-l9-hard-capability-gates.md) (L9) | L9 |
+| ADR-046 | L9 isolation matrix & scale budgets | [ADR-046](ADR-046-l9-isolation-matrix-and-scale-budgets.md) (L9) | L9 |
+| ADR-047 | Q5 claim-store scaling decision | [ADR-047](ADR-047-claim-store-scaling-measurements.md) (L9) | L9 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.
