@@ -27,6 +27,8 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-040 | L6 evaluation gate | [ADR-040](ADR-040-l6-evaluation-gate.md) (L6) | L6 |
 | ADR-041 | L7 memory v2 persistent layer | [ADR-041](ADR-041-l7-memory-v2-persistent-layer.md) (L7) | L7 |
 | ADR-042 | L7 evaluation gate | [ADR-042](ADR-042-l7-evaluation-gate.md) (L7) | L7 |
+| ADR-043 | L8 cross-domain completion | [ADR-043](ADR-043-l8-cross-domain-completion.md) (L8) | L8 |
+| ADR-044 | L8 evaluation gate | [ADR-044](ADR-044-l8-evaluation-gate.md) (L8) | L8 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.
