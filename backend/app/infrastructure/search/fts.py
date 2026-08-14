@@ -23,12 +23,13 @@ SQLite — never an N+1 loop). Query results are bounded by ``limit``.
 from __future__ import annotations
 
 import logging
-import re
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+
+from app.infrastructure.search.tokenizer import fold_diacritics, fts_tokens
 
 _log = logging.getLogger(__name__)
 
@@ -87,11 +88,6 @@ def ensure_fts_schema(engine: Engine) -> None:
         conn.execute(text(ddl))
 
 
-def fts_tokens(query: str) -> list[str]:
-    """Deterministic tokenization for FTS queries (mirrors ``simple``)."""
-    return re.findall(r"[a-z0-9]+", (query or "").lower())
-
-
 def _pg_tsquery(query: str) -> str:
     tokens = fts_tokens(query)
     if not tokens:
@@ -142,7 +138,17 @@ class SQLFTSRepository:
         tenant_id: str = "default",
         owner_user_id: str = "default",
     ) -> None:
-        """Insert/replace one FTS row (idempotent; caller owns the tx)."""
+        """Insert/replace one FTS row (idempotent; caller owns the tx).
+
+        V3 M4: the four text fields are diacritic-folded before storage so the
+        database tokenizer's tokens exactly equal ``fts_tokens`` of the query
+        (blueprint A3 — query tokens == index tokens). Folding is symmetric and
+        a no-op for ASCII, so English is unaffected.
+        """
+        title = fold_diacritics(title)
+        metadata_text = fold_diacritics(metadata_text)
+        content_text = fold_diacritics(content_text)
+        chunks_text = fold_diacritics(chunks_text)
         if self._session.get_bind().dialect.name == "postgresql":
             self._session.execute(
                 text(

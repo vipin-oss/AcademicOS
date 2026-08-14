@@ -36,6 +36,7 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-049 | L10 evaluation gate | [ADR-049](ADR-049-l10-evaluation-gate.md) (L10) | L10 |
 | ADR-050 | Ollama configured as OpenAI-compatible provider | [ADR-050](ADR-050-ollama-openai-compatible-configuration.md) (V3 M1) | V3 M1 |
 | ADR-051 | Two PDF-reader ports distinct; dead `/documents/ingest` removed | [ADR-051](ADR-051-v3-m2-pdf-reader-and-pipeline-reconciliation.md) (V3 M2) | V3 M2 |
+| ADR-052 | Unicode-first tokenization (diacritic folding) + OCR engine choice | [ADR-052](ADR-052-v3-m4-unicode-tokenization-and-ocr.md) (V3 M4) | V3 M4 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

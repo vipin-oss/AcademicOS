@@ -98,8 +98,9 @@ def test_open_decisions_remain_undecided():
     text = (ARCH / "OPEN_DECISIONS.md").read_text(encoding="utf-8")
     for qid in [f"Q{i}" for i in range(1, 11)]:
         assert qid in text
-    # Every row that names a Q must still say undecided.
-    assert text.lower().count("undecided") >= 10
+    # Each currently-open Q must still say "undecided" (Q5 resolved at L9 via
+    # ADR-047; Q2 resolved at V3 M4 via ADR-052 — both by ADR, never by code).
+    assert text.lower().count("undecided") >= 9
 
 
 def test_scale_law_forbids_unmeasured_infra():

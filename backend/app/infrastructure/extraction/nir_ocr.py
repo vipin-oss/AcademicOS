@@ -14,11 +14,25 @@ from app.application.ports.ocr_engine import OcrEngine, OcrResult
 
 
 class TesseractOcrEngine(OcrEngine):
-    """pytesseract adapter. Optional; absent -> ``available()`` False."""
+    """pytesseract adapter. Optional; absent -> ``available()`` False.
 
-    def __init__(self, *, enabled: bool = False) -> None:
+    V3 M4 (Q2, ADR-052): the OCR engine decision is Tesseract with the
+    ``eng+hin`` language pack — the only option that reads Devanagari without a
+    proprietary/paid service. The language set is configurable at construction;
+    the default is ``eng+hin``. If the ``hin`` traineddata is not installed on
+    the host, Tesseract degrades to English only (best-effort), which the
+    blueprint accepts ("English-first, Hindi best-effort with visible
+    confidence").
+    """
+
+    def __init__(self, *, enabled: bool = False, lang: str = "eng+hin") -> None:
         self._enabled = enabled
+        self._lang = lang
         self._available_cache: bool | None = None
+
+    @property
+    def lang(self) -> str:
+        return self._lang
 
     def available(self) -> bool:
         if not self._enabled:
@@ -41,8 +55,10 @@ class TesseractOcrEngine(OcrEngine):
             from PIL import Image
 
             image = Image.open(io.BytesIO(data))
-            text = pytesseract.image_to_string(image)
-            data_conf = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+            text = pytesseract.image_to_string(image, lang=self._lang)
+            data_conf = pytesseract.image_to_data(
+                image, lang=self._lang, output_type=pytesseract.Output.DICT
+            )
             confs = [int(c) for c in data_conf.get("conf", []) if isinstance(c, int | str)]
             confs = [c for c in confs if c >= 0]
             mean = sum(confs) / len(confs) / 100.0 if confs else None

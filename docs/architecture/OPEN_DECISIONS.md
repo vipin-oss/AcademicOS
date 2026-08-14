@@ -1,13 +1,14 @@
 # Open decisions (Freeze Contract §13.12)
 
-Nine remain **undecided**. Q5 was resolved at L9 by measurement (ADR-047).
-L0 does not silently resolve any of them. Ratify as ADRs during L0/L1 (or the
-level named below) — not by code.
+Eight remain **undecided**. Q5 was resolved at L9 by measurement (ADR-047);
+Q2 (OCR engine) was resolved at V3 M4 (ADR-052). L0 does not silently resolve
+any of them. Ratify as ADRs during L0/L1 (or the level named below) — not by
+code.
 
 | ID | Question | Status |
 |---|---|---|
 | Q1 | workspace / tenant semantics | undecided |
-| Q2 | OCR engine choice (including Devanagari) | undecided |
+| Q2 | OCR engine choice (including Devanagari) | resolved — V3 M4, Tesseract `eng+hin` ([ADR-052](adr/ADR-052-v3-m4-unicode-tokenization-and-ocr.md)) |
 | Q3 | embedding model | undecided |
 | Q4 | planner model budget | undecided |
 | Q5 | claim-store scaling (decide at L9 with measurements) | resolved — L9, [ADR-047](adr/ADR-047-claim-store-scaling-measurements.md) |
