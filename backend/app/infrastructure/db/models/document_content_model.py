@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from sqlalchemy import Column, Integer, String, Text
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class DocumentContentModel(Base):
+class DocumentContentModel(TenantStampMixin, Base):
     __tablename__ = "document_contents"
 
     object_id = Column(String, primary_key=True)

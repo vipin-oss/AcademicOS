@@ -22,11 +22,11 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class ObjectVersionModel(Base):
+class ObjectVersionModel(TenantStampMixin, Base):
     __tablename__ = "object_versions"
     __table_args__ = (
         UniqueConstraint(

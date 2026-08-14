@@ -12,11 +12,11 @@ from __future__ import annotations
 from sqlalchemy import Column, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class ClaimModel(Base):
+class ClaimModel(TenantStampMixin, Base):
     __tablename__ = "claims"
     __table_args__ = (
         Index("ix_claims_source_document", "source_document_id"),

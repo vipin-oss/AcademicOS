@@ -53,7 +53,8 @@ def test_l10_reuses_stdlib_threads_queue_only():
 def test_l10_no_new_migration():
     migrations = REPO / "backend" / "alembic" / "versions"
     names = [p.name for p in migrations.glob("*.py")]
-    assert not any("0015" in n for n in names), names
+    # Migration head is 0015 (tenancy stamping, V3 M3). L10 itself adds none.
+    assert not any("0016" in n for n in names), names
 
 
 def test_l10_defaults_max_workers_one():

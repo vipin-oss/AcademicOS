@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS document_search_fts (
     content_text TEXT NOT NULL DEFAULT '',
     chunks_text TEXT NOT NULL DEFAULT '',
     acl_scope VARCHAR,
+    tenant_id VARCHAR NOT NULL DEFAULT 'default',
+    owner_user_id VARCHAR NOT NULL DEFAULT 'default',
     search_vector tsvector GENERATED ALWAYS AS (
         to_tsvector(
             'simple',
@@ -67,7 +69,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS document_search_fts USING fts5(
     metadata_text,
     content_text,
     chunks_text,
-    acl_scope UNINDEXED
+    acl_scope UNINDEXED,
+    tenant_id UNINDEXED,
+    owner_user_id UNINDEXED
 );
 """
 
@@ -135,6 +139,8 @@ class SQLFTSRepository:
         content_text: str,
         chunks_text: str,
         acl_scope: str | None = None,
+        tenant_id: str = "default",
+        owner_user_id: str = "default",
     ) -> None:
         """Insert/replace one FTS row (idempotent; caller owns the tx)."""
         if self._session.get_bind().dialect.name == "postgresql":
@@ -143,8 +149,9 @@ class SQLFTSRepository:
                     f"""
                     INSERT INTO {FTS_TABLE}
                         (object_id, object_type, version, title, metadata_text,
-                         content_text, chunks_text, acl_scope)
-                    VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, :acl)
+                         content_text, chunks_text, acl_scope, tenant_id, owner_user_id)
+                    VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, :acl,
+                            :tenant, :owner)
                     ON CONFLICT (object_id) DO UPDATE SET
                         object_type = EXCLUDED.object_type,
                         version = EXCLUDED.version,
@@ -152,13 +159,16 @@ class SQLFTSRepository:
                         metadata_text = EXCLUDED.metadata_text,
                         content_text = EXCLUDED.content_text,
                         chunks_text = EXCLUDED.chunks_text,
-                        acl_scope = EXCLUDED.acl_scope
+                        acl_scope = EXCLUDED.acl_scope,
+                        tenant_id = EXCLUDED.tenant_id,
+                        owner_user_id = EXCLUDED.owner_user_id
                     """
                 ),
                 {
                     "oid": object_id, "otype": object_type, "ver": version,
                     "title": title, "meta": metadata_text,
                     "content": content_text, "chunks": chunks_text, "acl": acl_scope,
+                    "tenant": tenant_id, "owner": owner_user_id,
                 },
             )
         else:
@@ -171,13 +181,15 @@ class SQLFTSRepository:
                 text(
                     f"INSERT INTO {FTS_TABLE} "
                     "(object_id, object_type, version, title, metadata_text, "
-                    "content_text, chunks_text, acl_scope) "
-                    "VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, :acl)"
+                    "content_text, chunks_text, acl_scope, tenant_id, owner_user_id) "
+                    "VALUES (:oid, :otype, :ver, :title, :meta, :content, :chunks, "
+                    ":acl, :tenant, :owner)"
                 ),
                 {
                     "oid": object_id, "otype": object_type, "ver": version,
                     "title": title, "meta": metadata_text,
                     "content": content_text, "chunks": chunks_text, "acl": acl_scope,
+                    "tenant": tenant_id, "owner": owner_user_id,
                 },
             )
 

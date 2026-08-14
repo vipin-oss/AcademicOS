@@ -10,10 +10,10 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class CdmDecisionModel(Base):
+class CdmDecisionModel(TenantStampMixin, Base):
     __tablename__ = "cdm_decisions"
     __table_args__ = (
         Index("ix_cdm_decisions_block_id", "subject_id"),

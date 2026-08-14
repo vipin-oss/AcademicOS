@@ -31,11 +31,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class ObjectRelationshipModel(Base):
+class ObjectRelationshipModel(TenantStampMixin, Base):
     __tablename__ = "object_relationships"
     __table_args__ = (
         UniqueConstraint(
