@@ -128,9 +128,24 @@ def get_assistant_provider(
         return build_assistant_provider(
             _NULL_GATEWAY, repo, ai_core=ai_core, offline=_offline_answerer(repo)
         )
-    return build_assistant_provider(
+    provider = build_assistant_provider(
         gateway, repo, ai_core=ai_core, offline=_offline_answerer(repo)
     )
+    # Retain the deterministic offline answerer as the degradation seam for the
+    # executable LLM path: a non-grounded ask that carries no prompt must
+    # degrade to the offline answerer instead of raising (ADR-020 "degrade,
+    # never disappear"). Mirrors the LLM+fallback composition the LLM
+    # integration tests use. The offline answerer is the ADR-020 fast-path
+    # answerer, not rules-v1, so the active-path L4 guardrail is unaffected.
+    try:
+        ready = bool(gateway.health().executable)
+    except Exception:  # noqa: BLE001 — a broken gateway degrades, never raises
+        ready = False
+    if ready:
+        from app.application.assistant.providers import FallbackAssistantProvider
+
+        return FallbackAssistantProvider(provider, _offline_answerer(repo))
+    return provider
 
 
 def _offline_answerer(repo) -> AssistantProvider:
