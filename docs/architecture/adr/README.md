@@ -25,6 +25,8 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-038 | Tool evaluation gate | [ADR-038](ADR-038-tool-evaluation-gate.md) (L5) | L5 |
 | ADR-039 | Fact citation & confidence contract | [ADR-039](ADR-039-fact-citation-evidence-contract.md) (L6) | L6 |
 | ADR-040 | L6 evaluation gate | [ADR-040](ADR-040-l6-evaluation-gate.md) (L6) | L6 |
+| ADR-041 | L7 memory v2 persistent layer | [ADR-041](ADR-041-l7-memory-v2-persistent-layer.md) (L7) | L7 |
+| ADR-042 | L7 evaluation gate | [ADR-042](ADR-042-l7-evaluation-gate.md) (L7) | L7 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

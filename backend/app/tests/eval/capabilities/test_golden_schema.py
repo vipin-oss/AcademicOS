@@ -25,7 +25,7 @@ def test_each_golden_file_validates(capability_id: str):
     assert "en" in languages
     assert "hi-en" in languages
     assert all(case.capability_id == capability_id for case in cases)
-    assert all(case.gate_level in {"l0_data", "l4", "l5", "l9"} for case in cases)
+    assert all(case.gate_level in {"l0_data", "l4", "l5", "l7", "l9"} for case in cases)
 
 
 def test_suite_has_unique_case_ids_and_full_coverage():

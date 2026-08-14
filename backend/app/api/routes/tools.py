@@ -65,7 +65,13 @@ class AuditOut(BaseModel):
 
 
 def _registry(db: Session):
-    return build_tool_registry(SQLAlchemyObjectRepository(db))
+    repo = SQLAlchemyObjectRepository(db)
+    # L7: memory-recall tool is exposed when a persistent-memory service is
+    # available (additive; the registry is backward compatible otherwise).
+    from app.application.services.persistent_memory import PersistentMemoryService
+
+    memory = PersistentMemoryService(repo, ObjectPermissionEvaluator())
+    return build_tool_registry(repo, memory=memory)
 
 
 def _executor(db: Session) -> ToolExecutor:

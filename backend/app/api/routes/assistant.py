@@ -57,6 +57,7 @@ from app.application.commands.create_conversation import CreateConversationComma
 from app.application.commands.delete_conversation import DeleteConversationCommand
 from app.application.commands.update_conversation import UpdateConversationCommand
 from app.application.dtos.assistant import INTENT_GROUPS, INTENT_LABELS, SUGGESTED_QUESTIONS
+from app.application.dtos.memory import MemoryWriteCommand
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.ports.assistant_provider import AssistantProvider
 from app.application.ports.embedder import Embedder
@@ -443,6 +444,112 @@ def consolidate_memory(
             }
             for pair in report.superseded
         ],
+    }
+
+
+class MemoryArtifactBody(StrictBody):
+    """Write command for a persistent memory artifact (L7, ADR-041)."""
+
+    question: str = ""
+    answer: str = ""
+    provenance: str = "system"  # "asserted" | "inferred" | "system"
+    source_ids: list[str] = Field(default_factory=list)
+    readers: list[str] = Field(default_factory=list)
+    writers: list[str] = Field(default_factory=list)
+    managers: list[str] = Field(default_factory=list)
+    title: str | None = None
+
+
+def _persistent_memory(
+    db: Session = Depends(get_db),
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> PersistentMemoryService:
+    """Composition seam (L7): persistent memory over the existing object store."""
+    from app.application.services.persistent_memory import PersistentMemoryService
+
+    return PersistentMemoryService(repo, ObjectPermissionEvaluator())
+
+
+@router.post("/memory")
+def write_memory(
+    body: MemoryArtifactBody,
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Persist one memory artifact (L7, ADR-041). ``provenance`` selects
+    user-authored (``asserted``) vs system/AI-derived (``inferred``/``system``).
+    Memory is context, never evidence (ADR-015)."""
+    from app.domain.value_objects.enums import Provenance
+
+    provenance = Provenance(body.provenance) if body.provenance in {"asserted", "inferred", "system"} else Provenance.SYSTEM
+    art = memory.write(
+        MemoryWriteCommand(
+            question=body.question,
+            answer=body.answer,
+            provenance=provenance,
+            source_ids=tuple(body.source_ids),
+            readers=tuple(body.readers),
+            writers=tuple(body.writers),
+            managers=tuple(body.managers),
+            title=body.title,
+        ),
+        user=user,
+    )
+    return {
+        "artifact_id": art.artifact_id,
+        "title": art.title,
+        "question": art.question,
+        "answer": art.answer,
+        "provenance": art.provenance.value,
+        "review_status": art.review_status,
+        "version": art.version,
+        "created_at": art.created_at,
+    }
+
+
+@router.get("/memory")
+def list_memory(
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """The principal's ACL-visible, review-approved memory artifacts (L7)."""
+    result = memory.list(user)
+    return {
+        "artifacts": [
+            {
+                "artifact_id": a.artifact_id,
+                "title": a.title,
+                "question": a.question,
+                "answer": a.answer,
+                "review_status": a.review_status,
+                "provenance": a.provenance.value,
+                "source_ids": list(a.source_ids),
+                "version": a.version,
+                "created_at": a.created_at,
+            }
+            for a in result.artifacts
+        ],
+        "count": result.count,
+    }
+
+
+@router.delete("/memory/{artifact_id}")
+def forget_memory(
+    artifact_id: str,
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Forget one memory artifact (mark SUPERSEDED; no delete). Owner/manager only."""
+    try:
+        art = memory.forget(artifact_id, user=user)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return {
+        "artifact_id": art.artifact_id,
+        "status": art.status,
+        "version": art.version,
     }
 
 
