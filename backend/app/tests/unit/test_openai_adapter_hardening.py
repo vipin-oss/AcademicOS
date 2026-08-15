@@ -219,3 +219,62 @@ class TestLocalFreeProvider:
             StructuredGenerationPrompt(user="extract", schema={"type": "object"})
         )
         assert res.value["title"] == "T"
+
+
+# ---------------------------------------------------------------------------
+# V3 AI fix: Ollama-native streaming/response shape parsing
+# ---------------------------------------------------------------------------
+
+
+def test_extract_delta_handles_ollama_native_streaming():
+    """Ollama's /v1/chat/completions streaming emits top-level message.content
+    + done flag (no choices[]). The adapter must extract content from it."""
+    import json as _json
+
+    from app.infrastructure.ai.llm.openai import OpenAIProvider
+
+    chunk = _json.dumps({
+        "model": "qwen2.5:1.5b",
+        "message": {"role": "assistant", "content": "AcademicOS AI OK"},
+        "done": False,
+    })
+    delta, finish, _usage = OpenAIProvider._extract_delta(chunk)
+    assert delta == "AcademicOS AI OK"
+    assert finish is None
+
+    final = _json.dumps({
+        "model": "qwen2.5:1.5b",
+        "message": {"role": "assistant", "content": ""},
+        "done": True,
+        "done_reason": "stop",
+    })
+    delta2, finish2, _ = OpenAIProvider._extract_delta(final)
+    assert delta2 == ""
+    assert finish2 == "stop"
+
+
+def test_extract_delta_still_handles_openai_standard():
+    import json as _json
+
+    from app.infrastructure.ai.llm.openai import OpenAIProvider
+
+    chunk = _json.dumps({"choices": [{"delta": {"content": "Hi"}, "finish_reason": None}]})
+    delta, finish, _ = OpenAIProvider._extract_delta(chunk)
+    assert delta == "Hi"
+    assert finish is None
+
+
+def test_parse_response_falls_back_to_ollama_native_nonstream():
+    """A non-streaming response in Ollama's native shape is parsed, not rejected."""
+    import httpx
+
+    from app.infrastructure.ai.llm.openai import OpenAIProvider
+
+    response = httpx.Response(
+        200,
+        json={"model": "qwen2.5:1.5b", "message": {"role": "assistant", "content": "OK"},
+              "done": True, "done_reason": "stop"},
+    )
+    raw = OpenAIProvider._parse_response(response)
+    assert raw.text == "OK"
+    assert raw.finish_reason == "stop"

@@ -419,7 +419,16 @@ class OpenAIProvider:
     # ------------------------------------------------------------- parsing
     @staticmethod
     def _extract_delta(payload: str) -> tuple[str, str | None, TokenUsage | None]:
-        """One SSE data chunk -> (delta_text, finish_reason, usage_or_None)."""
+        """One SSE data chunk -> (delta_text, finish_reason, usage_or_None).
+
+        Handles BOTH streaming shapes:
+
+        - OpenAI standard: ``choices[0].delta.content`` (+ ``finish_reason``);
+        - Ollama native (what ``/v1/chat/completions`` actually emits): a
+          top-level ``message.content`` and a ``done`` / ``done_reason`` flag
+          (no ``choices`` array). Without this, every Ollama token was silently
+          dropped and the stream reported "no text".
+        """
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -428,6 +437,7 @@ class OpenAIProvider:
         finish_reason: str | None = None
         usage: TokenUsage | None = None
         try:
+            # OpenAI standard: choices[0].delta.content (or .message.content).
             choices = data.get("choices") or []
             if choices:
                 choice = choices[0]
@@ -438,6 +448,14 @@ class OpenAIProvider:
                 fr = choice.get("finish_reason")
                 if fr:
                     finish_reason = str(fr)
+            # Ollama native: top-level message.content + done flag.
+            if not delta_text:
+                message = data.get("message") or {}
+                content = message.get("content")
+                if isinstance(content, str) and content:
+                    delta_text = content
+            if data.get("done") is True and finish_reason is None:
+                finish_reason = str(data.get("done_reason") or "stop")
             if isinstance(data.get("usage"), dict):
                 usage = OpenAIProvider._usage_from(data["usage"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -451,8 +469,14 @@ class OpenAIProvider:
             choice = data["choices"][0]
             content = choice["message"]["content"]
             finish_reason = str(choice.get("finish_reason") or "stop")
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise LlmProviderError("LLM response had an unexpected shape.") from exc
+        except (ValueError, KeyError, IndexError, TypeError):
+            # Ollama's non-streaming /v1/chat/completions can also return the
+            # native shape (top-level message.content) in some versions.
+            try:
+                content = data["message"]["content"]
+                finish_reason = str(data.get("done_reason") or "stop")
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise LlmProviderError("LLM response had an unexpected shape.") from exc
         if not isinstance(content, str) or not content.strip():
             raise LlmProviderError("LLM response contained no text.")
         usage = (

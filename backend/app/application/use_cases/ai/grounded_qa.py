@@ -153,9 +153,15 @@ def classify_gateway_error(exc: Exception) -> str:
     name = type(exc).__name__
     if name == "LlmProviderError":
         msg = str(exc).lower()
-        if "404" in msg or "model" in msg and "not" in msg:
+        # A missing model (HTTP 404) is a distinct state.
+        if "404" in msg:
             return "model_unavailable"
-        return "provider_unreachable"
+        # A transport/connectivity failure — the provider could not be reached.
+        if "unreachable" in msg or "connect" in msg or "endpoint error" in msg:
+            return "provider_unreachable"
+        # The provider responded but the response was unparseable / empty —
+        # a response-shape problem, not a connectivity problem.
+        return "generation_failed"
     # A bare httpx HTTPStatusError carrying a 404 for the model.
     if name == "HTTPStatusError":
         status = getattr(getattr(exc, "response", None), "status_code", None)
