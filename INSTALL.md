@@ -6,6 +6,53 @@ Windows (PowerShell), Linux and macOS.
 
 ---
 
+## One-command startup (Windows)
+
+On Windows 10/11 (PowerShell 5.1+), the entire stack — Ollama (+ the
+configured model), database migrations, backend, frontend, and browser — is
+brought up with **one command** from the repository root:
+
+```powershell
+cd E:\AcademicOS
+.\start_academicos.ps1
+```
+
+What it does, in order:
+
+1. **Environment checks** — Python 3.11+, Node/npm, backend/frontend dirs,
+   backend venv (prefers `backend\.venv` when present).
+2. **Ollama** — checks `http://127.0.0.1:11434/api/tags`; starts `ollama serve`
+   if installed but not running; verifies the model named in
+   `AI_PROVIDERS_JSON` is present and `ollama pull`s it if missing.
+3. **Backend config** — reads `backend/.env` (never overwrites it) and reports
+   the active AI provider's `base_url`/model.
+4. **PostgreSQL / Docker / Qdrant** — started if present (skippable with
+   `-SkipDocker`).
+5. **Dependencies + migrations** — `pip install -r requirements.txt` and
+   `npm install` only when missing; runs `init_db.py` (SQLite) or
+   `alembic upgrade head` (PostgreSQL).
+6. **Backend** — `uvicorn app.main:app` on http://127.0.0.1:8000, then waits
+   for `GET /api/v1/health` → HTTP 200, `GET /api/v1/ai/health` → configured
+   provider, and `GET /api/v1/health/ready` → AI model resident (i.e. the
+   backend actually reached Ollama).
+7. **Frontend** — `npm run dev`, detects the actual port it bound (default
+   3000), waits for HTTP 200.
+8. **Browser** — opens the frontend (only when it was actually started by this
+   run, so repeated runs don't stack browser windows).
+
+Stop only what the startup system launched:
+
+```powershell
+.\stop_academicos.ps1
+```
+
+Useful switches: `.\start_academicos.ps1 -NoOpenBrowser`, `-SkipDocker`,
+`-SkipOllama`. For a PASS/FAIL health report run `.\health.ps1`. The manual
+instructions below remain available for running backend/frontend
+independently.
+
+---
+
 ## Option A — SQLite quickstart (zero infrastructure, fastest)
 
 1. **Backend**
