@@ -15,6 +15,8 @@ No network, no real model, no secrets.
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -195,3 +197,123 @@ def test_unconfigured_provider_is_classified_not_configured(harness):
     data = resp.json()
     assert data["available"] is False
     assert data["unavailable_reason"] == "not_configured"
+
+
+# ---------------------------------------------------------------------------
+# Real-socket end-to-end: a real local TCP server stands in for Ollama, and the
+# real OpenAIProvider (real httpx over real sockets) drives it — proving the
+# actual network path that was previously failing ("endpoint unreachable").
+# ---------------------------------------------------------------------------
+
+
+class _OllamaStubHandler(BaseHTTPRequestHandler):
+    """Minimal Ollama OpenAI-compatible /v1/chat/completions over real TCP."""
+
+    model = "qwen2.5:1.5b"
+    status_override = None  # set to e.g. 404 to simulate a missing model
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length))
+        if type(self).status_override is not None:
+            self._send(status=type(self).status_override, payload={"error": "model not found"})
+            return
+        if body.get("stream"):
+            sse = (
+                'data: {"choices":[{"delta":{"content":"AcademicOS AI OK"},"finish_reason":null}]}\n\n'
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+                '"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}\n\n'
+                "data: [DONE]\n\n"
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(sse.encode())))
+            self.end_headers()
+            self.wfile.write(sse.encode())
+            return
+        payload = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "model": body.get("model", "qwen2.5:1.5b"),
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "AcademicOS AI OK"},
+                 "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7},
+        }
+        self._send(status=200, payload=payload)
+
+    def _send(self, *, status, payload):
+        data = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):  # silence per-request logging
+        pass
+
+
+@pytest.fixture()
+def ollama_stub():
+    """A real local Ollama stub server on an ephemeral IPv4 port."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaStubHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+def _real_gateway(server) -> OpenAIProvider:
+    # The handler reads status_override from the CLASS; tests set it directly
+    # (and reset it) around the call.
+    port = server.server_address[1]
+    cfg = ProviderConfig(
+        provider_id="local-ollama", kind="openai", model="qwen2.5:1.5b",
+        base_url=f"http://127.0.0.1:{port}/v1",
+    )
+    return OpenAIProvider(cfg, client=httpx.Client(timeout=10.0))
+
+
+def test_real_socket_reachable_provider_answers(harness, ollama_stub):
+    """The REAL network path: app -> OpenAIProvider -> real TCP -> stub -> answer."""
+    _OllamaStubHandler.status_override = None
+    app.dependency_overrides[get_ai_core] = lambda: _core_with_gateway(_real_gateway(ollama_stub))
+    resp = harness.post(f"{API}/chat", json={"message": "Reply with exactly: AcademicOS AI OK"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["available"] is True
+    assert data["answer"] == "AcademicOS AI OK"
+
+
+def test_real_socket_model_unavailable_classified(harness, ollama_stub):
+    """A real 404 (model not found) classifies as model_unavailable."""
+    _OllamaStubHandler.status_override = 404
+    app.dependency_overrides[get_ai_core] = lambda: _core_with_gateway(_real_gateway(ollama_stub))
+    resp = harness.post(f"{API}/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+    assert data["unavailable_reason"] == "model_unavailable"
+    assert "not configured" not in data["answer"].lower()
+    _OllamaStubHandler.status_override = None
+
+
+def test_grounded_query_with_no_evidence_is_honest(harness, ollama_stub):
+    """A grounded Hinglish query with NO data in the store must not fabricate
+    evidence: the model is reached (available=True) but retrieved_count=0 and
+    citations are empty — the honest no-evidence contract."""
+    _OllamaStubHandler.status_override = None
+    app.dependency_overrides[get_ai_core] = lambda: _core_with_gateway(_real_gateway(ollama_stub))
+    resp = harness.post(
+        f"{API}/chat",
+        json={"message": "CBLU conference kab attend ki maine"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    # The model answered (available) but NO evidence was retrieved or cited.
+    assert data["available"] is True
+    assert data["retrieved_count"] == 0
+    assert data["citations"] == []

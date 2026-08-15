@@ -5,7 +5,7 @@
 # Then point the backend at them:
 #   DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/academicos
 #   QDRANT_URL=http://localhost:6333
-#   AI_PROVIDERS_JSON=[{"provider_id":"local-ollama","kind":"openai","model":"llama3.2","base_url":"http://localhost:11434/v1","api_key":"","streaming_enabled":true}]
+#   AI_PROVIDERS_JSON=[{"provider_id":"local-ollama","kind":"openai","model":"llama3.2","base_url":"http://127.0.0.1:11434/v1","api_key":"","streaming_enabled":true}]
 #
 # First time only — pull the model inside the Ollama container:
 #   docker exec academicos-ollama ollama pull llama3.2

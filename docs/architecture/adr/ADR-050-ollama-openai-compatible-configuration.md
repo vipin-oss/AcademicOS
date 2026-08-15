@@ -50,7 +50,7 @@ AI_PROVIDERS_JSON=[
   {
     "provider_id": "local-fast",
     "kind": "openai",                          // NOT "ollama"
-    "base_url": "http://localhost:11434/v1",   // Ollama's OpenAI-compatible API
+    "base_url": "http://127.0.0.1:11434/v1",   // Ollama's OpenAI-compatible API
     "model": "qwen2.5:1.5b",
     "api_key": "",                             // empty: no Authorization header
     "keep_alive": "-1",                        // model stays resident in RAM
@@ -58,6 +58,14 @@ AI_PROVIDERS_JSON=[
   }
 ]
 ```
+
+> **Note (IPv4/IPv6):** the canonical `base_url` uses `127.0.0.1`, not
+> `localhost`. On Windows (and some Linux/macOS resolvers) `localhost` resolves
+> to IPv6 `::1` first, while Ollama binds IPv4 `127.0.0.1`, so a `localhost`
+> URL surfaces as a spurious "LLM endpoint unreachable" even when Ollama is up.
+> `127.0.0.1` removes the ambiguity. For a remote server or a Docker-side
+> backend, set `base_url` to the address the backend can actually reach
+> (e.g. `http://host.docker.internal:11434/v1` from inside a container).
 
 This works because of three properties already present in R1:
 
