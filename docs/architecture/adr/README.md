@@ -47,6 +47,10 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-060 | Ad-hoc query & export (saved views) | [ADR-060](ADR-060-v3-m13-adhoc-query-and-export.md) (V3 M13) | V3 M13 |
 | ADR-061 | Multi-user UX & admin (roles + operational panel) | [ADR-061](ADR-061-v3-m14-multi-user-ux-and-admin.md) (V3 M14) | V3 M14 |
 | ADR-062 | Multi-tenant isolation | [ADR-062](ADR-062-v3-m15-multi-tenant-isolation.md) (V3 M15) | V3 M15 |
+| ADR-063 | Operational data normalization (wave framework + wave 1) | [ADR-063](ADR-063-v3-m16-operational-data-normalization.md) (V3 M16) | V3 M16 |
+| ADR-064 | Temporal graph + identity resolution | [ADR-064](ADR-064-v3-m17-temporal-graph-and-identity-resolution.md) (V3 M17) | V3 M17 |
+| ADR-065 | Accreditation workflow kernel | [ADR-065](ADR-065-v3-m18-accreditation.md) (V3 M18) | V3 M18 |
+| ADR-066 | Production hardening (Docker/TLS/logging/backup) | [ADR-066](ADR-066-v3-m19-production-hardening.md) (V3 M19) | V3 M19 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

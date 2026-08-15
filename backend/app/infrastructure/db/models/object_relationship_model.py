@@ -56,4 +56,8 @@ class ObjectRelationshipModel(TenantStampMixin, Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     evidence: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
     acl_scope: Mapped[str | None] = mapped_column(String, nullable=True)
+    # V3 M17 (ADR-064): temporal validity interval on every edge (optional —
+    # absent = open interval; present = the relationship held during the span).
+    valid_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    valid_to: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
