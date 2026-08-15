@@ -29,9 +29,10 @@ from app.application.dtos.assistant import (
     RetrievedItem,
 )
 from app.application.use_cases.ai.grounded_qa import (
-    _FALLBACK_ANSWER,
+    _FALLBACK_ANSWERS,
     _MAX_SOURCE_CHARS_PER_ITEM,
     GroundedQAUseCase,
+    classify_gateway_error,
 )
 from app.domain.entities.object import UniversalObject
 from app.domain.value_objects.enums import ObjectStatus, ObjectType
@@ -212,7 +213,7 @@ class TestStreamingLeak:
         assert len(completions) == 1
         result = completions[0]["result"]
         assert result.available is False
-        assert result.answer == _FALLBACK_ANSWER
+        assert result.answer == _FALLBACK_ANSWERS["generation_failed"]
 
     def test_stream_without_completion_event_is_generation_failure(self):
         """A stream that ends with no completion event is NOT a success:
@@ -234,7 +235,7 @@ class TestStreamingLeak:
         assert len(completions) == 1
         result = completions[0]["result"]
         assert result.available is False
-        assert result.answer == _FALLBACK_ANSWER
+        assert result.answer == _FALLBACK_ANSWERS["generation_failed"]
 
     def test_streaming_fallback_matches_sync_honesty_contract(self):
         # Sync fallback: gateway.generate raises.
@@ -255,7 +256,7 @@ class TestStreamingLeak:
         assert sync_result.available is False
         assert stream_result.available is False
         # Same honest message on both paths — identical honesty contract.
-        assert sync_result.answer == stream_result.answer == _FALLBACK_ANSWER
+        assert sync_result.answer == stream_result.answer == _FALLBACK_ANSWERS["generation_failed"]
 
 
 # ===========================================================================
@@ -439,3 +440,38 @@ class TestConfidenceIndicators:
         result = use_case.execute("q", _user())
         assert result.available is False
         assert result.confidence == ""
+
+
+# ---------------------------------------------------------------------------
+# V3 AI-integration fix: gateway failure classification
+# ---------------------------------------------------------------------------
+
+
+def test_classify_gateway_error_distinguishes_states():
+    from app.application.ai.errors import AiNotConfiguredError
+    from app.infrastructure.ai.llm.openai import LlmProviderError
+
+    assert classify_gateway_error(AiNotConfiguredError("no endpoint")) == "not_configured"
+
+    # LlmProviderError carries a transport message (unreachable).
+    assert (
+        classify_gateway_error(LlmProviderError("LLM endpoint unreachable after 3 attempts: x"))
+        == "provider_unreachable"
+    )
+    # A 404 (model missing) is classified as model_unavailable.
+    assert (
+        classify_gateway_error(LlmProviderError("LLM endpoint rejected the request (HTTP 404)."))
+        == "model_unavailable"
+    )
+    # A generic error is a generation failure.
+    assert classify_gateway_error(RuntimeError("boom")) == "generation_failed"
+
+
+def test_fallback_carries_unavailable_reason():
+    raising_gw = _FakeGateway()
+    raising_gw.generate = lambda prompt: (_ for _ in ()).throw(RuntimeError("down"))
+    use_case, _ = _make_use_case(raising_gw, annotation_texts={"obj:document:d1": "x"})
+    result = use_case.execute("q", _user())
+    assert result.available is False
+    assert result.unavailable_reason == "generation_failed"
+    assert result.answer == _FALLBACK_ANSWERS["generation_failed"]

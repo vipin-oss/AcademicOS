@@ -338,6 +338,8 @@ class QAResponseModel(BaseModel):
 
     answer: str
     available: bool
+    # V3 AI-integration fix: why the answer is unavailable (empty when ok).
+    unavailable_reason: str = ""
     retrieved_count: int = 0
     truncated: bool = False
     citations: list[dict] = Field(default_factory=list)
@@ -601,6 +603,8 @@ class ChatResponseModel(BaseModel):
 
     answer: str
     available: bool
+    # V3 AI-integration fix: why the answer is unavailable (empty when ok).
+    unavailable_reason: str = ""
     retrieved_count: int = 0
     truncated: bool = False
     citations: list[dict] = Field(default_factory=list)
@@ -807,6 +811,8 @@ class AssistantResponseModel(BaseModel):
     role: str
     answer: str
     available: bool
+    # V3 AI-integration fix: why the answer is unavailable (empty when ok).
+    unavailable_reason: str = ""
     retrieved_count: int = 0
     truncated: bool = False
     citations: list[dict] = Field(default_factory=list)

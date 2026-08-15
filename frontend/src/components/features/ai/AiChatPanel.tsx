@@ -44,6 +44,18 @@ const NOT_CONFIGURED_TEXT =
 const GENERATION_FAILED_TEXT =
   "The AI response was interrupted before it could be completed. Please try again.";
 
+// V3 AI-integration fix: map the backend's classified unavailability reason
+// to the correct message instead of collapsing every failure into
+// "not configured". The backend's `answer` already carries the specific,
+// honest text; we only override the "not configured" case so the remaining
+// states (unreachable / model unavailable / generation failed) surface
+// their real meaning.
+function unavailableMessage(reason: unknown, serverAnswer: string): string {
+  if (reason === "not_configured") return NOT_CONFIGURED_TEXT;
+  if (typeof serverAnswer === "string" && serverAnswer.trim()) return serverAnswer;
+  return GENERATION_FAILED_TEXT;
+}
+
 export function AiChatPanel({
   mode,
   description,
@@ -131,7 +143,7 @@ export function AiChatPanel({
                   ? answer
                   : sawTokensRef.current
                     ? GENERATION_FAILED_TEXT
-                    : NOT_CONFIGURED_TEXT,
+                    : unavailableMessage(data.unavailable_reason, answer),
                 citations: available ? citations : undefined,
               },
             ]);

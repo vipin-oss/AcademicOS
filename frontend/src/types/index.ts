@@ -2551,6 +2551,8 @@ export interface AiCitation {
 export interface AiChatResponse {
   answer: string;
   available: boolean;
+  /** Why the answer is unavailable (empty when available). */
+  unavailable_reason?: string;
   retrieved_count: number;
   truncated: boolean;
   citations: AiCitation[];
@@ -2623,6 +2625,7 @@ export interface AssistantResponse {
   role: string;
   answer: string;
   available: boolean;
+  unavailable_reason?: string;
   retrieved_count: number;
   truncated: boolean;
   citations: AiCitation[];

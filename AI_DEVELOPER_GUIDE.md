@@ -189,7 +189,7 @@ ollama serve                      # serves OpenAI-compatible API at :11434/v1
 ```dotenv
 # .env — point AcademicOS at the local model (NO API key)
 AI_ENABLED=true
-AI_PROVIDERS_JSON=[{"provider_id":"local-llama","kind":"openai","model":"llama3.1","base_url":"http://localhost:11434/v1","api_key":"","temperature":0.0,"max_tokens":2048,"streaming_enabled":true}]
+AI_PROVIDERS_JSON=[{"provider_id":"local-llama","kind":"openai","model":"llama3.1","base_url":"http://127.0.0.1:11434/v1","api_key":"","temperature":0.0,"max_tokens":2048,"streaming_enabled":true}]
 AI_DEFAULT_PROVIDER=local-llama
 # Then enable the capabilities you want, e.g.:
 AI_SUMMARIZATION_ENABLED=true

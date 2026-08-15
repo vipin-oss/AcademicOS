@@ -112,7 +112,11 @@ describe("AiWorkspace", () => {
 
   it("shows the honest not-configured fallback when completion reports unavailable", async () => {
     vi.mocked(streamAi).mockImplementation(async (_path, _body, handlers) => {
-      handlers.onCompletion?.({ answer: "", available: false });
+      handlers.onCompletion?.({
+        answer: "",
+        available: false,
+        unavailable_reason: "not_configured",
+      });
     });
 
     render(<AiWorkspace initialMode="general" />);
@@ -124,5 +128,27 @@ describe("AiWorkspace", () => {
     await waitFor(() => {
       expect(screen.getByText(/AI is not configured/)).toBeTruthy();
     });
+  });
+
+  it("shows the provider-unreachable message instead of 'not configured'", async () => {
+    vi.mocked(streamAi).mockImplementation(async (_path, _body, handlers) => {
+      handlers.onCompletion?.({
+        answer: "The configured AI provider is unreachable.",
+        available: false,
+        unavailable_reason: "provider_unreachable",
+      });
+    });
+
+    render(<AiWorkspace initialMode="general" />);
+    fireEvent.change(screen.getByPlaceholderText("Ask about your documents…"), {
+      target: { value: "hello" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/AI provider is unreachable/)).toBeTruthy();
+    });
+    // must NOT claim the provider is unconfigured
+    expect(screen.queryByText(/AI is not configured/)).toBeNull();
   });
 });
