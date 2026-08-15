@@ -384,6 +384,12 @@ class QAResult:
 
     answer: str
     available: bool = True
+    # V3 AI-integration fix: WHY the gateway could not produce an answer.
+    # One of ``""`` (available) | ``not_configured`` | ``provider_unreachable``
+    # | ``model_unavailable`` | ``generation_failed``. Lets the UI distinguish
+    # "not configured" from "configured but unreachable" instead of collapsing
+    # every failure into the same message.
+    unavailable_reason: str = ""
     retrieved_count: int = 0
     truncated: bool = False
     citations: tuple[dict, ...] = ()
@@ -628,6 +634,7 @@ def qa_result_dict(result: QAResult) -> dict:
     return {
         "answer": result.answer,
         "available": result.available,
+        "unavailable_reason": result.unavailable_reason,
         "retrieved_count": result.retrieved_count,
         "truncated": result.truncated,
         "citations": list(result.citations),

@@ -109,11 +109,61 @@ _MAX_SOURCE_CHARS_PER_ITEM = 2000
 #: routes may raise this (e.g. drafting) — see the route construction sites.
 DEFAULT_MAX_OUTPUT_TOKENS = 512
 
-#: Honest fallback answer shared by the synchronous and streaming paths so
-#: both report exactly the same unavailability contract.
-_FALLBACK_ANSWER = (
+#: Honest fallback answers, keyed by the classified unavailability reason, so
+#: the synchronous and streaming paths report the SAME, correctly-classified
+#: contract (never a misleading "not configured").
+_FALLBACK_ANSWERS: dict[str, str] = {
+    "not_configured": (
+        "AI is not configured. Set up a provider in Settings → AI, or use "
+        "the external handoff."
+    ),
+    "provider_unreachable": (
+        "The configured AI provider is unreachable. The model endpoint could "
+        "not be contacted — check that Ollama (or your provider) is running "
+        "and reachable from the backend, then try again."
+    ),
+    "model_unavailable": (
+        "The configured AI model is not available on the provider. Pull the "
+        "model (e.g. `ollama pull <model>`) and try again."
+    ),
+    "generation_failed": (
+        "The AI response could not be produced. Please try again."
+    ),
+}
+_DEFAULT_FALLBACK_ANSWER = (
     "I cannot answer this question right now — the AI service is unavailable."
 )
+
+
+def classify_gateway_error(exc: Exception) -> str:
+    """Map a gateway exception to the unavailability reason the UI keys on.
+
+    - ``AiNotConfiguredError`` → no endpoint wired (not configured);
+    - ``LlmProviderError`` transport failure → configured but unreachable;
+    - a provider-rejected HTTP status (e.g. 404 model-not-found) → model
+      unavailable;
+    - anything else → a generic generation failure.
+    """
+    from app.application.ai.errors import AiNotConfiguredError
+
+    if isinstance(exc, AiNotConfiguredError):
+        return "not_configured"
+    # LlmProviderError lives in the infrastructure adapter; import defensively
+    # to keep this module importable without the adapter.
+    name = type(exc).__name__
+    if name == "LlmProviderError":
+        msg = str(exc).lower()
+        if "404" in msg or "model" in msg and "not" in msg:
+            return "model_unavailable"
+        return "provider_unreachable"
+    # A bare httpx HTTPStatusError carrying a 404 for the model.
+    if name == "HTTPStatusError":
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 404:
+            return "model_unavailable"
+        if status is not None:
+            return "provider_unreachable"
+    return "generation_failed"
 
 
 class GroundedQAUseCase:
@@ -203,8 +253,8 @@ class GroundedQAUseCase:
                 claim_supported=verdict.supported, claim_mode=verdict.mode,
                 claim_coverage=verdict.coverage,
             )
-        except Exception:  # noqa: BLE001 — gateway boundary degrades gracefully
-            return self._fallback(context, prompt)
+        except Exception as exc:  # noqa: BLE001 — gateway boundary degrades gracefully
+            return self._fallback(context, prompt, reason=classify_gateway_error(exc))
 
     def stream(self, question: str, user: UniversalObject, *, conversation=None) -> Iterator[dict]:
         """Streaming grounded QA with the leak-proof honesty contract.
@@ -279,9 +329,15 @@ class GroundedQAUseCase:
                     }
                     return
             # Stream ended WITHOUT a completion event → generation failure.
-            yield {"type": "complete", "result": self._fallback(context, prompt)}
-        except Exception:  # noqa: BLE001 — streaming must degrade gracefully
-            yield {"type": "complete", "result": self._fallback(context, prompt)}
+            yield {
+                "type": "complete",
+                "result": self._fallback(context, prompt, reason="generation_failed"),
+            }
+        except Exception as exc:  # noqa: BLE001 — streaming must degrade gracefully
+            yield {
+                "type": "complete",
+                "result": self._fallback(context, prompt, reason=classify_gateway_error(exc)),
+            }
 
     def prepare_prompt(self, question: str, user: UniversalObject):
         """Build the grounded generation prompt WITHOUT invoking the gateway.
@@ -670,11 +726,17 @@ class GroundedQAUseCase:
             return "grounded"
         return "partial"
 
-    def _fallback(self, context, prompt):
-        """The honest unavailable result — shared by sync + streaming paths."""
+    def _fallback(self, context, prompt, reason: str = "generation_failed"):
+        """The honest unavailable result — shared by sync + streaming paths.
+
+        ``reason`` is the classified unavailability (see
+        :func:`classify_gateway_error`) so the UI can distinguish "not
+        configured" from "configured but unreachable" / "model unavailable".
+        """
         return QAResult(
-            answer=_FALLBACK_ANSWER,
+            answer=_FALLBACK_ANSWERS.get(reason, _DEFAULT_FALLBACK_ANSWER),
             available=False,
+            unavailable_reason=reason,
             retrieved_count=context.retrieved.__len__() if context else 0,
             truncated=context.truncated if context else False,
             prompt_id=prompt.prompt_id,
