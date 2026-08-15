@@ -26,18 +26,29 @@ What it does, in order:
    `AI_PROVIDERS_JSON` is present and `ollama pull`s it if missing.
 3. **Backend config** — reads `backend/.env` (never overwrites it) and reports
    the active AI provider's `base_url`/model.
-4. **PostgreSQL / Docker / Qdrant** — started if present (skippable with
-   `-SkipDocker`).
-5. **Dependencies + migrations** — `pip install -r requirements.txt` and
+4. **PostgreSQL** — started if a `postgresql*` service exists (reused if
+   already running).
+5. **Docker Desktop / Qdrant** — the script reuses an already-ready Docker
+   daemon. If the daemon is down it discovers Docker Desktop (running process
+   → registry → `Program Files` / `Program Files (x86)` / `%LOCALAPPDATA%` →
+   `PATH`), starts it if it is not already running (never launches a second
+   copy), and **polls `docker info` for up to 180s** — Docker Desktop can take
+   30–120s to boot its Linux engine. Progress is shown as
+   `Docker Desktop not running -> starting` … `Waiting for Docker daemon...`
+   … `Docker daemon ready`. If Docker Desktop is not installed, or the daemon
+   never comes up, the script prints one concise actionable message and
+   continues without Qdrant (vector search then runs lexical-only). Skippable
+   with `-SkipDocker`.
+6. **Dependencies + migrations** — `pip install -r requirements.txt` and
    `npm install` only when missing; runs `init_db.py` (SQLite) or
    `alembic upgrade head` (PostgreSQL).
-6. **Backend** — `uvicorn app.main:app` on http://127.0.0.1:8000, then waits
+7. **Backend** — `uvicorn app.main:app` on http://127.0.0.1:8000, then waits
    for `GET /api/v1/health` → HTTP 200, `GET /api/v1/ai/health` → configured
    provider, and `GET /api/v1/health/ready` → AI model resident (i.e. the
    backend actually reached Ollama).
-7. **Frontend** — `npm run dev`, detects the actual port it bound (default
+8. **Frontend** — `npm run dev`, detects the actual port it bound (default
    3000), waits for HTTP 200.
-8. **Browser** — opens the frontend (only when it was actually started by this
+9. **Browser** — opens the frontend (only when it was actually started by this
    run, so repeated runs don't stack browser windows).
 
 Stop only what the startup system launched:

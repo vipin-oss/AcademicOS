@@ -23,6 +23,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Native commands (docker, ollama, npm, python, alembic, ...) report success
+# via $LASTEXITCODE, never via a thrown exception. On PowerShell 7.3+ the
+# default $PSNativeCommandUseErrorActionPreference=$true turns a native
+# command's stderr (e.g. `docker info` when the engine is down) into a
+# NativeCommandError that aborts the script under "Stop". Setting it to $false
+# keeps failures as clean $LASTEXITCODE checks instead of cryptic exceptions.
+# (No-op on PowerShell 5.1.)
+$PSNativeCommandUseErrorActionPreference = $false
 $BackendPort = 8000
 $FrontendDefaultPort = 3000
 $QdrantPort = 6333
@@ -136,6 +144,15 @@ $runDir = Join-Path $ProjectRoot ".academicos-run"
 
 if (-not (Test-Path -LiteralPath $runDir)) { New-Item -ItemType Directory -Path $runDir | Out-Null }
 
+# Docker Desktop helpers (dot-sourceable + unit-tested). See
+# scripts/windows/docker_helpers.ps1 and scripts/windows/tests/docker_helpers.tests.ps1
+$dockerHelpers = Join-Path $ProjectRoot "scripts\windows\docker_helpers.ps1"
+if (Test-Path -LiteralPath $dockerHelpers) {
+    . $dockerHelpers
+} else {
+    Write-Warn "docker_helpers.ps1 not found - Docker handling will be degraded (Qdrant may be skipped)."
+}
+
 # ---------------------------------------------------------------------------
 # 0. Repository / environment checks
 # ---------------------------------------------------------------------------
@@ -184,52 +201,84 @@ if ($pgService) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Docker / Qdrant (preserved; optional)
+# 2. Docker / Qdrant
+#
+# Reuse an already-ready daemon; otherwise discover + start Docker Desktop
+# (only if not already running) and POLL for the daemon (Docker Desktop can
+# take 30-120s to boot the engine, so the first `docker info` failure is
+# never treated as fatal).
 # ---------------------------------------------------------------------------
 $dockerOk = $false
 $qdrantOk = $false
+$dockerSkipped = $false
 if (-not $SkipDocker) {
     Write-Step "2. Docker"
-    $dockerCli = Get-Command docker -ErrorAction SilentlyContinue
-    if (-not $dockerCli) {
-        Write-Warn "Docker CLI not found - skipping Docker/Qdrant container checks."
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Write-Warn "Docker CLI not found. Install Docker Desktop from https://www.docker.com/products/docker-desktop/ (or use -SkipDocker to skip Docker/Qdrant)."
+        $dockerSkipped = $true
     } else {
-        docker info *> $null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Step "Docker Engine not running - starting Docker Desktop..."
-            $dd = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
-            if (-not $dd) {
-                $ddPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-                if (Test-Path -LiteralPath $ddPath) { Start-Process $ddPath }
-                else { Write-Warn "Docker Desktop not found at default path - start it manually." }
-            }
-            $tries = 0
-            while ($tries -lt 30) {
-                Start-Sleep -Seconds 5
-                docker info *> $null
-                if ($LASTEXITCODE -eq 0) { break }
-                $tries++
-            }
-            if ($LASTEXITCODE -ne 0) { Write-Warn "Docker Engine still not ready - Qdrant may be unavailable." }
-            else { $dockerOk = $true; Write-OK "Docker Engine running" }
-        } else {
+        if (Test-DockerDaemonReady) {
             $dockerOk = $true
-            Write-OK "Docker Engine running"
+            Write-OK "Docker daemon ready (reused)"
+        } else {
+            $desktopRunning = Test-DockerDesktopRunning
+            $desktopPath = Get-DockerDesktopPath
+            $action = Resolve-DockerAction -DaemonReady $false -DesktopRunning $desktopRunning -DesktopPathFound ($null -ne $desktopPath)
+
+            switch ($action) {
+                "start" {
+                    Write-Step "Docker Desktop not running -> starting"
+                    try {
+                        Start-Process -FilePath $desktopPath
+                    } catch {
+                        Write-Fail ("Could not start Docker Desktop: {0}" -f $_.Exception.Message)
+                        $dockerSkipped = $true
+                    }
+                }
+                "wait" {
+                    Write-Step "Docker Desktop already running -> waiting for daemon"
+                }
+                "not_found" {
+                    Write-Warn "Docker Desktop executable not found. Install Docker Desktop from https://www.docker.com/products/docker-desktop/ and retry (or use -SkipDocker to skip Docker/Qdrant)."
+                    $dockerSkipped = $true
+                }
+            }
+
+            if (-not $dockerSkipped) {
+                Write-Host "  Waiting for Docker daemon..." -NoNewline
+                $dockerReady = Wait-DockerDaemon -TimeoutSeconds 180 -PollSeconds 5 -OnTick {
+                    param([int]$elapsed)
+                    Write-Host "." -NoNewline
+                }
+                Write-Host ""
+                if ($dockerReady) {
+                    $dockerOk = $true
+                    Write-OK "Docker daemon ready"
+                } else {
+                    Write-Fail "Docker daemon did not become ready within 180s. Open Docker Desktop and confirm it shows 'Engine running', then re-run .\start_academicos.ps1 (or use -SkipDocker to continue without Docker/Qdrant)."
+                    $dockerSkipped = $true
+                }
+            }
         }
 
-        Write-Step "3. Qdrant"
-        if (-not (Test-Port $QdrantPort)) {
-            Write-Step "Starting Qdrant container..."
-            $existing = docker ps -a --format "{{.Names}}" 2>$null | Select-String -Quiet "academicos-qdrant"
-            if ($existing) {
-                docker start academicos-qdrant *> $null
-            } else {
-                docker run -d --name academicos-qdrant -p 6333:6333 -v academicos_qdrant:/qdrant/storage qdrant/qdrant:v1.11.0 *> $null
+        # Qdrant (only when the daemon is actually usable).
+        if ($dockerOk) {
+            Write-Step "3. Qdrant"
+            if (-not (Test-Port $QdrantPort)) {
+                Write-Step "Starting Qdrant container..."
+                $existing = docker ps -a --format "{{.Names}}" 2>$null | Select-String -Quiet "academicos-qdrant"
+                if ($existing) {
+                    docker start academicos-qdrant *> $null
+                } else {
+                    docker run -d --name academicos-qdrant -p 6333:6333 -v academicos_qdrant:/qdrant/storage qdrant/qdrant:v1.11.0 *> $null
+                }
+                Start-Sleep -Seconds 5
             }
-            Start-Sleep -Seconds 5
+            if (Test-Port $QdrantPort) { $qdrantOk = $true; Write-OK ("Qdrant reachable on {0}" -f $QdrantPort) }
+            else { Write-Warn "Qdrant not reachable - search will run lexical-only." }
+        } else {
+            Write-Warn "Docker/Qdrant skipped (daemon not ready) - vector search will run lexical-only."
         }
-        if (Test-Port $QdrantPort) { $qdrantOk = $true; Write-OK ("Qdrant reachable on {0}" -f $QdrantPort) }
-        else { Write-Warn "Qdrant not reachable - search will run lexical-only." }
     }
 } else {
     Write-Warn "Docker/Qdrant skipped (-SkipDocker)."
@@ -504,6 +553,10 @@ Write-Host ("  Backend:" )
 Write-Host ("    http://127.0.0.1:{0}" -f $BackendPort)
 Write-Host ("    Health: {0}" -f $(if ($backendOk) { "OK" } else { "NOT READY" }))
 Write-Host ("    AI: {0}" -f $(if ($aiOk) { "OK" } else { "see above" }))
+Write-Host ""
+Write-Host ("  Docker/Qdrant:")
+Write-Host ("    Status: {0}" -f $(if ($dockerOk) { "OK (daemon ready)" } elseif ($SkipDocker) { "skipped (-SkipDocker)" } else { "NOT READY (see above)" }))
+Write-Host ("    Qdrant: {0}" -f $(if ($qdrantOk) { "OK" } elseif ($SkipDocker -or $dockerSkipped) { "skipped" } else { "not reachable" }))
 Write-Host ""
 Write-Host ("  Ollama:")
 Write-Host ("    http://127.0.0.1:{0}" -f $OllamaPort)
