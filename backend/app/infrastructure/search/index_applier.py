@@ -136,6 +136,13 @@ class SearchIndexApplier:
             if not batch:
                 break
 
+            # V3 M8 (law 22): object/projection changes ride the outbox; drop
+            # cached dossier/fact aggregates so a concurrent read never goes
+            # stale across a projection update.
+            from app.application.services.fact_cache import invalidate_facts
+
+            invalidate_facts()
+
             def apply_batch(batch=batch) -> None:  # bound default: stable per-iteration batch
                 for event in batch:
                     self._apply_event(event)

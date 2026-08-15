@@ -42,6 +42,12 @@ def _typed_columns(value: dict) -> tuple[float | None, str | None, str | None]:
         amount = value.get("amount")
         number = float(amount) if isinstance(amount, int | float) and not isinstance(amount, bool) else None
         return (number, None, None)
+    if kind == "number":
+        # V3 M6: a plain numeric predicate (e.g. project_duration_months) also
+        # projects to value_number so range lookups stay an indexed scan.
+        num = value.get("value")
+        number = float(num) if isinstance(num, int | float) and not isinstance(num, bool) else None
+        return (number, None, None)
     if kind == "date":
         text = value.get("value")
         s = str(text) if text is not None else None
@@ -138,6 +144,9 @@ class SQLClaimStore(ClaimStore):
         self._session = session
 
     def put(self, claim: Claim, spans: list[Span]) -> Claim:
+        from app.application.services.fact_cache import invalidate_facts
+
+        invalidate_facts()
         now = _utcnow_iso()
         existing = self._session.execute(
             select(ClaimModel).where(ClaimModel.claim_id == claim.claim_id)
@@ -210,6 +219,9 @@ class SQLClaimStore(ClaimStore):
         reviewer: str | None = None,
         now: str | None = None,
     ) -> Claim:
+        from app.application.services.fact_cache import invalidate_facts
+
+        invalidate_facts()
         row = self._session.execute(
             select(ClaimModel).where(ClaimModel.claim_id == claim_id)
         ).scalars().first()
@@ -222,6 +234,9 @@ class SQLClaimStore(ClaimStore):
     def supersede(
         self, claim_id: str, by_claim_id: str, *, now: str | None = None
     ) -> Claim:
+        from app.application.services.fact_cache import invalidate_facts
+
+        invalidate_facts()
         row = self._session.execute(
             select(ClaimModel).where(ClaimModel.claim_id == claim_id)
         ).scalars().first()

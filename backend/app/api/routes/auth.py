@@ -17,11 +17,13 @@ unprotected until then.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user, require_permission
+from app.api.dependencies.auth import bearer_scheme, get_current_user, require_permission
 from app.api.dependencies.db import get_db
+from app.infrastructure.auth.jwt import decode_token
 from app.api.mappers.auth_mapper import (
     to_login_input,
     to_refresh_input,
@@ -165,6 +167,48 @@ def login(
     except AuthenticationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     return TokenResponse(**to_tokens_response(out))
+
+
+class LogoutResponse(BaseModel):
+    revoked: bool
+
+
+@router.post("/logout", response_model=LogoutResponse)
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> LogoutResponse:
+    """Revoke the presented access token (V3 M9, ADR-056 "revocation").
+
+    Adds the token's ``jti`` to the durable denylist until its absolute expiry.
+    Idempotent — logging out an already-revoked (or already-expired) token is
+    a no-op and still succeeds (so clients can always clear state).
+    """
+    if credentials is None or not credentials.credentials:
+        # No token to revoke — still succeed (idempotent logout).
+        return LogoutResponse(revoked=False)
+    try:
+        claims = decode_token(credentials.credentials)
+    except Exception:  # noqa: BLE001 - expired/malformed tokens are already dead
+        return LogoutResponse(revoked=False)
+    jti = claims.get("jti")
+    exp = claims.get("exp")
+    if not jti or not exp:
+        return LogoutResponse(revoked=False)
+    from app.infrastructure.persistence.token_revocation_store import (
+        SQLTokenRevocationStore,
+    )
+
+    expires_at = _exp_iso(exp)
+    SQLTokenRevocationStore(db).add(jti, expires_at)
+    db.commit()
+    return LogoutResponse(revoked=True)
+
+
+def _exp_iso(exp: int) -> str:
+    import datetime as dt
+
+    return dt.datetime.fromtimestamp(int(exp), tz=dt.UTC).isoformat()
 
 
 @router.post("/refresh", response_model=TokenResponse)

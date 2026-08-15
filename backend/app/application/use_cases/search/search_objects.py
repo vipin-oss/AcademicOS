@@ -16,6 +16,7 @@ behaviour — same candidates, same ordering, same gate.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.application.dtos.search import (
     INDEX_SOURCE_BOTH,
@@ -42,6 +43,23 @@ _RRF_K = 60
 # Score rounding keeps the API output stable and short.
 _SCORE_DECIMALS = 6
 
+# V3 M9: pre-filter over-fetch factor — fetch this many extra candidates so
+# unauthorized rows cannot crowd authorized ones out of the top-k, then rank
+# only the authorized set. Bounded (never an unbounded scan).
+_OVERFETCH_FACTOR = 4
+_OVERFETCH_CAP = 1000
+
+
+def _overfetch_limit(limit: int) -> int:
+    return min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CAP)
+
+# V3 M8: bounded shared executor for the semantic search leg. The semantic leg
+# (embedder + vector repository) never touches the DB session, so running it on
+# a worker thread while the lexical leg runs on the request thread is safe and
+# yields the parallel-fan-out wall-clock win (blueprint A5: no async, no driver
+# change). Bounded to 2 workers — it only ever runs one semantic leg per search.
+_search_leg_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="search-leg")
+
 
 class SearchObjectsUseCase:
     def __init__(
@@ -52,12 +70,15 @@ class SearchObjectsUseCase:
         *,
         vector_repository: VectorRepository | None = None,
         embedder: Embedder | None = None,
+        parallel: bool = True,
     ) -> None:
         self._search_repository = search_repository
         self._object_repository = object_repository
         self._permission_evaluator = permission_evaluator
         self._vector_repository = vector_repository
         self._embedder = embedder
+        # V3 M8: feature-flag rollback for the parallel fan-out.
+        self._parallel = parallel
 
     def execute(
         self,
@@ -77,42 +98,91 @@ class SearchObjectsUseCase:
         if text is None and title is None and object_type is None and filename is None:
             raise ValidationError("At least one search criterion is required.")
 
+        # V3 M9 (ADR-056): permission is a PRE-filter, never a post-filter.
+        # Over-fetch so unauthorized candidates cannot crowd authorized ones
+        # out of the top-k, authorize the candidate set against the live
+        # objects BEFORE fusion/ranking, then rank only the authorized set.
+        fetch_limit = _overfetch_limit(limit)
         lexical = self._search_repository.search(
             text=text, object_type=object_type, title=title, filename=filename,
-            exclude_types=exclude_types, limit=limit,
+            exclude_types=exclude_types, limit=fetch_limit,
         )
-        semantic = self._semantic_candidates(
-            text=text, object_type=object_type, title=title, limit=limit,
+        semantic = self._semantic_leg(
+            text=text, object_type=object_type, title=title, limit=fetch_limit,
             exclude_types=exclude_types,
         )
-        hits = _fuse(lexical, semantic, limit=limit)
-        if not hits:
-            return []
 
-        # Authorize the candidate set through the R4 seam before returning
-        # anything: the index is derived data, the object is the authority.
-        # (Unchanged from Sprint-5 M1 — one gate for every candidate,
-        # regardless of which leg produced it.)
+        principal = {"sub": str(user.id), "roles": get_roles(user)}
+        lexical = self._authorized(lexical, principal)
+        semantic = self._authorized(semantic, principal)
+
+        return _fuse(lexical, semantic, limit=limit)
+
+    def _authorized(self, candidates: list, principal: dict) -> list:
+        """Drop candidates whose object is missing or not READ-authorized.
+
+        The index is derived data; the object is the authority. A candidate
+        for an object that no longer exists, or that the principal may not
+        READ, is removed BEFORE ranking (never ranked, never leaked).
+        """
+        if not candidates:
+            return []
         objects = self._object_repository.find_by_ids(
-            [ObjectId(hit.object_id) for hit in hits]
+            [ObjectId(c.object_id) for c in candidates]
         )
         by_id = {str(obj.id): obj for obj in objects}
-        principal = {"sub": str(user.id), "roles": get_roles(user)}
-        allowed: list[SearchHit] = []
-        for hit in hits:
-            obj = by_id.get(hit.object_id)
+        allowed: list = []
+        for candidate in candidates:
+            obj = by_id.get(candidate.object_id)
             if obj is None:
-                # Index row for an object that no longer exists: never leak.
                 continue
             if self._permission_evaluator.can(
                 principal=principal,
                 scope=object_acl_scope(obj),
                 action=PermissionAction.READ,
             ):
-                allowed.append(hit)
+                allowed.append(candidate)
         return allowed
 
     # ---------------------------------------------------------- semantic leg
+    def _semantic_leg(
+        self,
+        *,
+        text: str | None,
+        object_type: str | None,
+        title: str | None,
+        limit: int,
+        exclude_types: set[str] | None = None,
+    ) -> list:
+        """The semantic leg, optionally fanned out to the shared executor.
+
+        V3 M8: when a semantic leg exists and parallel fan-out is enabled, run
+        it on the bounded executor while the caller's lexical leg (already
+        computed on the request thread) proceeds. The semantic leg is
+        session-free (embedder + vector repository only), so this is safe.
+        Results are identical to the sequential path — ``_semantic_candidates``
+        is deterministic and swallows its own failures.
+        """
+        if (
+            self._parallel
+            and text is not None
+            and self._vector_repository is not None
+            and self._embedder is not None
+        ):
+            future = _search_leg_executor.submit(
+                self._semantic_candidates,
+                text=text,
+                object_type=object_type,
+                title=title,
+                limit=limit,
+                exclude_types=exclude_types,
+            )
+            return future.result()
+        return self._semantic_candidates(
+            text=text, object_type=object_type, title=title, limit=limit,
+            exclude_types=exclude_types,
+        )
+
     def _semantic_candidates(
         self,
         *,

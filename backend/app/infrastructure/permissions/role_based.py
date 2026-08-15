@@ -33,7 +33,19 @@ _DEFAULT_ACTIONS: frozenset[PermissionAction] = frozenset(
 
 
 class RoleBasedPermissionEvaluator(PermissionEvaluator):
-    """Decides role-level capability by PermissionAction."""
+    """Decides role-level capability by PermissionAction.
+
+    V3 M9 (ADR-056): ``deny_by_default`` makes a roleless (unassigned)
+    principal hold NO actions (fail-closed) instead of the legacy READ+WRITE
+    default. Configured postures only move fail-open -> fail-closed.
+    """
+
+    def __init__(self, *, deny_by_default: bool | None = None) -> None:
+        if deny_by_default is None:
+            from app.core.config import settings
+
+            deny_by_default = settings.security_deny_by_default
+        self._deny_by_default = deny_by_default
 
     def can(
         self,
@@ -47,6 +59,8 @@ class RoleBasedPermissionEvaluator(PermissionEvaluator):
             return False
         roles = principal.get("roles") or []
         if not roles:
+            if self._deny_by_default:
+                return False
             # Authenticated but unassigned: the status-quo capability.
             return action in _DEFAULT_ACTIONS
         allowed: set[PermissionAction] = set()

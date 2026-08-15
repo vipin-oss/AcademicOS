@@ -63,8 +63,15 @@ from app.infrastructure.db.models.search_document_model import (  # noqa: F401
 from app.infrastructure.db.models.tool_call_log_model import (  # noqa: F401
     ToolCallLogModel,
 )
+from app.infrastructure.db.models.session_revocation_model import (  # noqa: F401
+    SessionRevocationModel,
+)
+from app.infrastructure.db.models.job_model import (  # noqa: F401
+    JobAttemptModel,
+    JobModel,
+)
 
-CURRENT_MIGRATION = "0016_typed_claims"
+CURRENT_MIGRATION = "0018_durable_jobs"
 
 
 def main() -> None:

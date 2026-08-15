@@ -90,6 +90,44 @@ class ClaimService:
         )
         return self._store.put(claim, spans)
 
+    def suggest(
+        self,
+        *,
+        predicate_id: str,
+        raw_value: object,
+        source_text: str,
+        source_document_id: str,
+        source_version: int,
+        spans: list[Span],
+        acl_scope: str | None,
+        fact_confidence: float | None = None,
+        extraction_confidence: float | None = None,
+        provenance: Provenance = Provenance.INFERRED,
+        ocr_derived: bool = False,
+    ) -> Claim:
+        """Create an AUTO_SUGGESTED claim (V3 M6, ADR-053 / A10).
+
+        AUTO_SUGGESTED is a review shortcut, NEVER authoritative: searchable,
+        AI-readable, shown with a "not yet confirmed" badge, but never cited
+        as institutional fact until a human confirms it. Callers MUST gate
+        this behind a measured precision check (:class:`SuggestionPolicy`);
+        this method only provides the mechanism, it never decides eligibility.
+        """
+        claim = self.propose(
+            predicate_id=predicate_id,
+            raw_value=raw_value,
+            source_text=source_text,
+            source_document_id=source_document_id,
+            source_version=source_version,
+            spans=spans,
+            acl_scope=acl_scope,
+            fact_confidence=fact_confidence,
+            extraction_confidence=extraction_confidence,
+            provenance=provenance,
+            ocr_derived=ocr_derived,
+        )
+        return self._store.set_status(claim.claim_id, ClaimStatus.AUTO_SUGGESTED)
+
     def confirm(
         self,
         claim_id: str,

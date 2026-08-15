@@ -96,8 +96,10 @@ def db():
         engine.dispose()
 
 
-def test_all_17_orm_tables_stamped() -> None:
-    assert EXPECTED_TABLES == set(Base.metadata.tables)
+def test_all_orm_tables_stamped() -> None:
+    # The M3 set (17 tables) has grown additively (M9 session_revocations,
+    # M10 jobs/job_attempts); every table — old or new — must carry the stamp.
+    assert EXPECTED_TABLES <= set(Base.metadata.tables)
     for table in Base.metadata.tables.values():
         cols = table.columns
         assert "tenant_id" in cols, table.name
