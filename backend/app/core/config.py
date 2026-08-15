@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     job_per_type_concurrency: int = 5
     relay_interval_seconds: float = 1.0
 
+    # V3 M19 — production hardening: JSON structured logs (one object per
+    # line) when true; default is the human-readable line format.
+    log_json: bool = False
+
     # Public base URL of this API, used to build absolute download links
     public_base_url: str = "http://localhost:8000"
 
