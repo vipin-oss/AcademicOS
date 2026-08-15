@@ -28,6 +28,9 @@ backend/storage/
 *.db
 *.sqlite3
 
+# One-command startup runtime state (PID files written by start_academicos.ps1)
+.academicos-run/
+
 # Editor / OS
 .DS_Store
 .idea/

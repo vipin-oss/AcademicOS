@@ -157,36 +157,59 @@ decisions: `AI_DEVELOPER_GUIDE.md` and `docs/`.
 
 ---
 
-## Windows Development Automation (Sprint M10.1)
+## Windows Development Automation (one-command startup)
 
 AcademicOS ships one-command PowerShell tooling for Windows 10/11
-(PowerShell 5.1+). From the project root:
+(PowerShell 5.1+). **The canonical way to run the whole stack is one command
+from the repository root:**
+
+```powershell
+cd E:\AcademicOS
+.\start_academicos.ps1
+```
+
+That single command verifies the environment, starts **Ollama** (pulling the
+configured model if missing), runs database migrations, starts the **backend**
+(`uvicorn` on http://127.0.0.1:8000) and the **frontend** (Next.js dev server),
+waits for real HTTP readiness (not just "process exists"), verifies the backend
+can actually reach Ollama, and opens the app in your browser. Re-running it
+while everything is up reuses the healthy services instead of piling up
+duplicates.
+
+To stop only what the startup system launched (never PostgreSQL, never
+pre-existing processes):
+
+```powershell
+.\stop_academicos.ps1
+```
 
 | Command | Purpose |
 |---|---|
-| `.\start.ps1` | Verify/start PostgreSQL, Docker Desktop + Engine, Qdrant; install missing deps; run migrations; start backend + frontend; open http://localhost:3000 |
-| `.\stop.ps1` | Gracefully stop backend + frontend (+ optional Qdrant container). PostgreSQL is never touched |
+| `.\start_academicos.ps1` | **One-command startup**: environment checks → Ollama (+ model) → PostgreSQL/Docker/Qdrant → deps + migrations → backend → AI/Ollama connectivity check → frontend → browser. Options: `-NoOpenBrowser`, `-SkipDocker`, `-SkipOllama` |
+| `.\stop_academicos.ps1` | Stop ONLY the backend/frontend/Ollama processes this system launched (PID-tracked). PostgreSQL and unrelated processes are never touched. `-KeepQdrant` leaves the Qdrant container running |
 | `.\health.ps1` | PASS/FAIL for PostgreSQL, DB connection, Docker, Qdrant, backend, frontend, storage, Alembic, node_modules, Python packages |
+| `.\start.ps1` / `.\stop.ps1` | Legacy aliases (delegate to the same `scripts\windows\*.ps1`); kept for compatibility |
 | `scripts\windows\reset_academicos.ps1` | Interactive menu (frontend / backend / database / Qdrant / everything) with confirmation |
 | `scripts\windows\validate_environment.ps1` | Detect missing Python / Node / npm / Docker / PostgreSQL / Git / ports / deps with fix instructions |
 
 ### First-time setup
 
-1. Install Python 3.11+, Node 18+ LTS, Docker Desktop, Git (see `validate_environment.ps1`).
+1. Install Python 3.11+, Node 18+ LTS, Docker Desktop, Git, and
+   [Ollama](https://ollama.com) (see `validate_environment.ps1`).
 2. `.\validate_environment.ps1` — resolves any missing tooling.
-3. `.\start.ps1` — provisions everything (installs deps, initialises the DB,
-   starts services) and opens the app.
+3. `.\start_academicos.ps1` — provisions everything (installs deps, initialises
+   the DB, pulls the Ollama model, starts services) and opens the app.
 
 ### Daily startup
 
 ```
-.\start.ps1
+.\start_academicos.ps1
 ```
 
 ### Daily shutdown
 
 ```
-.\stop.ps1
+.\stop_academicos.ps1
 ```
 
 ### Health check
@@ -197,12 +220,17 @@ AcademicOS ships one-command PowerShell tooling for Windows 10/11
 
 ### Troubleshooting
 
-- **Backend won't start** — `$env:TEMP\academicos_backend.log`
-- **Frontend won't start** — `$env:TEMP\academicos_frontend.log`
-- **Qdrant unreachable** — `docker start academicos-qdrant` (or re-run `.\start.ps1`)
+- **Backend won't start** — `$env:TEMP\academicos_backend.out.log` / `.err.log`
+- **Frontend won't start** — `$env:TEMP\academicos_frontend.out.log` / `.err.log`
+- **Qdrant unreachable** — `docker start academicos-qdrant` (or re-run `.\start_academicos.ps1`)
+- **Ollama not running** — the startup script reports this and attempts to
+  start `ollama serve`. If Ollama is installed elsewhere, start it manually and
+  re-run. Model missing → the script runs `ollama pull <model-from-.env>`.
 - **AI flags ignored / assistants "not enabled" despite `.env`** — the backend
   was started from a directory other than `backend/` (the env file is anchored
   to `backend/.env`; starting from the repo root silently skips it). Start
   from `backend/`, or set `ACADEMICOS_ENV_FILE`, then restart the process.
-- **Ports in use** — stop other dev servers; `stop_academicos.ps1` clears 8000/3000
+  (`start_academicos.ps1` starts uvicorn from `backend/`, so this is handled.)
+- **Ports in use** — stop other dev servers; `stop_academicos.ps1` clears the
+  backend/frontend ports it owns (8000/3000)
 - **DB reset** — `scripts\windows\reset_academicos.ps1` (option 3)
