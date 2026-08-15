@@ -42,6 +42,11 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-055 | Retrieval speed, parallel fan-out, fact/dossier cache | [ADR-055](ADR-055-v3-m8-retrieval-speed-and-parallelism.md) (V3 M8) | V3 M8 |
 | ADR-056 | Deny-by-default security posture, pre-filter, revocation | [ADR-056](ADR-056-v3-m9-security-deny-by-default.md) (V3 M9) | V3 M9 |
 | ADR-057 | Durable jobs + separate worker/relay processes | [ADR-057](ADR-057-v3-m10-durable-jobs-and-worker-process.md) (V3 M10) | V3 M10 |
+| ADR-058 | One document pipeline (revisions + quarantine) | [ADR-058](ADR-058-v3-m11-one-document-pipeline.md) (V3 M11) | V3 M11 |
+| ADR-059 | One AI router + model budget/spend ledger | [ADR-059](ADR-059-v3-m12-one-ai-router.md) (V3 M12) | V3 M12 |
+| ADR-060 | Ad-hoc query & export (saved views) | [ADR-060](ADR-060-v3-m13-adhoc-query-and-export.md) (V3 M13) | V3 M13 |
+| ADR-061 | Multi-user UX & admin (roles + operational panel) | [ADR-061](ADR-061-v3-m14-multi-user-ux-and-admin.md) (V3 M14) | V3 M14 |
+| ADR-062 | Multi-tenant isolation | [ADR-062](ADR-062-v3-m15-multi-tenant-isolation.md) (V3 M15) | V3 M15 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

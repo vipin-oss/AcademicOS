@@ -280,6 +280,11 @@ def create_document(
         or mimetypes.guess_type(file_name)[0]
         or "application/octet-stream"
     )
+    # V3 M11 (ADR-058): the canonical sync pipeline — hash + quarantine
+    # decision run identically for every entry point.
+    from app.application.services.document_pipeline import DocumentPipeline
+
+    decision = DocumentPipeline.decision(file_name, mime_type, content)
     try:
         out = CreateDocumentUseCase(repo, storage).execute(
             CreateDocumentCommand(
@@ -305,19 +310,49 @@ def create_document(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
-    # Fix A: index the body content of a direct upload (best-effort — a
-    # parse/indexing failure must never fail an otherwise-successful upload).
+    # V3 M11 (ADR-058): record an immutable revision and skip content indexing
+    # for quarantined blobs (stored, but never indexed/claimed).
     try:
-        _index_direct_upload_content(
-            db,
-            document_id=str(out.id),
-            version=out.version,
-            file_name=file_name,
-            content=content,
+        from app.application.ports.document_revision_store import DocumentRevision
+        from app.infrastructure.persistence.document_revision_store import (
+            SQLDocumentRevisionStore,
         )
-    except Exception:  # noqa: BLE001 — content indexing is best-effort
+        import datetime as _dt
+        import uuid as _uuid
+
+        revision_store = SQLDocumentRevisionStore(db)
+        revision = DocumentRevision(
+            id=_uuid.uuid4().hex,
+            document_id=str(out.id),
+            revision_version=revision_store.next_version(str(out.id)),
+            file_name=file_name,
+            content_hash=decision.content_hash,
+            mime_type=mime_type,
+            file_size=len(content),
+            storage_key=str(out.id),
+            quarantined=decision.quarantine != "clean",
+            quarantine_reason=decision.quarantine_reason,
+            created_at=_dt.datetime.now(_dt.UTC).isoformat(),
+        )
+        revision_store.add(revision)
+        db.commit()
+        if decision.quarantine == "clean":
+            _index_direct_upload_content(
+                db,
+                document_id=str(out.id),
+                version=out.version,
+                file_name=file_name,
+                content=content,
+            )
+        else:
+            _log.warning(
+                "Quarantined upload %r: %s (stored, not indexed).",
+                file_name,
+                decision.quarantine_reason,
+            )
+    except Exception:  # noqa: BLE001 — revision/indexing is best-effort
         _log.warning(
-            "Direct-upload content indexing failed for %r; upload succeeded.",
+            "Direct-upload revision/indexing failed for %r; upload succeeded.",
             file_name,
             exc_info=True,
         )
