@@ -42,6 +42,51 @@ class ListProposalsUseCase:
     def execute(self, query: ListProposalsQuery) -> ListProposalsResult:
         assert_valid_list_query(query.page, query.page_size)
         assert_optional_financial_year(query.financial_year)
+
+        # M27 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title_ci — the registry's name order) instead of
+        # loading every PURCHASE row and hydrating all JSONB metadata before
+        # slicing. The slow path below is preserved for queries with criteria
+        # the SQL projection cannot express (q tokens, vendor/project/grant/
+        # status/department/financial-year filters).
+        plain = (
+            not (query.q or "").strip()
+            and not (query.vendor or "").strip()
+            and not (query.project or "").strip()
+            and not (query.grant or "").strip()
+            and not (query.status or "").strip()
+            and not (query.department or "").strip()
+            and not (query.financial_year or "").strip()
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.PURCHASE)
+            page = self._repository.find(
+                object_type=ObjectType.PURCHASE,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            items: list[ProposalOutput] = []
+            for obj in page:
+                link_ids = [
+                    rel.target
+                    for rel in obj.relationships
+                    if rel.kind is RelationshipKind.RELATED_TO
+                ]
+                linked_by_id = {
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                }
+                out = ProposalOutput.from_domain(obj, [], linked_by_id=linked_by_id)
+                enrich_proposal_output(self._repository, obj, out)
+                items.append(out)
+            return ListProposalsResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         objects = self._repository.find_by_type(ObjectType.PURCHASE)
 
         tokens = (query.q or "").strip().casefold().split()

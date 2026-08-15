@@ -25,6 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.productivity_mapper import (
     output_dict,
     to_create_entry_input,
@@ -109,7 +111,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/productivity", tags=["productivity"])
+router = APIRouter(prefix="/productivity", tags=["productivity"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 # ---------------------------------------------------------------------------
@@ -306,9 +308,10 @@ def productivity_search(
 def refresh_notifications(
     request: RefreshRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = RefreshNotificationsUseCase(repo).execute(actor=request.uploaded_by)
+        out = RefreshNotificationsUseCase(repo).execute(actor=str(user.id))
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
     return output_dict(out)
@@ -355,10 +358,11 @@ def list_tasks(
 def create_task(
     request: TaskRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateTaskUseCase(repo).execute(
-            CreateTaskCommand(input=to_create_task_input(body=request.model_dump()))
+            CreateTaskCommand(input=to_create_task_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc) from exc
@@ -382,10 +386,11 @@ def update_task(
     task_id: str,
     request: UpdateTaskRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = UpdateTaskUseCase(repo).execute(
-            UpdateTaskCommand(object_id=task_id, input=to_update_task_input(body=request.model_dump()))
+            UpdateTaskCommand(object_id=task_id, input=to_update_task_input(body={**request.model_dump(), "updated_by": str(user.id)}))
         )
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
@@ -438,10 +443,11 @@ def list_calendar_entries(
 def create_calendar_entry(
     request: EntryRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateCalendarEntryUseCase(repo).execute(
-            CreateCalendarEntryCommand(input=to_create_entry_input(body=request.model_dump()))
+            CreateCalendarEntryCommand(input=to_create_entry_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc) from exc
@@ -467,11 +473,12 @@ def update_calendar_entry(
     entry_id: str,
     request: UpdateEntryRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = UpdateCalendarEntryUseCase(repo).execute(
             UpdateCalendarEntryCommand(
-                object_id=entry_id, input=to_update_entry_input(body=request.model_dump())
+                object_id=entry_id, input=to_update_entry_input(body={**request.model_dump(), "updated_by": str(user.id)})
             )
         )
     except ObjectNotFoundError as exc:
@@ -525,10 +532,11 @@ def list_notifications(
 def create_notification(
     request: NotificationRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateNotificationUseCase(repo).execute(
-            CreateNotificationCommand(input=to_create_notification_input(body=request.model_dump()))
+            CreateNotificationCommand(input=to_create_notification_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -541,12 +549,13 @@ def update_notification(
     notification_id: str,
     request: UpdateNotificationRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = UpdateNotificationUseCase(repo).execute(
             UpdateNotificationCommand(
                 object_id=notification_id,
-                input=to_update_notification_input(body=request.model_dump()),
+                input=to_update_notification_input(body={**request.model_dump(), "updated_by": str(user.id)}),
             )
         )
     except ObjectNotFoundError as exc:

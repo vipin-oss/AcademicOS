@@ -41,7 +41,7 @@ class InMemoryObjectRepository(ObjectRepository):
     def __init__(self) -> None:
         self._store: dict[str, UniversalObject] = {}
 
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events=()) -> None:
         self._store[str(entity.id)] = entity
 
     def get_by_id(self, id) -> UniversalObject | None:
@@ -67,6 +67,38 @@ class InMemoryObjectRepository(ObjectRepository):
 
     def find_related(self, id, *, relation_type=None, direction="outgoing") -> list:
         return []
+    def find_inbound(
+        self, object_id: ObjectId, kind=None
+    ) -> list[ObjectId]:
+        return [
+            o.id
+            for o in self._store.values()
+            if any(r.target == object_id and (kind is None or r.kind == kind) for r in o.relationships)
+        ]
+    def find(
+        self,
+        *,
+        object_type=None,
+        status=None,
+        metadata_key=None,
+        metadata_value=None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str | None = None,
+        order: str = "asc",
+    ) -> list[UniversalObject]:
+        return []
+
+    def count(
+        self,
+        *,
+        object_type=None,
+        status=None,
+        metadata_key=None,
+        metadata_value=None,
+    ) -> int:
+        return 0
+
 
 
 class InMemoryStorage(FileStorage):

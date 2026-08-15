@@ -10,6 +10,10 @@ Mirrors ``test_settings_api.py``: StaticPool in-memory SQLite, the app
 imported via ``pytest.importorskip``.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import pytest
 
@@ -40,6 +44,14 @@ def client():
         yield session
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -94,7 +106,8 @@ def test_ask_creates_conversation_with_answer(client: TestClient):
     assert answer["intent"] == "today_plan"
     assert answer["intent_label"]
     assert set(answer) == {"intent", "intent_label", "question", "summary",
-                           "metrics", "items", "cards", "actions", "sources"}
+                           "metrics", "items", "cards", "actions", "sources",
+                           "citations"}  # S6 M3 additive evidence field
     assert answer["metrics"]["Tasks due today"].isdigit()
     for card in answer["cards"]:
         assert card["href"] and card["object_type"] and card["title"]
@@ -245,4 +258,19 @@ def test_health_regression_and_openapi_tags(client: TestClient):
     assert client.get("/api/v1/health").status_code == 200
     openapi = client.get("/openapi.json").json()
     assistant_paths = [p for p in openapi["paths"] if p.startswith("/api/v1/assistant")]
-    assert len(assistant_paths) == 5  # home / ask / suggested / conversations / {id}
+    # home / ask / ask/stream / suggested / conversations / {id} /
+    # review x3 / eval x4 (S7 M4) / review decisions x2 (S7 M5) /
+    # memory recall (S8 M1) / memory consolidate (S8 M4) /
+    # memory (L7 M) / memory {artifact_id} (L7 M) — L7 added two memory paths.
+    assert len(assistant_paths) == 19
+    assert "/api/v1/assistant/ask/stream" in assistant_paths  # S6 M4 SSE
+    assert "/api/v1/assistant/review/pending" in assistant_paths  # S6 M5
+    assert "/api/v1/assistant/eval/runs" in assistant_paths  # S7 M4
+    assert "/api/v1/assistant/eval/compare" in assistant_paths  # S7 M4
+    assert "/api/v1/assistant/eval/models/{model_id}/compare/latest" in assistant_paths  # S7 M4
+    assert "/api/v1/assistant/review/decisions" in assistant_paths  # S7 M5
+    assert "/api/v1/assistant/review/decisions/{conversation_id}" in assistant_paths  # S7 M5
+    assert "/api/v1/assistant/memory/recall" in assistant_paths  # S8 M1
+    assert "/api/v1/assistant/memory/consolidate" in assistant_paths  # S8 M4
+    assert "/api/v1/assistant/memory" in assistant_paths  # L7 M1 write+list
+    assert "/api/v1/assistant/memory/{artifact_id}" in assistant_paths  # L7 M1 forget

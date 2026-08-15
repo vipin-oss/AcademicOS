@@ -31,6 +31,28 @@ class ListAgenciesUseCase:
     def execute(self, query: ListAgenciesQuery) -> ListAgenciesResult:
         assert_valid_list_agencies_query(query)
 
+        # M27 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title_ci — the registry's name order, since
+        # AgencyOutput.name is the object title) instead of loading every
+        # FUNDING_AGENCY row and hydrating all JSONB metadata before slicing.
+        # The slow path below is preserved for q/status filters.
+        plain = not (query.q or "").strip() and query.status is None
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.FUNDING_AGENCY)
+            page = self._repository.find(
+                object_type=ObjectType.FUNDING_AGENCY,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            return ListAgenciesResult(
+                items=[AgencyOutput.from_domain(a, []) for a in page],
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         agencies = self._repository.find_by_type(ObjectType.FUNDING_AGENCY)
         outputs = [AgencyOutput.from_domain(a, []) for a in agencies]
         outputs = [

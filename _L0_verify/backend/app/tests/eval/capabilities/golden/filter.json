@@ -1,0 +1,50 @@
+{
+  "capability_id": "filter",
+  "cases": [
+    {
+      "case_id": "filter.en.pubs-this-year",
+      "language": "en",
+      "question": "Publications from this year only.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "filter.en.attendance-below",
+      "language": "en",
+      "question": "Students below 75 percent attendance.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "filter.hi-en.is-saal",
+      "language": "hi-en",
+      "question": "is saal ki publications filter karo.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "filter.en.grants-over",
+      "language": "en",
+      "question": "Grants sanctioned above ten lakh.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "filter.hi-en.low-attendance",
+      "language": "hi-en",
+      "question": "75 percent se kam attendance wale students.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

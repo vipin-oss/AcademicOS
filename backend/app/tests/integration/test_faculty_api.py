@@ -7,6 +7,10 @@ disk state, or network. The cross-module graph (projects, grants, students,
 classes, publications) is built through the FROZEN modules' own APIs.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import pytest
 
@@ -41,6 +45,14 @@ def client(tmp_path):
         yield session
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[faculty_get_storage] = lambda: LocalFileStorage(str(tmp_path))
     with TestClient(app) as c:
         yield c
@@ -327,7 +339,7 @@ def test_delete_then_404(client):
 
 def test_events_and_audit_round_trip(client):
     faculty = _faculty(client).json()
-    assert faculty["uploaded_by"] == "registrar:1"
+    assert faculty["uploaded_by"] == "obj:user:test-user-0001"
     assert faculty["version"] == 1
     assert any("Created" in event for event in faculty["events"])
     updated = client.put(

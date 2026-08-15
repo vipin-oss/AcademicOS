@@ -25,6 +25,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.faculty_mapper import (
     faculty_response,
     to_create_faculty_input,
@@ -58,7 +60,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/faculty", tags=["faculty"])
+router = APIRouter(prefix="/faculty", tags=["faculty"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
@@ -301,10 +303,11 @@ def list_faculty(
 def create_faculty(
     req: CreateFacultyRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> FacultyResponseModel:
     try:
         out = CreateFacultyUseCase(repo).execute(
-            CreateFacultyCommand(input=to_create_faculty_input(body=req.model_dump()))
+            CreateFacultyCommand(input=to_create_faculty_input(body={**req.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc)

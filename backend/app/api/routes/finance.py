@@ -26,6 +26,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.finance_mapper import (
     proposal_response,
     to_create_proposal_input,
@@ -72,7 +74,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/finance", tags=["finance"])
+router = APIRouter(prefix="/finance", tags=["finance"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 # ---------------------------------------------------------------------------
@@ -348,10 +350,11 @@ def list_vendors(
 def create_vendor(
     request: CreateVendorRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateVendorUseCase(repo).execute(
-            CreateVendorCommand(input=to_create_vendor_input(body=request.model_dump()))
+            CreateVendorCommand(input=to_create_vendor_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc) from exc
@@ -444,10 +447,11 @@ def list_proposals(
 def create_proposal(
     request: CreateProposalRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateProposalUseCase(repo).execute(
-            CreateProposalCommand(input=to_create_proposal_input(body=request.model_dump()))
+            CreateProposalCommand(input=to_create_proposal_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc) from exc

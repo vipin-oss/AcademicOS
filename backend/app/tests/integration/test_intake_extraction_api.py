@@ -12,6 +12,10 @@ per-item isolation, job controls under real engine load, full cleanup, and
 the cold boundary: extraction never creates anything outside Intake.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import time
 from pathlib import Path
@@ -114,6 +118,14 @@ def harness(tmp_path: Path):
     jobs = IntakeJobManager(repo_factory, storage, build_document_parsers())
 
     app.dependency_overrides[get_db] = override_get_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_job_manager] = lambda: jobs
 
@@ -309,6 +321,7 @@ class TestM2JobControls:
     def _wait_paused(self, client: TestClient, sid: str) -> dict:
         return wait_status(client, sid, "paused")
 
+    @pytest.mark.slow_timing
     def test_pause_resume_with_real_engines(self, harness, bulk_root: Path) -> None:
         client, _engine, _storage, _ = harness
         sid = _create(client, bulk_root)
@@ -325,6 +338,7 @@ class TestM2JobControls:
         assert session["statistics"]["extracted_items"] == 300
         assert session["statistics"]["errors"] == 0
 
+    @pytest.mark.slow_timing
     def test_cancel_with_real_engines(self, harness, bulk_root: Path) -> None:
         client, _engine, _storage, _ = harness
         sid = _create(client, bulk_root)

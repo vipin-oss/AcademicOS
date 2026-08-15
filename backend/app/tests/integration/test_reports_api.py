@@ -10,6 +10,10 @@ seeded through the FROZEN modules' own APIs — reports then read exactly the
 data those modules wrote (no duplicate storage, no back doors).
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import io
 import zipfile
@@ -45,6 +49,14 @@ def client():
         yield session
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

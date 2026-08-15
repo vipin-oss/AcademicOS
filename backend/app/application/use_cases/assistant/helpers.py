@@ -45,7 +45,6 @@ def create_conversation_object(repository: ObjectRepository, title: str,
     _set(obj, dto.KEY_PINNED, "false")
     _set(obj, dto.KEY_TITLE_AUTO, "true" if title_auto else "false")
     repository.save(obj)
-    obj.pop_domain_events()
     return obj
 
 
@@ -213,6 +212,10 @@ def message_output(seq: int, payload: dict) -> dto.AssistantMessageOutput:
             cards=[dto.AssistantCardOutput(**card) for card in raw_answer.get("cards") or []],
             actions=[dto.AssistantActionOutput(**action) for action in raw_answer.get("actions") or []],
             sources=raw_answer.get("sources") or [],
+            citations=[
+                dto.AssistantCitation(**citation)
+                for citation in raw_answer.get("citations") or []
+            ],
         )
     return dto.AssistantMessageOutput(
         seq=seq,

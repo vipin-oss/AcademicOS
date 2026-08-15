@@ -35,6 +35,9 @@ export const ITEM_STATUS_META: Record<
   retrying: { label: "Retrying", tone: "warning" },
   awaiting_review: { label: "Awaiting review", tone: "success" },
   error: { label: "Error", tone: "danger" },
+  // M9: review + commit outcomes.
+  rejected: { label: "Rejected", tone: "danger" },
+  committed: { label: "Committed", tone: "success" },
 };
 
 export const ACTIVE_STATUSES: IntakeSessionStatus[] = ["queued", "running"];
@@ -58,7 +61,7 @@ export const INTAKE_STAGES: IntakeStageMeta[] = [
   { key: "match", label: "Match", milestone: "M7" },
   { key: "propose", label: "Propose", milestone: "M8" },
   { key: "review", label: "Review" },
-  { key: "commit", label: "Commit", milestone: "M9" },
+  { key: "commit", label: "Commit" },
 ];
 
 export function formatBytes(num: number): string {

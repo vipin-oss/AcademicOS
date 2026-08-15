@@ -1,0 +1,50 @@
+{
+  "capability_id": "relationship",
+  "cases": [
+    {
+      "case_id": "relationship.en.who-authored",
+      "language": "en",
+      "question": "Who authored the Quantum Dots Review?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "relationship.en.funded-by",
+      "language": "en",
+      "question": "Which agency funds the HSRF project?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "relationship.hi-en.kisne-likha",
+      "language": "hi-en",
+      "question": "Quantum Dots Review kisne likha?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "relationship.en.linked-docs",
+      "language": "en",
+      "question": "What documents are linked to this grant?",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "relationship.hi-en.kaun-fund",
+      "language": "hi-en",
+      "question": "HSRF project ko kaun fund karta hai?",
+      "checks": {
+        "output_kind": "answer"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

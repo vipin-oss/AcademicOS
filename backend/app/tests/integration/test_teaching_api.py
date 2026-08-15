@@ -6,6 +6,10 @@ domain → SQLAlchemy adapter → FileStorage adapter without PostgreSQL, real
 disk state, or network.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import io
 
@@ -46,6 +50,14 @@ def client(tmp_path):
         return storage
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     with TestClient(app) as c:
         yield c

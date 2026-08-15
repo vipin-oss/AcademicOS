@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { formatDate, titleCase } from "@/lib/utils";
 import type { DocumentResponse } from "@/types";
+import { useDocumentDownload } from "@/hooks/useDocumentDownload";
 import {
   DocumentStatusBadge,
   DocumentTypeBadge,
@@ -17,6 +18,7 @@ import { formatFileSize } from "@/lib/documents/constants";
  */
 export function DocumentCard({ document }: { document: DocumentResponse }) {
   const href = `/documents/${encodeURIComponent(document.id)}`;
+  const { download, downloadingId, error } = useDocumentDownload();
   const objectHref = document.object_id
     ? `/objects/${encodeURIComponent(document.object_id)}`
     : null;
@@ -55,15 +57,25 @@ export function DocumentCard({ document }: { document: DocumentResponse }) {
         </div>
       </div>
       {document.url ? (
-        <a
-          href={document.url}
-          download={document.file_name || document.title}
-          aria-label={`Download ${document.title}`}
-          title="Download"
-          className="inline-flex shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+        <button
+          type="button"
+          onClick={() => void download(document)}
+          disabled={downloadingId === document.id}
+          aria-busy={downloadingId === document.id}
+          aria-label={
+            error
+              ? `Download ${document.title} failed: ${error}`
+              : `Download ${document.title}`
+          }
+          title={error ? `Download failed: ${error}` : "Download"}
+          className={`inline-flex shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] p-1.5 transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50 ${
+            error
+              ? "text-[var(--danger)] hover:text-[var(--danger)]"
+              : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
         >
           <Download className="h-4 w-4" aria-hidden="true" />
-        </a>
+        </button>
       ) : null}
     </div>
   );

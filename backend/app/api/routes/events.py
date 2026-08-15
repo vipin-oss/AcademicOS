@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.events_mapper import (
     event_response,
     to_create_event_input,
@@ -48,7 +50,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/events", tags=["events"])
+router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 # ---------------------------------------------------------------------------
@@ -211,10 +213,11 @@ def list_events(
 def create_event(
     request: CreateEventRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateEventUseCase(repo).execute(
-            CreateEventCommand(input=to_create_event_input(body=request.model_dump()))
+            CreateEventCommand(input=to_create_event_input(body={**request.model_dump(), "uploaded_by": str(user.id)}))
         )
     except ObjectAlreadyExistsError as exc:
         raise _conflict(exc) from exc

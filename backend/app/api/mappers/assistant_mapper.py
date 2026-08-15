@@ -15,16 +15,21 @@ from app.application.dtos.assistant import (
     DeleteConversationInput,
     UpdateConversationInput,
 )
+from app.application.services.assistant_eval import EvalRun, RunComparison
 
 DEFAULT_ACTOR = "faculty:ui"  # the shared web-client actor convention
 
 
 def to_ask_input(body: dict) -> AskQuestionInput:
     conversation_id = body.get("conversation_id")
+    # M11.3.1: the selection key is provider_id; model_id is a legacy alias.
+    provider_id = body.get("provider_id") or body.get("model_id")
     return AskQuestionInput(
         question=str(body.get("question") or ""),
         conversation_id=str(conversation_id) if conversation_id else None,
         asked_by=(body.get("asked_by") or DEFAULT_ACTOR),
+        provider_id=(str(provider_id) if provider_id else None),
+        model_id=(str(body.get("model_id")) if body.get("model_id") else None),
     )
 
 
@@ -52,3 +57,19 @@ def to_delete_input(conversation_id: str) -> DeleteConversationInput:
 
 def output_dict(out: Any) -> dict[str, Any]:
     return asdict(out) if is_dataclass(out) else out
+
+
+def eval_run_dict(run: EvalRun) -> dict[str, Any]:
+    """The wire shape of one evaluation run (Sprint-7 M4): identity, model
+    id + deployed model version, prompt id + version, outcome, per-case
+    results, and the run timestamp."""
+    return asdict(run)
+
+
+def run_comparison_dict(comparison: RunComparison) -> dict[str, Any]:
+    """The wire shape of a run comparison (Sprint-7 M4): the regression/
+    fix/stable summaries plus the derived ``has_regressions`` flag (a
+    property, so ``asdict`` alone does not carry it)."""
+    out = asdict(comparison)
+    out["has_regressions"] = comparison.has_regressions
+    return out

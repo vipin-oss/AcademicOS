@@ -32,11 +32,16 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.document_mapper import to_create_input, to_response, to_update_input
 from app.application.commands.create_document import CreateDocumentCommand
 from app.application.commands.delete_document import DeleteDocumentCommand
 from app.application.commands.update_document import UpdateDocumentCommand
+from app.application.dtos.extraction import format_of
+from app.application.dtos.intake import MAX_FILE_BYTES
 from app.application.exceptions import ObjectNotFoundError, ValidationError
+from app.application.intake.pipeline import human_bytes
 from app.application.queries.get_document import GetDocumentQuery
 from app.application.queries.list_documents import ListDocumentsQuery
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
@@ -48,12 +53,19 @@ from app.core.config import settings
 from app.domain.exceptions import InvalidStateTransitionError
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.session import get_db
+from app.infrastructure.extraction import build_document_parsers
+from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+from app.application.services.document_chunking import content_hash
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 from app.infrastructure.storage.local import LocalFileStorage
 
-router = APIRouter(prefix="/documents", tags=["documents"])
+import logging
+
+_log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 class UpdateDocumentRequest(BaseModel):
@@ -119,6 +131,80 @@ def _download_url(out, storage: LocalFileStorage) -> str | None:
     )
 
 
+def _index_direct_upload_content(
+    db: Session,
+    *,
+    document_id: str,
+    version: int,
+    file_name: str,
+    content: bytes,
+) -> None:
+    """Direct-upload content projection (Fix A, M27 seam).
+
+    After a document is created, parse the already-in-memory upload bytes
+    with the EXISTING M2 parser registry (``build_document_parsers()``) and
+    write the EXISTING ``document_contents`` projection through the same
+    store the intake commit uses (``SQLDocumentContentStore``). The content
+    row is keyed by the document id, so the existing SQL content-search leg
+    (``SQLAlchemySearchRepository.search``) and the annotation service's
+    extracted-text fallback find the body without any new architecture.
+
+    Graceful degradation contract: an unsupported format, a parse failure,
+    or empty extracted text simply skips the content row — the upload
+    itself has already succeeded and title/metadata stay searchable
+    (mirrors the intake pipeline's per-item isolation).
+    """
+    extension = file_name.rsplit(".", 1)[-1] if "." in file_name else ""
+    parser = build_document_parsers().get(format_of(extension) or "")
+    if parser is None:
+        return
+    try:
+        result = parser.parse(content)
+    except Exception:  # noqa: BLE001 — content indexing must never fail the upload
+        _log.warning(
+            "Direct-upload content indexing skipped for %r: parse failed.",
+            file_name,
+            exc_info=True,
+        )
+        return
+    text = (result.text or "").strip()
+    if not text:
+        return
+    SQLDocumentContentStore(db).upsert(
+        object_id=document_id,
+        version=version,
+        content_text=text,
+        # Self-provenance: a direct upload has no intake item, so the row
+        # records the document itself as its source (NOT NULL column).
+        source_item_id=document_id,
+        content_hash=content_hash(text),
+    )
+    db.commit()
+
+
+def _read_upload(file: UploadFile) -> bytes:
+    """Read an upload into memory with the shared 512 MB cap (413 on
+    oversize). Chunked so an oversized file never loads into RAM, and the
+    ``size`` fast path (Starlette >= 0.40) skips the read entirely when the
+    client declared it. Mirrors the intake pipeline's ``MAX_FILE_BYTES``
+    guard."""
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {human_bytes(MAX_FILE_BYTES)} upload cap.",
+        )
+    content = bytearray()
+    while chunk := file.file.read(1024 * 1024):
+        content.extend(chunk)
+        if len(content) > MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds the {human_bytes(MAX_FILE_BYTES)} upload cap.",
+            )
+    return bytes(content)
+
+
 @router.get("", response_model=ListDocumentsResponseModel)
 def list_documents(
     page: int = Query(1, ge=1, description="1-based page number"),
@@ -175,6 +261,7 @@ def get_document(
 def create_document(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    db: Session = Depends(get_db),
     *,
     title: str = Form(...),
     document_type: str = Form(...),
@@ -184,21 +271,27 @@ def create_document(
     description: str | None = Form(None),
     tags: str = Form("[]"),
     doc_status: str = Form("draft", alias="status"),
+    user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
-    content = file.file.read()
+    content = _read_upload(file)
     file_name = file.filename or "unnamed"
     mime_type = (
         file.content_type
         or mimetypes.guess_type(file_name)[0]
         or "application/octet-stream"
     )
+    # V3 M11 (ADR-058): the canonical sync pipeline — hash + quarantine
+    # decision run identically for every entry point.
+    from app.application.services.document_pipeline import DocumentPipeline
+
+    decision = DocumentPipeline.decision(file_name, mime_type, content)
     try:
         out = CreateDocumentUseCase(repo, storage).execute(
             CreateDocumentCommand(
                 input=to_create_input(
                     title=title,
                     document_type=document_type,
-                    uploaded_by=uploaded_by,
+                    uploaded_by=str(user.id),
                     file_name=file_name,
                     content=content,
                     mime_type=mime_type,
@@ -217,6 +310,52 @@ def create_document(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
+    # V3 M11 (ADR-058): record an immutable revision and skip content indexing
+    # for quarantined blobs (stored, but never indexed/claimed).
+    try:
+        from app.application.ports.document_revision_store import DocumentRevision
+        from app.infrastructure.persistence.document_revision_store import (
+            SQLDocumentRevisionStore,
+        )
+        import datetime as _dt
+        import uuid as _uuid
+
+        revision_store = SQLDocumentRevisionStore(db)
+        revision = DocumentRevision(
+            id=_uuid.uuid4().hex,
+            document_id=str(out.id),
+            revision_version=revision_store.next_version(str(out.id)),
+            file_name=file_name,
+            content_hash=decision.content_hash,
+            mime_type=mime_type,
+            file_size=len(content),
+            storage_key=str(out.id),
+            quarantined=decision.quarantine != "clean",
+            quarantine_reason=decision.quarantine_reason,
+            created_at=_dt.datetime.now(_dt.UTC).isoformat(),
+        )
+        revision_store.add(revision)
+        db.commit()
+        if decision.quarantine == "clean":
+            _index_direct_upload_content(
+                db,
+                document_id=str(out.id),
+                version=out.version,
+                file_name=file_name,
+                content=content,
+            )
+        else:
+            _log.warning(
+                "Quarantined upload %r: %s (stored, not indexed).",
+                file_name,
+                decision.quarantine_reason,
+            )
+    except Exception:  # noqa: BLE001 — revision/indexing is best-effort
+        _log.warning(
+            "Direct-upload revision/indexing failed for %r; upload succeeded.",
+            file_name,
+            exc_info=True,
+        )
     return DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
 
 
@@ -227,13 +366,14 @@ def update_document(
     req: UpdateDocumentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
     try:
         out = UpdateDocumentUseCase(repo).execute(
             UpdateDocumentCommand(
                 object_id=ObjectId.parse(document_id),
                 input=to_update_input(
-                    actor=req.uploaded_by,
+                    actor=str(user.id),
                     title=req.title,
                     document_type=req.document_type,
                     description=req.description,

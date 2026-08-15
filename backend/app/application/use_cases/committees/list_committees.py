@@ -46,6 +46,51 @@ class ListCommitteesUseCase:
 
     def execute(self, query: ListCommitteesQuery) -> ListCommitteesResult:
         assert_valid_list_committees_query(query)
+
+        # M26 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title-ordered — the registry's name order, since
+        # CommitteeOutput.name is the object title) instead of loading every
+        # COMMITTEE row and hydrating all JSONB metadata before slicing. The
+        # slow path below is preserved for queries with criteria the SQL
+        # projection cannot express (q tokens, type/department/chairperson/
+        # meeting-year filters).
+        plain = (
+            not (query.q or "").strip()
+            and query.committee_type is None
+            and query.department is None
+            and query.status is None
+            and not (query.chairperson or "").strip()
+            and query.meeting_year is None
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.COMMITTEE)
+            page = self._repository.find(
+                object_type=ObjectType.COMMITTEE,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            items: list[CommitteeOutput] = []
+            for obj in page:
+                link_ids = [
+                    rel.target
+                    for rel in obj.relationships
+                    if rel.kind is RelationshipKind.RELATED_TO
+                ]
+                linked_by_id = {
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                }
+                out = CommitteeOutput.from_domain(obj, [], linked_by_id=linked_by_id)
+                out.members = resolve_members(self._repository, obj)
+                items.append(out)
+            return ListCommitteesResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         objects = self._repository.find_by_type(ObjectType.COMMITTEE)
 
         tokens = (query.q or "").strip().casefold().split()

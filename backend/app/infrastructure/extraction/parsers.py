@@ -35,6 +35,25 @@ def _stringify(value: object) -> str | None:
     return text or None
 
 
+def _docinfo_date(info: object, attribute: str) -> str | None:
+    """Best-effort embedded date from pypdf's ``DocumentInformation``.
+
+    pypdf exposes ``creation_date`` / ``modification_date`` as *properties* that
+    parse the raw ``/CreationDate`` / ``/ModDate`` strings. Those properties raise
+    — ``IndexError`` on an empty date string, ``ValueError`` on a malformed one —
+    and a ``hasattr`` guard suppresses only ``AttributeError``, so the exception
+    escaped un-wrapped and crashed the whole parse (V3 audit A2). Embedded
+    metadata is best-effort: a missing or unparseable date is reported as
+    ``None``, never as a fabricated value and never as a failed extraction.
+    """
+
+    try:
+        value = getattr(info, attribute)
+    except Exception:  # noqa: BLE001 — best-effort metadata; never fail the parse
+        return None
+    return _iso_or_none(value)
+
+
 class PdfParser:
     """pypdf adapter: text, page count and docinfo from one PDF byte string."""
 
@@ -92,12 +111,8 @@ class PdfParser:
             page_count=page_count,
             document_title=_stringify(getattr(info, "title", None)),
             author=_stringify(getattr(info, "author", None)),
-            created_at=_iso_or_none(
-                info.creation_date if hasattr(info, "creation_date") else None
-            ),
-            modified_at=_iso_or_none(
-                info.modification_date if hasattr(info, "modification_date") else None
-            ),
+            created_at=_docinfo_date(info, "creation_date"),
+            modified_at=_docinfo_date(info, "modification_date"),
             embedded_metadata=embedded,
         )
 

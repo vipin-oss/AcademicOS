@@ -82,6 +82,7 @@ from app.application.intake.pipeline import (
 from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import (
     MetadataLayer,
@@ -98,6 +99,13 @@ _GO = "go"
 _PAUSE = "pause"
 _CANCEL = "cancel"
 _DELETED = "deleted"
+
+# R3 — a session-save conflict (a concurrent control write landing mid-drain)
+# restarts the drain on the authoritative row. Bounded, like every other
+# conflict retry in the system: beyond this many restarts the conflict is
+# escalated (the dispatcher's _fail_after_crash marks the session failed and
+# resumable) instead of spinning against a pathological writer.
+_MAX_CONFLICT_RESTARTS = 5
 
 
 def _entry(key: str, value: str) -> MetadataEntry:
@@ -153,19 +161,55 @@ class IntakeRunner:
         session = self._load_session()
         if session is None:
             return  # deleted before the dispatcher picked it up
-        try:
-            self._checkpoint()
-            self._mark_running(session)
-            self._enumerate(session)
-            self._process_items(session)
-            self._complete(session)
-        except RunAborted as abort:
-            if abort.persist:
-                self._persist_abort(session, abort.outcome)
-        except Exception as exc:  # noqa: BLE001 — systemic failure is session-level
-            self._fail(session, exc)
+        restarts = 0
+        while True:
+            try:
+                self._checkpoint()
+                self._mark_running(session)
+                self._enumerate(session)
+                self._process_items(session)
+                self._complete(session)
+                return
+            except RunAborted as abort:
+                if abort.persist:
+                    self._persist_abort(session, abort.outcome)
+                return
+            except OptimisticConcurrencyError:
+                # R3 — a concurrent control write (pause/cancel) landed on the
+                # session row mid-drain, so this instance is stale. The row is
+                # authoritative: re-load and let the cooperative checkpoint
+                # decide. The drain is resumable by design (stage/item work is
+                # idempotent), so a restart repeats no work and a stale write
+                # never fails the session.
+                restarts += 1
+                if restarts > _MAX_CONFLICT_RESTARTS:
+                    # Pathological contention: escalate instead of spinning.
+                    # The dispatcher's crash path marks the session failed
+                    # (resumable) with a fresh read.
+                    raise
+                session = self._load_session()
+                if session is None:
+                    return  # deleted underneath — nothing left to annotate
+            except Exception as exc:  # noqa: BLE001 — systemic failure is session-level
+                self._fail(session, exc)
+                return
 
     # ------------------------------------------------------ session verbs
+    def _persist(self, obj: UniversalObject) -> None:
+        """Save the aggregate WITHOUT durable outbox rows.
+
+        The runner's stage transitions are transient operational facts:
+        every stored state is already durable (metadata + version
+        snapshots), and no consumer replays per-stage events — the
+        meaningful transition (COMMITTED) flows through the commit use
+        case, which projects durably. Popping before save keeps this hot
+        path (one save per stage per item) from flooding the outbox with
+        thousands of rows, and mirrors the pre-S5 behaviour where the
+        runner's events were simply discarded.
+        """
+        obj.pop_domain_events()
+        self._repository.save(obj)
+
     def _load_session(self) -> UniversalObject | None:
         obj = self._repository.get_by_id(ObjectId(self._session_id))
         if obj is None or obj.object_type is not ObjectType.INTAKE_SESSION:
@@ -196,7 +240,7 @@ class IntakeRunner:
         _put(session, KEY_INTAKE_STATUS, IntakeSessionStatus.RUNNING.value)
         _put(session, KEY_CURRENT_STAGE, IntakeStage.ENUMERATE.value)
         _put(session, KEY_CONTROL, json_encode({"pause": False, "cancel": False}))
-        self._repository.save(session)
+        self._persist(session)
 
     # ---------------------------------------------------------- enumerate
     def _enumerate(self, session: UniversalObject) -> None:
@@ -266,7 +310,7 @@ class IntakeRunner:
         _put(session, KEY_STATISTICS, json_encode(statistics))
         progress["enumerated"] = True
         _put(session, KEY_PROGRESS, json_encode(progress))
-        self._repository.save(session)
+        self._persist(session)
 
     def _create_item(
         self, session: UniversalObject, abs_path: str, rel: str, size: int
@@ -296,7 +340,7 @@ class IntakeRunner:
         item.add_relationship(
             session.id, RelationshipKind.PART_OF, Provenance.SYSTEM, actor=INTAKE_ACTOR
         )
-        self._repository.save(item)
+        self._persist(item)
 
     # -------------------------------------------------------- item stages
     def _process_items(self, session: UniversalObject) -> None:
@@ -344,11 +388,11 @@ class IntakeRunner:
             if attempts == 1
             else IntakeItemStatus.RETRYING.value,
         )
-        self._repository.save(item)
+        self._persist(item)
         rel = item.metadata.get_value(KEY_RELATIVE_PATH) or item.title
         # "Currently processing" is live from the item's first checkpoint.
         _put(session, KEY_CURRENT_ITEM, json_encode(rel))
-        self._repository.save(session)
+        self._persist(session)
         stage = IntakeStage.STAGE
         try:
             for stage in ITEM_STAGE_SEQUENCE:
@@ -356,14 +400,14 @@ class IntakeRunner:
                 entered = utcnow_iso()
                 result = self._execute_stage(item, stage)
                 self._record_step(item, stage, entered, result)
-                self._repository.save(item)
+                self._persist(item)
             _put(item, KEY_INTAKE_STATUS, IntakeItemStatus.AWAITING_REVIEW.value)
-            self._repository.save(item)
+            self._persist(item)
         except ItemStageError as exc:
             self._record_step(item, stage, utcnow_iso(), {"error": str(exc)})
             _put(item, KEY_ERROR, json_encode({"stage": stage.value, "message": str(exc)}))
             _put(item, KEY_INTAKE_STATUS, IntakeItemStatus.ERROR.value)
-            self._repository.save(item)
+            self._persist(item)
         # M2.3 live foreground: the stage cursor plus the manager's lease
         # heartbeat — all folded into the one session row update.
         _put(session, KEY_CURRENT_STAGE, stage.value)
@@ -372,7 +416,7 @@ class IntakeRunner:
                 self._on_item(session)
             except Exception:  # noqa: BLE001 — a lease hiccup must never
                 pass  # corrupt the item that just finished safely.
-        self._repository.save(session)
+        self._persist(session)
 
     def _execute_stage(self, item: UniversalObject, stage: IntakeStage) -> dict:
         if stage is IntakeStage.STAGE:
@@ -485,7 +529,7 @@ class IntakeRunner:
                 f"Cancelled — {live['processed_items']}/{live['total_items']} files processed. "
                 "Start a new session to import the rest.",
             )
-        self._repository.save(fresh)
+        self._persist(fresh)
 
     def _complete(self, session: UniversalObject) -> None:
         source = json_decode(session.metadata.get_value(KEY_SOURCE), {})
@@ -515,7 +559,7 @@ class IntakeRunner:
                     + (f"; {unsupported} unsupported (kept staged)" if unsupported else "")
                     + "."
                 )
-            summary += " Files await your review; commit arrives with the proposal engine (M9)."
+            summary += " Files await your review; approve them to commit and index (M9)."
 
         stored = json_decode(session.metadata.get_value(KEY_STATISTICS), {})
         # Cooperative control wins the finish line: every other boundary in
@@ -534,7 +578,7 @@ class IntakeRunner:
         _put(session, KEY_CURRENT_STAGE, IntakeStage.REVIEW.value)
         _put(session, KEY_ENDED_AT, utcnow_iso())
         _put(session, KEY_INTAKE_STATUS, IntakeSessionStatus.COMPLETED.value)
-        self._repository.save(session)
+        self._persist(session)
 
     def _fail(self, session: UniversalObject, exc: Exception) -> None:
         stage = session.metadata.get_value(KEY_CURRENT_STAGE) or IntakeStage.ENUMERATE.value
@@ -544,4 +588,4 @@ class IntakeRunner:
         _put(session, KEY_SUMMARY, f"Import failed at the {stage} step: {message} — resume to retry.")
         _put(session, KEY_ENDED_AT, utcnow_iso())
         _put(session, KEY_INTAKE_STATUS, IntakeSessionStatus.FAILED.value)
-        self._repository.save(session)
+        self._persist(session)

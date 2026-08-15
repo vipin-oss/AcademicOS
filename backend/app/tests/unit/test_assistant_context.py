@@ -1,0 +1,215 @@
+"""Unit tests for the Assistant Context Builder (Sprint-6 M1 Phase 2).
+
+History + retrieval are combined into one bounded envelope: provenance is
+preserved, ordering is deterministic, budgets are enforced, and trimming
+always drops the OLDEST content first.
+"""
+from __future__ import annotations
+
+from app.application.assistant.context_builder import AssistantContextBuilder
+from app.application.dtos.assistant import (
+    AssistantRetrievalResult,
+    RetrievedItem,
+)
+from app.application.use_cases.assistant.helpers import append_message
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+
+
+def _conversation() -> UniversalObject:
+    return UniversalObject.create(
+        ObjectType.AI_CONVERSATION, "New conversation", created_by="u:1",
+        status=ObjectStatus.ACTIVE,
+    )
+
+
+def _item(object_id: str, title: str) -> RetrievedItem:
+    return RetrievedItem(
+        object_id=object_id,
+        object_type="document",
+        title=title,
+        version=1,
+        sources=("search",),
+        score=0.1,
+    )
+
+
+def _retrieval(*items: RetrievedItem) -> AssistantRetrievalResult:
+    return AssistantRetrievalResult(items=tuple(items), search_count=len(items), graph_count=0)
+
+
+def test_build_with_history_and_retrieval():
+    conv = _conversation()
+    append_message(conv, "user", "What is quantum physics?", None)
+    append_message(conv, "assistant", "A branch of physics.", None)
+
+    context = AssistantContextBuilder().build(
+        conv, "Tell me more", _retrieval(_item("obj:document:A", "Quantum Paper"))
+    )
+    assert [role for role, _c in context.history] == ["user", "assistant"]
+    assert context.history[0][1] == "What is quantum physics?"
+    assert [r.object_id for r in context.retrieved] == ["obj:document:A"]
+    assert context.question == "Tell me more"
+    assert context.truncated is False
+
+
+def test_build_without_conversation():
+    context = AssistantContextBuilder().build(
+        None, "First question", _retrieval(_item("obj:document:A", "Doc"))
+    )
+    assert context.history == ()
+    assert len(context.retrieved) == 1
+
+
+def test_build_without_retrieval():
+    conv = _conversation()
+    append_message(conv, "user", "hello", None)
+    context = AssistantContextBuilder().build(conv, "hi", None)
+    assert context.retrieved == ()
+    assert len(context.history) == 1
+
+
+def test_history_preserves_deterministic_order():
+    conv = _conversation()
+    for i in range(5):
+        append_message(conv, "user", f"q{i}", None)
+        append_message(conv, "assistant", f"a{i}", None)
+    context = AssistantContextBuilder().build(conv, "next", None)
+    contents = [content for _role, content in context.history]
+    assert contents == [item for i in range(5) for item in (f"q{i}", f"a{i}")]
+
+
+def test_history_trims_oldest_first():
+    conv = _conversation()
+    for i in range(10):
+        append_message(conv, "user", f"question number {i}", None)
+        append_message(conv, "assistant", f"answer number {i}", None)
+    # Tiny history budget: only the newest tail survives.
+    context = AssistantContextBuilder(history_budget=60).build(conv, "next", None)
+    assert context.truncated is True
+    # The oldest messages were dropped; the tail is the newest content.
+    contents = [c for _r, c in context.history]
+    assert "question number 0" not in contents
+    assert "question number 9" in contents  # the newest pair survives
+
+
+def test_retrieval_trims_to_remaining_budget():
+    items = [_item(f"obj:document:{i:02d}", f"Document {i}") for i in range(20)]
+    context = AssistantContextBuilder(
+        context_budget=200, history_budget=10
+    ).build(_conversation(), "q", _retrieval(*items))
+    assert len(context.retrieved) < len(items)
+    assert context.truncated is True
+    # The deterministic order is preserved: first items kept, tail trimmed.
+    assert context.retrieved[0].object_id == "obj:document:00"
+
+
+def test_provenance_is_preserved():
+    both = RetrievedItem(
+        object_id="obj:document:B", object_type="document", title="Both",
+        version=2, sources=("search", "graph"), score=0.5,
+    )
+    context = AssistantContextBuilder().build(
+        None, "q", _retrieval(_item("obj:document:A", "Search"), both)
+    )
+    assert context.retrieved[1].sources == ("search", "graph")
+    assert context.retrieved[1].score == 0.5
+
+
+def test_budget_is_deterministic_across_builds():
+    conv = _conversation()
+    for i in range(8):
+        append_message(conv, "user", f"message {i}", None)
+    builder = AssistantContextBuilder(history_budget=60)
+    first = builder.build(conv, "q", None)
+    second = builder.build(conv, "q", None)
+    assert first.history == second.history
+    assert first.truncated == second.truncated
+
+
+# ---------------------------------------------------------------------------
+# Sprint-8 M2 — memory & knowledge in the envelope
+# ---------------------------------------------------------------------------
+def _memory_item(conversation_id: str, question: str, answer: str):
+    from app.application.dtos.assistant import MemoryItem
+
+    return MemoryItem(
+        conversation_id=conversation_id,
+        title="Prior chat",
+        question=question,
+        answer=answer,
+    )
+
+
+def _knowledge_item(object_id: str, title: str):
+    from app.application.dtos.assistant import KnowledgeItem
+
+    return KnowledgeItem(
+        object_id=object_id, object_type="document", title=title, sources=("graph",),
+    )
+
+
+def _recall(memories=(), knowledge=()):
+    from app.application.dtos.assistant import MemoryRecall
+
+    return MemoryRecall(
+        conversations=tuple(memories),
+        knowledge=tuple(knowledge),
+        search_count=len(memories),
+        graph_count=len(knowledge),
+    )
+
+
+def test_memory_is_trimmed_to_its_budget_tail_first():
+    from app.application.dtos.assistant import CONTEXT_MEMORY_CHAR_BUDGET
+
+    # One memory (title 10 + question 2 + answer) fits the budget; the
+    # second (cost ~25) overflows it and is dropped (tail = least
+    # relevant).
+    long_answer = "x" * (CONTEXT_MEMORY_CHAR_BUDGET - 30)
+    memory = _recall(
+        memories=(
+            _memory_item("obj:ai_conversation:1", "q1", long_answer),
+            _memory_item("obj:ai_conversation:2", "q2", "second memory"),
+        )
+    )
+    context = AssistantContextBuilder(memory_budget=CONTEXT_MEMORY_CHAR_BUDGET).build(
+        None, "q", None, memory=memory
+    )
+    assert [m.conversation_id for m in context.memories] == ["obj:ai_conversation:1"]
+    assert context.truncated
+
+
+def test_knowledge_fills_the_memory_budget_remainder():
+    context = AssistantContextBuilder(memory_budget=100).build(
+        None, "q", None,
+        memory=_recall(
+            memories=(_memory_item("obj:ai_conversation:1", "q1", "a1"),),
+            knowledge=(_knowledge_item("obj:document:B", "Lab Notes"),),
+        ),
+    )
+    assert [m.conversation_id for m in context.memories] == ["obj:ai_conversation:1"]
+    assert [k.object_id for k in context.knowledge] == ["obj:document:B"]
+
+
+def test_knowledge_is_dropped_first_when_budget_is_exhausted():
+    # The memory costs ~14 chars (title 10 + q 2 + a 2); the knowledge
+    # item costs ~23 chars — a 15-char budget keeps the memory and drops
+    # the knowledge.
+    context = AssistantContextBuilder(memory_budget=15).build(
+        None, "q", None,
+        memory=_recall(
+            memories=(_memory_item("obj:ai_conversation:1", "q1", "a1"),),
+            knowledge=(_knowledge_item("obj:document:B", "Lab Notes"),),
+        ),
+    )
+    assert context.memories  # memories are prioritized
+    assert context.knowledge == ()
+    assert context.truncated
+
+
+def test_without_memory_the_envelope_is_pre_m2():
+    context = AssistantContextBuilder().build(None, "q", None)
+    assert context.memories == ()
+    assert context.knowledge == ()
+    assert context.truncated is False

@@ -78,3 +78,64 @@ export function updateObject(
 export function deleteObject(id: string, options?: RequestOptions): Promise<void> {
   return api.delete<void>(`/objects/${id}`, options);
 }
+
+// ---------------------------------------------------------------------------
+// Knowledge graph + ACL (final release — previously unwired backend routes)
+// ---------------------------------------------------------------------------
+
+/** `GET /objects/{id}/graph` — the object's typed outgoing edges. */
+export interface GraphItem {
+  id: string;
+  object_type: string;
+  title: string;
+  kind: string;
+  direction: string;
+}
+
+export interface GraphResponse {
+  items: GraphItem[];
+  total_count: number;
+  has_cycle: boolean;
+  cycle_nodes: string[];
+  truncated: boolean;
+}
+
+export function getObjectGraph(
+  id: string,
+  options?: RequestOptions,
+): Promise<GraphResponse> {
+  return api.get<GraphResponse>(`/objects/${id}/graph`, options);
+}
+
+/** `GET /objects/{id}/graph/path` — shortest path between two objects. */
+export function getGraphPath(
+  fromId: string,
+  toId: string,
+  options?: RequestOptions,
+): Promise<{ items: GraphItem[]; found: boolean }> {
+  return api.get<{ items: GraphItem[]; found: boolean }>(
+    `/objects/${fromId}/graph/path?target=${encodeURIComponent(toId)}`,
+    options,
+  );
+}
+
+/** `GET /objects/{id}/acl` — the object's permission metadata. */
+export interface AclResponse {
+  owner: string;
+  readers: string[];
+  writers: string[];
+  managers: string[];
+}
+
+export function getObjectAcl(id: string, options?: RequestOptions): Promise<AclResponse> {
+  return api.get<AclResponse>(`/objects/${id}/acl`, options);
+}
+
+/** `PUT /objects/{id}/acl` — replace the permission metadata. */
+export function updateObjectAcl(
+  id: string,
+  acl: { readers?: string[]; writers?: string[]; managers?: string[] },
+  options?: RequestOptions,
+): Promise<AclResponse> {
+  return api.put<AclResponse>(`/objects/${id}/acl`, acl, options);
+}

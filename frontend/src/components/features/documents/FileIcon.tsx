@@ -19,6 +19,11 @@ const ICONS: Record<DocumentTypeValue, LucideIcon> = {
   txt: FileText,
   zip: FileArchive,
   image: FileImage,
+  png: FileImage,
+  jpg: FileImage,
+  jpeg: FileImage,
+  tiff: FileImage,
+  svg: FileImage,
   video: FileVideo,
   unknown: FileQuestion,
 };
@@ -31,6 +36,11 @@ const COLORS: Record<DocumentTypeValue, string> = {
   txt: "text-[var(--text-secondary)] bg-[var(--bg-hover)]",
   zip: "text-[var(--accent)] bg-[var(--accent-subtle)]",
   image: "text-[var(--info)] bg-[var(--info-subtle)]",
+  png: "text-[var(--info)] bg-[var(--info-subtle)]",
+  jpg: "text-[var(--info)] bg-[var(--info-subtle)]",
+  jpeg: "text-[var(--info)] bg-[var(--info-subtle)]",
+  tiff: "text-[var(--info)] bg-[var(--info-subtle)]",
+  svg: "text-[var(--info)] bg-[var(--info-subtle)]",
   video: "text-[var(--danger)] bg-[var(--danger-subtle)]",
   unknown: "text-[var(--text-tertiary)] bg-[var(--bg-hover)]",
 };

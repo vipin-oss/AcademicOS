@@ -99,7 +99,7 @@ class InMemoryObjectRepository(ObjectRepository):
     def __init__(self) -> None:
         self._store: dict[str, UniversalObject] = {}
 
-    def save(self, entity: UniversalObject) -> None:
+    def save(self, entity: UniversalObject, *, outbox_events=()) -> None:
         self._store[str(entity.id)] = entity
 
     def get_by_id(self, id) -> UniversalObject | None:
@@ -123,6 +123,14 @@ class InMemoryObjectRepository(ObjectRepository):
     def find_related(self, object_id, kind=None) -> list:
         obj = self._store.get(str(object_id))
         return [] if obj is None else obj.related_ids(kind)
+    def find_inbound(
+        self, object_id: ObjectId, kind=None
+    ) -> list[ObjectId]:
+        return [
+            o.id
+            for o in self._store.values()
+            if any(r.target == object_id and (kind is None or r.kind == kind) for r in o.relationships)
+        ]
 
     def find_by_metadata(self, key: str, value: str | None = None) -> list[UniversalObject]:
         out: list[UniversalObject] = []
@@ -130,7 +138,77 @@ class InMemoryObjectRepository(ObjectRepository):
             v = o.metadata.get_value(key)
             if v is not None and (value is None or v == value):
                 out.append(o)
-        return out
+    def find(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+        page: int = 1,
+        page_size: int = 0,
+        sort_by: str | None = None,
+        order: str = "asc",
+    ) -> list[UniversalObject]:
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 0:
+            raise ValueError("page_size must be >= 0.")
+        if sort_by is not None and sort_by not in (
+            "id", "object_type", "title", "title_ci", "status", "version",
+        ):
+            raise ValueError(f"Unsupported sort_by: {sort_by!r}")
+        if order not in ("asc", "desc"):
+            raise ValueError(f"Unsupported order: {order!r}")
+
+        items = [
+            o
+            for o in self._store.values()
+            if (object_type is None or o.object_type == object_type)
+            and (status is None or o.status == status)
+            and (
+                metadata_key is None
+                or (
+                    (value := o.metadata.get_value(metadata_key)) is not None
+                    and (metadata_value is None or value == metadata_value)
+                )
+            )
+        ]
+        effective_sort = sort_by if sort_by is not None else ("id" if page_size > 0 else None)
+        if effective_sort is not None:
+            reverse = order == "desc"
+            if effective_sort == "id":
+                items.sort(key=lambda o: str(o.id), reverse=reverse)
+            elif effective_sort == "object_type":
+                items.sort(key=lambda o: o.object_type.value, reverse=reverse)
+            elif effective_sort in ("title", "title_ci"):
+                items.sort(key=lambda o: o.title, reverse=reverse)
+            elif effective_sort == "status":
+                items.sort(key=lambda o: o.status.value, reverse=reverse)
+            elif effective_sort == "version":
+                items.sort(key=lambda o: o.version, reverse=reverse)
+        if page_size > 0:
+            start = (page - 1) * page_size
+            items = items[start : start + page_size]
+        return items
+
+    def count(
+        self,
+        *,
+        object_type: ObjectType | None = None,
+        status: ObjectStatus | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+    ) -> int:
+        return len(
+            self.find(
+                object_type=object_type,
+                status=status,
+                metadata_key=metadata_key,
+                metadata_value=metadata_value,
+            )
+        )
+
 
     def list(self) -> list[UniversalObject]:
         return list(self._store.values())

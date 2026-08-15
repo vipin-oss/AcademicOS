@@ -93,6 +93,8 @@ class IntakeItemResponseModel(BaseModel):
     extraction: dict[str, Any] | None = None  # M2 descriptor (pre-EXTRACT: null)
     created_at: str | None
     updated_at: str | None
+    review_decision: str | None = None  # M9: approved | rejected | None
+    document_id: str | None = None  # M9: the committed document, once committed
 
 
 class ListIntakeSessionsResponseModel(BaseModel):
@@ -119,3 +121,53 @@ def progress_response(out: IntakeProgressOutput) -> IntakeProgressResponseModel:
 
 def item_response(out: IntakeItemOutput) -> IntakeItemResponseModel:
     return IntakeItemResponseModel(**out.__dict__)
+
+class CommitItemResponseModel(BaseModel):
+    """Response for the commit endpoints (Sprint-3 M1.3).
+
+    ``document_id`` is empty on a preview (nothing was created); it is
+    always set on a successful commit.
+    """
+
+    item_id: str
+    document_id: str = ""
+    document_title: str = ""
+
+
+def commit_item_response(out) -> CommitItemResponseModel:
+    return CommitItemResponseModel(
+        item_id=out.item_id,
+        document_id=out.document_id,
+        document_title=out.document_title,
+    )
+
+class ProposalResponseModel(BaseModel):
+    """Response for the proposal endpoints (Sprint-3 M2 integration).
+
+    ``document_type`` is validated against the same DOCUMENT_TYPES
+    vocabulary the commit path uses.
+    """
+
+    item_id: str
+    title: str
+    document_type: str
+    description: str
+    confidence: float
+
+
+class ProposalUpdateRequest(BaseModel):
+    """Body for PUT /items/{id}/proposal — the reviewed proposal."""
+
+    title: str
+    document_type: str
+    description: str = ""
+
+
+def proposal_response(item_id: str, proposal) -> ProposalResponseModel:
+    return ProposalResponseModel(
+        item_id=item_id,
+        title=proposal.title,
+        document_type=proposal.document_type,
+        description=proposal.description,
+        confidence=proposal.confidence,
+    )

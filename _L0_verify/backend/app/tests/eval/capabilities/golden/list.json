@@ -1,0 +1,56 @@
+{
+  "capability_id": "list",
+  "cases": [
+    {
+      "case_id": "list.en.my-publications",
+      "language": "en",
+      "question": "List my publications.",
+      "checks": {
+        "output_kind": "list",
+        "retrieval_must_include_types": [
+          "publication"
+        ]
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "list.en.active-projects",
+      "language": "en",
+      "question": "Show active research projects.",
+      "checks": {
+        "output_kind": "list",
+        "retrieval_must_include_types": [
+          "research_project"
+        ]
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "list.hi-en.meri-papers",
+      "language": "hi-en",
+      "question": "meri publications ki list do.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "list.en.upcoming-events",
+      "language": "en",
+      "question": "List upcoming events.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "list.hi-en.active-projects",
+      "language": "hi-en",
+      "question": "abhi ke active projects dikhao.",
+      "checks": {
+        "output_kind": "list"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

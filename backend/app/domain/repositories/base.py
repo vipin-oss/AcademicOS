@@ -12,6 +12,7 @@ emitted domain events are projected separately by the application layer.
 from __future__ import annotations
 
 import abc
+from collections.abc import Sequence
 from typing import Generic, TypeVar
 
 from app.domain.entities.base import Entity
@@ -22,8 +23,15 @@ T = TypeVar("T", bound=Entity)
 
 class Repository(abc.ABC, Generic[T]):
     @abc.abstractmethod
-    def save(self, entity: T) -> None:
-        """Persist or update the aggregate (single write path)."""
+    def save(self, entity: T, *, outbox_events: Sequence[dict] = ()) -> None:
+        """Persist or update the aggregate (single write path).
+
+        ``outbox_events`` (Sprint-4 M1): durable domain-event rows written
+        in the SAME transaction as the aggregate. Each row is a dict with
+        ``event_id`` (unique idempotency key), ``aggregate_id``,
+        ``event_type``, ``payload`` (JSON-safe) and ``created_at``. Empty by
+        default — existing callers are unaffected.
+        """
 
     @abc.abstractmethod
     def get_by_id(self, id: ObjectId) -> T | None:

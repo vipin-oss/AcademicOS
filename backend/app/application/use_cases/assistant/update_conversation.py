@@ -34,5 +34,4 @@ class UpdateConversationUseCase:
         if command.input.pinned is not None:
             set_pinned(obj, command.input.pinned)
         self._repository.save(obj)
-        obj.pop_domain_events()
         return conversation_output(obj)

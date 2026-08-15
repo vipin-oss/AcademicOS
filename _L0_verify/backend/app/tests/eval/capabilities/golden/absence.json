@@ -1,0 +1,51 @@
+{
+  "capability_id": "absence",
+  "cases": [
+    {
+      "case_id": "absence.en.no-ocr-engine",
+      "language": "en",
+      "question": "Is there an OCR engine configured?",
+      "checks": {
+        "output_kind": "refusal",
+        "refusal_expected": true
+      },
+      "gate_level": "l4"
+    },
+    {
+      "case_id": "absence.en.missing-doc",
+      "language": "en",
+      "question": "Do I have a document titled Completely Fictional Gazette?",
+      "checks": {
+        "output_kind": "refusal"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "absence.hi-en.hai-kya",
+      "language": "hi-en",
+      "question": "kya mere paas Completely Fictional Gazette naam ka document hai?",
+      "checks": {
+        "output_kind": "refusal"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "absence.en.no-such-grant",
+      "language": "en",
+      "question": "Is there a grant called ZX-999-NEVER?",
+      "checks": {
+        "output_kind": "refusal"
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "absence.hi-en.nahi-hai",
+      "language": "hi-en",
+      "question": "agar HSRF ke alawa koi sanction letter nahi hai to seedha nahi bolo.",
+      "checks": {
+        "output_kind": "refusal"
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

@@ -1,13 +1,17 @@
 "use client";
 
 /**
- * Academic Intelligence Assistant — the intelligence layer workspace (module
- * 13). Answers are computed from the data of the frozen modules and every
- * answer links back to them; nothing is duplicated here. V1 is local and
- * deterministic (rules-v1) — no external AI of any kind.
+ * Academic Intelligence Assistant — the deterministic intelligence layer
+ * workspace (module 13). Answers are computed from the data of the frozen
+ * modules by the rules engine and every answer links back to them; nothing
+ * is duplicated here. V1 is local and deterministic (rules-v1) — no
+ * external AI of any kind. This is a distinct, non-LLM capability and is
+ * preserved as its own workspace (reachable from the Academic AI workspace);
+ * the LLM-based assistants live at /ai.
  */
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
 import { AssistantWorkspace } from "@/components/features/assistant/AssistantWorkspace";
+import { AssistantLabs } from "@/components/features/assistant/AssistantLabs";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 
@@ -32,6 +36,7 @@ export default function AssistantPage() {
             </p>
           </div>
           <AssistantWorkspace />
+          <AssistantLabs />
         </main>
       </div>
     </div>

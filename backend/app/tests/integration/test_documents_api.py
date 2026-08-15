@@ -6,6 +6,10 @@ root so the slice is verifiable end-to-end in CI without PostgreSQL or disk
 state — mirrors ``test_objects_api.py``.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.object_id import ObjectId
+from app.api.dependencies.auth import get_current_user
 
 import pytest
 
@@ -18,6 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from app.api.routes.documents import get_storage
 from app.infrastructure.db.models.object_model import Base
@@ -45,6 +50,14 @@ def client(tmp_path):
         return storage
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     with TestClient(app) as c:
         yield c
@@ -71,9 +84,12 @@ def _upload(client, **kwargs):
         "description": "Course syllabus",
         "tags": '["syllabus", "fall-2026"]',
     }
-    files = {"file": ("syllabus.pdf", b"%PDF-sample-bytes", "application/pdf")}
     data.update(kwargs.pop("data", {}))
-    return client.post("/api/v1/documents", data=data, files=files, **kwargs)
+    upload_files = kwargs.pop(
+        "files",
+        {"file": ("syllabus.pdf", b"%PDF-sample-bytes", "application/pdf")},
+    )
+    return client.post("/api/v1/documents", data=data, files=upload_files, **kwargs)
 
 
 def test_upload_then_get_document(client):
@@ -89,13 +105,59 @@ def test_upload_then_get_document(client):
     assert body["file_size"] == len(b"%PDF-sample-bytes")
     assert body["mime_type"] == "application/pdf"
     assert body["status"] == "draft"
-    assert body["uploaded_by"] == "faculty:1"
+    assert body["uploaded_by"] == "obj:user:test-user-0001"
     assert body["object_id"] is None
     assert body["url"] is not None  # stored blob -> working download link
 
     got = client.get(f"/api/v1/documents/{body['id']}")
     assert got.status_code == 200
     assert got.json()["title"] == "CS101 Syllabus"
+
+
+def test_upload_rejects_oversized_files(client, monkeypatch):
+    """The shared 512 MB intake cap applies to document uploads (413): the
+    declared-size fast path (when the framework exposes ``file.size``) and
+    the chunked read both reject oversize, while normal files still land."""
+    import app.api.routes.documents as documents_routes
+
+    monkeypatch.setattr(documents_routes, "MAX_FILE_BYTES", 1024)
+
+    # body crosses the cap during the chunked read -> 413
+    resp = _upload(client, files={"file": ("big.pdf", b"x" * 2048, "application/pdf")})
+    assert resp.status_code == 413
+    assert "upload cap" in resp.json()["detail"]
+
+    # a normal file still uploads
+    resp = _upload(client)
+    assert resp.status_code == 201
+
+
+def test_read_upload_size_cap(monkeypatch):
+    """Unit check of the declared-size fast path and the happy path (the
+    route helper is framework-agnostic about ``file.size``)."""
+    import io
+
+    import app.api.routes.documents as documents_routes
+
+    monkeypatch.setattr(documents_routes, "MAX_FILE_BYTES", 1024)
+
+    class _FakeUpload:
+        def __init__(self, size, data):
+            self.size = size
+            self.file = io.BytesIO(data)
+
+    # declared size over the cap -> 413, body never read
+    with pytest.raises(HTTPException) as exc:
+        documents_routes._read_upload(_FakeUpload(size=2048, data=b""))
+    assert exc.value.status_code == 413
+
+    # no declared size, body crosses the cap -> 413
+    with pytest.raises(HTTPException) as exc:
+        documents_routes._read_upload(_FakeUpload(size=None, data=b"x" * 2048))
+    assert exc.value.status_code == 413
+
+    # normal content round-trips
+    assert documents_routes._read_upload(_FakeUpload(size=3, data=b"abc")) == b"abc"
 
 
 def test_upload_validation_errors(client):

@@ -51,6 +51,10 @@ class ObjectType(str, Enum):
     CALENDAR_ENTRY = "calendar_entry"
     # Settings & Preferences (appended — same doctrine; no existing member changed)
     SETTINGS = "settings"
+    # Identity & Access (appended — Sprint-1 auth foundation; same doctrine:
+    # one USER object per account, username as the Object title, credentials
+    # as system-layer metadata. RBAC/roles land in a later milestone.)
+    USER = "user"
     # Academic Intelligence Assistant (appended — same doctrine; no existing
     # member changed). One aggregate per conversation; messages embedded as
     # numbered metadata entries (see application/use_cases/assistant).
@@ -173,3 +177,37 @@ class RelationshipKind(str, Enum):
     ALLOCATED_TO = "allocated_to"
     # AI-proposed
     SMART_LINK = "smart_link"
+
+
+class PermissionAction(str, Enum):
+    """Permission actions (R4 — permission planning seam).
+
+    Vocabulary derived from the SRS §3.3 capability matrix: view-class
+    capabilities (view, read, export) map to READ; create/edit/upload/
+    delete capabilities map to WRITE; administrative/approval/configure
+    capabilities map to MANAGE. The permission evaluator consumes these
+    actions; enforcement itself lands in S2 (edge ACL) and S5 (search
+    pre-filtering) on top of this seam.
+    """
+
+    READ = "read"
+    WRITE = "write"
+    MANAGE = "manage"
+
+
+class UserRole(str, Enum):
+    """User roles (Sprint-1 M3 — RBAC v1).
+
+    Roles are stored on the USER object as ``auth.roles`` system metadata
+    and consumed by the RoleBasedPermissionEvaluator (R4 seam). The v1
+    catalogue is deliberately small and extensible: the SRS §3.2 lists 20
+    roles; each future role is one enum member plus one policy-map row.
+    """
+
+    ADMIN = "admin"
+    # V3 M14 (ADR-061): the four academic role classes the blueprint names
+    # (Professor / Scholar / HoD / Admin). Each is one enum member; their
+    # capability mapping lives in RoleBasedPermissionEvaluator's policy map.
+    PROFESSOR = "professor"
+    SCHOLAR = "scholar"
+    HOD = "hod"

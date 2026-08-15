@@ -99,3 +99,23 @@ class ObjectSnapshot:
         import json
 
         return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+def object_snapshot_from_dict(data: dict) -> ObjectSnapshot:
+    """Reconstruct an ``ObjectSnapshot`` from its ``to_dict()`` form.
+
+    The inverse of ``ObjectSnapshot.to_dict()``, used to lift stored
+    version-snapshot rows back into snapshot shape (Sprint-5 M1 — search
+    documents are rebuilt entirely from version snapshots). The stored
+    dict is the exact ``to_dict()`` output, so every field round-trips.
+    """
+    return ObjectSnapshot(
+        id=str(data["id"]),
+        object_type=str(data["object_type"]),
+        title=str(data["title"]),
+        status=str(data["status"]),
+        version=int(data["version"]),
+        metadata=tuple(MetadataSnapshot(**m) for m in data["metadata"]),
+        relationships=tuple(RelationshipSnapshot(**r) for r in data["relationships"]),
+        audit=AuditSnapshot(**data["audit"]) if data.get("audit") else None,
+    )

@@ -17,6 +17,8 @@ Puppeteer-free proves of the whole queue contract through the public API):
   through every retry round.
 """
 from __future__ import annotations
+from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.api.dependencies.auth import get_current_user
 
 import hashlib
 import time
@@ -112,6 +114,14 @@ def harness(tmp_path: Path):
         return manager
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     app.dependency_overrides[get_job_manager] = _override_manager
     with TestClient(app) as client:
@@ -195,6 +205,7 @@ class TestMixedDrain:
         for i in range(3):
             assert (by_rel[f"broken-{i}.pdf"].metadata.get_value("intake.attempts") or "") == "1"
 
+    @pytest.mark.slow_timing
     def test_live_progress_reports_current_item_while_running(self, harness, tmp_path) -> None:
         client, _storage, _manager, _rs, _factory = harness
         root = tmp_path / "bulk"
@@ -248,6 +259,7 @@ class TestRetryEndpoint:
         attempts = {i.metadata.get_value("intake.relative_path"): int(i.metadata.get_value("intake.attempts") or "0") for i in items}
         assert [attempts[f"broken-{i}.pdf"] for i in range(3)] == [3, 3, 3]  # untouched
 
+    @pytest.mark.slow_timing
     def test_retry_matrix_and_404(self, harness, tmp_path) -> None:
         client, _storage, _manager, _rs, _factory = harness
         root = tmp_path / "clean"
@@ -272,6 +284,7 @@ class TestRetryEndpoint:
         cancelled = client.post(f"{API}/sessions/{sid2}/retry").status_code
         assert cancelled == 422  # cancelled is terminal
 
+    @pytest.mark.slow_timing
     def test_paused_sessions_are_resume_business_not_retry(self, harness, tmp_path) -> None:
         client, _storage, _manager, _rs, _factory = harness
         root = tmp_path / "pause-me"
@@ -292,6 +305,7 @@ class TestRetryEndpoint:
 
 
 class TestPauseResumeRestart:
+    @pytest.mark.slow_timing
     def test_finished_items_are_never_restarted(self, harness, tmp_path) -> None:
         client, _storage, _manager, request_session, _factory = harness
         root = tmp_path / "resume-me"
@@ -334,6 +348,7 @@ class TestPauseResumeRestart:
             # further extract records are the reuse short-circuit, never work.
             assert len(real_parses) == 1, item.title
 
+    @pytest.mark.slow_timing
     def test_double_resume_stays_single_drain(self, harness, tmp_path) -> None:
         client, _storage, _manager, request_session, _factory = harness
         root = tmp_path / "double"
@@ -470,6 +485,7 @@ class TestPauseResumeRestart:
 
 
 class TestConcurrencyGuards:
+    @pytest.mark.slow_timing
     def test_foreign_manager_can_neither_drain_nor_reconcile_a_leased_session(
         self, harness, tmp_path
     ) -> None:
@@ -508,6 +524,7 @@ class TestConcurrencyGuards:
 
 
 class TestGracefulCancel:
+    @pytest.mark.slow_timing
     def test_cancel_leaves_finished_work_valid_and_metadata_coherent(
         self, harness, tmp_path
     ) -> None:

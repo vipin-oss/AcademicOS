@@ -56,6 +56,7 @@ from app.application.intake.runner import IntakeRunner
 from app.application.ports.document_parser import DocumentParsers
 from app.application.ports.file_storage import FileStorage
 from app.domain.entities.object import UniversalObject
+from app.domain.exceptions import OptimisticConcurrencyError
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import MetadataLayer, ObjectType, Provenance
 from app.domain.value_objects.metadata import MetadataEntry
@@ -82,7 +83,15 @@ def _lease_entry(value: dict | None) -> MetadataEntry:
 
 
 class IntakeJobManager:
-    """Single-dispatcher job framework for intake sessions."""
+    """Bounded worker-pool job framework for intake sessions (L10).
+
+    L10 extends the original single-dispatcher design into a bounded stdlib
+    worker pool *behind the same method surface and job semantics*. The durable
+    worker lease, cooperative pause/cancel, retry, resume, idempotency,
+    per-item isolation, reconciliation and the session-as-job-record contract
+    are all unchanged. ``max_workers`` is configurable and defaults to ``1``
+    (the exact pre-L10 single-dispatcher behavior).
+    """
 
     def __init__(
         self,
@@ -91,11 +100,13 @@ class IntakeJobManager:
         parsers: DocumentParsers,
         *,
         lease_stale_seconds: float = 30.0,
+        max_workers: int = 1,
     ) -> None:
         self._repository_factory = repository_factory
         self._storage = storage
         self._parsers = parsers
         self._lease_stale_seconds = lease_stale_seconds
+        self._max_workers = max(1, int(max_workers or 1))
         # Deterministic, unique worker identity (host + pid + process-unique
         # suffix): two managers can never collide, one manager is stable.
         self._owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
@@ -104,11 +115,18 @@ class IntakeJobManager:
         self._flags: dict[str, dict[str, bool]] = {}
         self._enqueued: set[str] = set()
         self._active_id: str | None = None
+        # L10: the full set of concurrently-active sessions (for the pool).
+        # ``_active_id`` is preserved as the backward-compatible representative.
+        self._active_ids: set[str] = set()
         self._shutdown = False
-        self._worker = threading.Thread(
-            target=self._drain_loop, name="intake-dispatcher", daemon=True
-        )
-        self._worker.start()
+        self._workers = [
+            threading.Thread(
+                target=self._drain_loop, name=f"intake-dispatcher-{i}", daemon=True
+            )
+            for i in range(self._max_workers)
+        ]
+        for worker in self._workers:
+            worker.start()
 
     @property
     def owner_id(self) -> str:
@@ -134,7 +152,7 @@ class IntakeJobManager:
             flags["pause"] = False
             flags["cancel"] = False
             flags["deleted"] = False
-            if session_id in self._enqueued or self._active_id == session_id:
+            if session_id in self._enqueued or self._is_active(session_id):
                 return
             self._enqueued.add(session_id)
             self._queue.put(session_id)
@@ -153,17 +171,43 @@ class IntakeJobManager:
             flags["cancel"] = True
             flags["deleted"] = True
 
+    def _is_active(self, session_id: str) -> bool:
+        """True when ``session_id`` is actively draining on any worker.
+
+        Lock-free pure read. Callers that need consistency must hold
+        ``self._lock`` themselves (e.g. ``enqueue``); the public
+        ``is_active`` acquires it for the lock-free caller.
+        """
+        active_ids = getattr(self, "_active_ids", None)
+        if active_ids is not None:
+            return session_id in active_ids
+        return self._active_id == session_id
+
     def is_active(self, session_id: str) -> bool:
         with self._lock:
-            return self._active_id == session_id
+            return self._is_active(session_id)
 
     def queued_count(self) -> int:
         with self._lock:
             return len(self._enqueued)
 
     def active_session(self) -> str | None:
+        """A representative currently-active session (backward compatible)."""
         with self._lock:
             return self._active_id
+
+    def active_session_ids(self) -> tuple[str, ...]:
+        """All currently-active sessions (L10 pool diagnostics)."""
+        with self._lock:
+            active_ids = getattr(self, "_active_ids", None)
+            if active_ids is None:
+                return (self._active_id,) if self._active_id else ()
+            return tuple(sorted(active_ids))
+
+    @property
+    def max_workers(self) -> int:
+        """The configured bounded worker-pool size."""
+        return self._max_workers
 
     # ------------------------------------------------------- runner glue
     def _control_probe(self, session_id: str) -> Callable[[], str]:
@@ -211,6 +255,20 @@ class IntakeJobManager:
         adopted with the prior acquired_at preserved for audit.
         """
 
+        try:
+            return self._acquire_on(repository, session)
+        except OptimisticConcurrencyError:
+            # R3 — a control write (pause/cancel) landed between the
+            # dispatcher's load and this lease write. The row is
+            # authoritative: re-load and re-apply the lease once; the
+            # record is computed from the row, so the retry is honest.
+            fresh = repository.get_by_id(ObjectId(str(session.id)))
+            if fresh is None:
+                return False
+            return self._acquire_on(repository, fresh)
+
+    def _acquire_on(self, repository: ObjectRepository, session: UniversalObject) -> bool:
+        """Single lease-write attempt on a given session instance."""
         lease = self._lease_of(session)
         if (
             lease is not None
@@ -342,6 +400,9 @@ class IntakeJobManager:
                         # Claim only proven ownership: before this line the
                         # manager must never report the session as active.
                         self._active_id = session_id
+                        active_ids = getattr(self, "_active_ids", None)
+                        if active_ids is not None:
+                            active_ids.add(session_id)
                     runner = IntakeRunner(
                         repository,
                         self._storage,
@@ -364,8 +425,13 @@ class IntakeJobManager:
                     cleanup()
             finally:
                 with self._lock:
+                    active_ids = getattr(self, "_active_ids", None)
+                    if active_ids is not None:
+                        active_ids.discard(session_id)
                     if self._active_id == session_id:
-                        self._active_id = None
+                        self._active_id = (
+                            next(iter(active_ids)) if active_ids else None
+                        )
                 self._queue.task_done()
 
     # --------------------------------------------------------- reconcile
@@ -418,7 +484,14 @@ class IntakeJobManager:
                 )
                 # The orphan lease is spent — drop it with the same write.
                 session.set_metadata(_lease_entry(None), actor=INTAKE_ACTOR)
-                repository.save(session)
+                try:
+                    repository.save(session)
+                except OptimisticConcurrencyError:
+                    # R3 — the row moved under reconcile (e.g. a control
+                    # write landed while we were marking it failed). Skip:
+                    # the row is authoritative and the next reconcile pass
+                    # re-evaluates it.
+                    continue
                 count += 1
             return count
         finally:
@@ -426,10 +499,13 @@ class IntakeJobManager:
 
     # ---------------------------------------------------------- shutdown
     def shutdown(self, timeout: float = 10.0) -> None:
-        """Stop the dispatcher thread (tests + app shutdown). In-flight drains
+        """Stop all dispatcher threads (tests + app shutdown). In-flight drains
         persist their last checkpoint first; queued sessions stay resumable."""
 
         with self._lock:
             self._shutdown = True
-        self._queue.put(None)
-        self._worker.join(timeout=timeout)
+        # One sentinel per worker so every dispatcher thread exits.
+        for _ in range(self._max_workers):
+            self._queue.put(None)
+        for worker in self._workers:
+            worker.join(timeout=timeout)

@@ -16,6 +16,7 @@ from app.application.dtos.intake import (
     intake_item_output,
     intake_progress_output,
     intake_session_output,
+    intake_session_progress_of,
     json_encode,
     summarize_items,
 )
@@ -293,3 +294,40 @@ class TestViewBuilders:
         out = intake_progress_output(session, [item])
         assert out.total_items == 1 and out.processed_items == 1 and out.percent == 100.0
         assert out.counts["awaiting_review"] == 1
+
+    def test_summarize_counts_committed_as_processed(self) -> None:
+        facts = [
+            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 100, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.COMMITTED, IntakeStage.REVIEW, 200, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.COMMITTED, IntakeStage.REVIEW, 300, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.ERROR, IntakeStage.STAGE, 50, "png", None, False, False, "unsupported"),
+        ]
+        summary = summarize_items(facts, enumerated=True)
+        assert summary["total_items"] == 4
+        # Committed items left the queue: processed = awaiting + committed + error.
+        assert summary["awaiting_review"] == 1
+        assert summary["committed_items"] == 2
+        assert summary["processed_items"] == 4
+        assert summary["percent"] == 100.0
+        # Progress payload mirrors the committed count (additive key).
+        progress = intake_session_progress_of(
+            TestViewBuilders._session(TestViewBuilders), []
+        )
+        assert progress["committed_items"] == 0
+        assert progress["remaining_items"] == 0
+
+    def test_committed_items_do_not_count_as_remaining(self) -> None:
+        facts = [
+            IntakeItemFacts(IntakeItemStatus.COMMITTED, IntakeStage.REVIEW, 100, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.AWAITING_REVIEW, IntakeStage.REVIEW, 200, "pdf", "application/pdf", True, True, "extracted"),
+            IntakeItemFacts(IntakeItemStatus.PENDING, IntakeStage.ENUMERATE, 50, "txt", None, False, False, None),
+        ]
+        summary = summarize_items(facts, enumerated=True)
+        # committed is processed and at rest: it must not appear as remaining.
+        remaining = (
+            summary["total_items"]
+            - summary["awaiting_review"]
+            - summary["committed_items"]
+            - (summary["errors"] - summary["retryable_items"])
+        )
+        assert remaining == 1  # only the pending item is owed

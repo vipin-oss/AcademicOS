@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/config/env";
+import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/lib/auth/token";
 
 /**
  * Thin fetch wrapper. No business logic — transport + error normalisation only.
@@ -12,7 +13,16 @@ import { API_BASE_URL } from "@/config/env";
  *  - 204 (and empty bodies) resolve to `undefined` instead of throwing.
  */
 
+/** Default timeout for regular API calls (15 seconds). */
 export const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Default timeout for AI generation calls (chat, QA, summarize, enrich).
+ * Local CPU-based inference (Ollama, vLLM) can take 10-60+ seconds per
+ * response — especially with retrieval overhead. 120 seconds gives ample
+ * headroom without hanging indefinitely.
+ */
+export const DEFAULT_AI_TIMEOUT_MS = 120_000;
 
 export type ApiErrorKind = "http" | "network" | "offline" | "timeout" | "aborted";
 
@@ -182,6 +192,7 @@ async function request<T>(
   const hasBody = init.body !== undefined && init.body !== null;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (hasBody) headers["Content-Type"] = "application/json";
+  attachAuthorization(headers);
 
   let res: Response;
   try {
@@ -212,6 +223,13 @@ async function request<T>(
   } finally {
     clearTimeout(timer);
     external?.removeEventListener("abort", forwardAbort);
+  }
+
+  if (res.status === 401 && !path.startsWith("/auth/") && !authRetried.has(init)) {
+    // Session may have expired: try one silent refresh, then retry once.
+    authRetried.add(init);
+    const refreshed = await refreshSession();
+    if (refreshed) return request<T>(path, init, options);
   }
 
   if (!res.ok) {
@@ -275,10 +293,12 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
 
   let res: Response;
   try {
+    const rawHeaders: Record<string, string> = { Accept: "text/plain" };
+    attachAuthorization(rawHeaders);
     res = await fetch(buildUrl(path, options.query), {
       method: "GET",
       signal: controller.signal,
-      headers: { Accept: "text/plain" },
+      headers: rawHeaders,
     });
   } catch (error) {
     if (external?.aborted) {
@@ -322,10 +342,149 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
   return res.text();
 }
 
+/** Attach the bearer token when one is stored (Sprint-3 M3 — auth-scoped
+ * API access: every request rides the authenticated principal). No token,
+ * no header — public endpoints keep working unauthenticated. */
+function attachAuthorization(headers: Record<string, string>): void {
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+}
+
+// ---------------------------------------------------------------------------
+// Automatic session refresh (final release)
+//
+// A 401 on any authenticated endpoint triggers ONE refresh-token exchange
+// (single-flight: concurrent 401s share the same exchange) and retries the
+// original request once. When the refresh fails the session is cleared, so
+// the app behaves as signed-out. Auth endpoints (/auth/*) are excluded —
+// a wrong-password 401 must never start a refresh.
+// ---------------------------------------------------------------------------
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      clearTokens();
+      return false;
+    }
+    const body = (await res.json()) as AuthTokensLike;
+    setTokens(body.access_token, body.refresh_token);
+    return true;
+  } catch {
+    clearTokens();
+    return false;
+  }
+}
+
+interface AuthTokensLike {
+  access_token: string;
+  refresh_token: string;
+}
+
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+const authRetried = new WeakSet<RequestInit>();
+
+/**
+ * Raw-bytes variant of {@link request} (Sprint-3 M3 — inline document
+ * preview). Identical transport guarantees (offline/timeout/abort,
+ * status-normalised `ApiError`s) but the success body is returned as a
+ * `Blob` — an iframe cannot send the Authorization header, so the preview
+ * fetches the bytes with the token and renders them via an object URL.
+ */
+async function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new ApiError("You appear to be offline. Check your connection and try again.", {
+      kind: "offline",
+    });
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const external = options.signal;
+  const forwardAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", forwardAbort);
+  }
+
+  const rawHeaders: Record<string, string> = { Accept: "*/*" };
+  attachAuthorization(rawHeaders);
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method: "GET",
+      signal: controller.signal,
+      headers: rawHeaders,
+    });
+  } catch (error) {
+    if (external?.aborted) {
+      throw new ApiError("Request cancelled.", { kind: "aborted" });
+    }
+    if (timedOut) {
+      throw new ApiError(
+        `The server did not respond within ${Math.round(timeoutMs / 1000)}s. Please try again.`,
+        { kind: "timeout" },
+      );
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new ApiError("You appear to be offline. Check your connection and try again.", {
+        kind: "offline",
+      });
+    }
+    throw new ApiError(
+      `Cannot reach the API at ${API_BASE_URL}. Make sure the backend is running.`,
+      { kind: "network", details: error },
+    );
+  } finally {
+    clearTimeout(timer);
+    external?.removeEventListener("abort", forwardAbort);
+  }
+
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      const text = await res.text();
+      body = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      /* non-JSON error body — fall back to the status message */
+    }
+    const message =
+      extractMessage(body) ??
+      STATUS_FALLBACK[res.status] ??
+      `Request failed: ${res.status} ${res.statusText}`;
+    throw new ApiError(message, { kind: "http", status: res.status, details: body });
+  }
+
+  return res.blob();
+}
+
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>(path, { method: "GET" }, options),
   /** Raw `text/plain` GET — response returned verbatim (Intake M2). */
   getText: (path: string, options?: RequestOptions) => requestText(path, options),
+  /** Raw bytes GET — response returned as a Blob (Sprint-3 M3 preview). */
+  getBlob: (path: string, options?: RequestOptions) => requestBlob(path, options),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(
       path,

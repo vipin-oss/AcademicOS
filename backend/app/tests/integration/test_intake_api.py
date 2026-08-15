@@ -7,6 +7,7 @@ overridden local storage root, and a per-suite job manager wired through
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -15,11 +16,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.api.dependencies.auth import get_current_user
 from app.api.routes.documents import get_storage
 from app.api.routes.intake import get_job_manager
+from app.application.dtos.intake import IntakeItemStatus, IntakeSessionStatus
 from app.application.intake.jobs import IntakeJobManager
 from app.application.use_cases.intake.helpers import set_system_metadata
-from app.domain.value_objects.enums import ObjectType
+from app.domain.entities.object import UniversalObject
+from app.domain.value_objects.enums import ObjectStatus, ObjectType, Provenance
+from app.domain.value_objects.metadata import Metadata, MetadataEntry, MetadataLayer
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.object_model import Base
 from app.infrastructure.db.session import get_db
@@ -107,8 +112,22 @@ def harness(tmp_path: Path):
         return manager
 
     app.dependency_overrides[get_db] = _override_db
+    fake_user = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="test.user",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:test-user-0001"),
+    )
+    app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_storage] = _override_storage
     app.dependency_overrides[get_job_manager] = _override_manager
+    # Hermetic search deps: no live Qdrant in tests (lexical-only drain).
+    from app.api.routes.search import get_embedder, get_vector_repository
+    from app.infrastructure.embedding.hashing_embedder import HashingEmbedder
+
+    app.dependency_overrides[get_vector_repository] = lambda: None
+    app.dependency_overrides[get_embedder] = lambda: HashingEmbedder()
     with TestClient(app) as client:
         yield client, storage, manager, request_session
     app.dependency_overrides.clear()
@@ -199,6 +218,7 @@ class TestFullLifecycle:
             "staged": 0,
             "hashed": 4,
             "awaiting_review": 4,
+            "committed": 0,
             "errors": 0,
             # M2.3 additive queue counters (all settled post-drain)
             "extracting": 0,
@@ -299,6 +319,7 @@ class TestFullLifecycle:
 
 
 class TestControlFlow:
+    @pytest.mark.slow_timing
     def test_pause_resume_completes_exactly_all_items(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(
@@ -328,6 +349,7 @@ class TestControlFlow:
         assert final["processed_items"] == 500
         assert final["counts"]["awaiting_review"] == 500
 
+    @pytest.mark.slow_timing
     def test_cancel_is_terminal(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(
@@ -341,6 +363,7 @@ class TestControlFlow:
         assert client.post(f"{API}/sessions/{sid}/resume").status_code == 422
         assert client.post(f"{API}/sessions/{sid}/cancel").status_code == 422
 
+    @pytest.mark.slow_timing
     def test_cancel_while_paused_persists_immediately(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(
@@ -434,3 +457,391 @@ class TestReconcile:
         final = wait_terminal(client, sid)
         assert final["status"] == "completed"
         assert final["total_items"] == 4
+
+
+# ------------------------------------------------- Sprint-3 M1.3 — commit API
+
+
+def _seed_commit_item(session, storage, *, status="awaiting_review", session_obj=None):
+    """A COMPLETED session + one item in the given status with a staged blob.
+
+    ``session_obj`` lets tests seed several items into the SAME session
+    (bulk review)."""
+    repo = SQLAlchemyObjectRepository(session)
+    if session_obj is None:
+        session_obj = UniversalObject.create(
+        ObjectType.INTAKE_SESSION,
+        "seed",
+        created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(
+            entries=(
+                MetadataEntry(
+                    "intake.status", IntakeSessionStatus.COMPLETED.value,
+                    MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+                ),
+            )
+        ),
+    )
+    else:
+        # Reuse the shared session object for the second (and later) items.
+        pass
+    repo.save(session_obj)
+    item = UniversalObject.create(
+        ObjectType.INTAKE_ITEM,
+        "seed.pdf",
+        created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(
+            entries=(
+                MetadataEntry("intake.status", status, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.session_id", str(session_obj.id), MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.extension", "pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.mime_type", "application/pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.size_bytes", "1024", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.sha256", "feedface", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry("intake.staged_key", "seed/staged.pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                MetadataEntry(
+                    "intake.extraction",
+                    json.dumps({"status": "extracted", "format": "pdf", "char_count": 5}),
+                    MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
+                ),
+            )
+        ),
+    )
+    repo.save(item)
+    storage.save("seed/staged.pdf", b"%PDF-1.7 seeded")
+    item.set_metadata(
+        MetadataEntry(
+            "intake.proposal",
+            json.dumps(
+                {"title": item.title, "document_type": "pdf",
+                 "description": "seeded", "confidence": 1.0}
+            ),
+            MetadataLayer.L1_SYSTEM,
+            Provenance.SYSTEM,
+        ),
+        actor="intake",
+    )
+    repo.save(item)
+    return item
+
+
+def test_proposal_generate_and_review_flow(harness):
+    """Proposal API: generate -> read -> update -> regenerate, no commits."""
+    client, storage, _manager, request_session = harness
+    from app.application.intake.proposal_engine import ProposalEngineService, ProposalReviewService
+
+    repo = SQLAlchemyObjectRepository(request_session)
+    session_obj = UniversalObject.create(
+        ObjectType.INTAKE_SESSION, "pseed", created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(entries=(MetadataEntry(
+            "intake.status", IntakeSessionStatus.COMPLETED.value,
+            MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),)),
+    )
+    repo.save(session_obj)
+    item = UniversalObject.create(
+        ObjectType.INTAKE_ITEM, "prop.pdf", created_by="intake",
+        status=ObjectStatus.ACTIVE,
+        metadata=Metadata(entries=(
+            MetadataEntry("intake.status", IntakeItemStatus.AWAITING_REVIEW.value,
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.session_id", str(session_obj.id),
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.extension", "pdf", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+            MetadataEntry("intake.extraction",
+                          json.dumps({"status": "extracted", "format": "pdf", "char_count": 7}),
+                          MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+        )),
+    )
+    repo.save(item)
+
+    generated = ProposalEngineService(repo).generate(str(item.id))
+    assert generated.document_type == "pdf"
+    assert generated.confidence == 1.0
+
+    updated = ProposalReviewService(repo).update(
+        str(item.id), title="Human Title", document_type="txt",
+        description="reviewed", actor="faculty:1",
+    )
+    assert updated.title == "Human Title"
+    assert updated.document_type == "txt"
+
+    regenerated = ProposalReviewService(repo).regenerate(str(item.id), actor="faculty:1")
+    assert regenerated.title == "prop.pdf"
+    assert regenerated.document_type == "pdf"
+
+
+
+def test_commit_success_then_double_submit_409(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    # Preview: no side effects.
+    preview = client.get(f"{API}/items/{item.id}/commit-preview")
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["item_id"] == str(item.id)
+    assert body["document_id"] == ""
+    repo = SQLAlchemyObjectRepository(request_session)
+    assert len(repo.find_by_type(ObjectType.DOCUMENT)) == 0
+    assert (
+        repo.get_by_id(item.id).metadata.get_value("intake.status")
+        == IntakeItemStatus.AWAITING_REVIEW.value
+    )
+
+    # Commit succeeds.
+    commit = client.post(f"{API}/items/{item.id}/commit")
+    assert commit.status_code == 200, commit.text
+    out = commit.json()
+    assert out["document_id"].startswith("obj:document:")
+    assert out["document_title"] == "seed.pdf"
+
+    # Double submit -> 409 with the existing document id.
+    again = client.post(f"{API}/items/{item.id}/commit")
+    assert again.status_code == 409
+    assert out["document_id"] in again.json()["detail"]
+
+    # Preview after success also reports the conflict (409, not 500).
+    preview_again = client.get(f"{API}/items/{item.id}/commit-preview")
+    assert preview_again.status_code == 409
+    assert out["document_id"] in preview_again.json()["detail"]
+
+    # Exactly one document.
+    assert len(repo.find_by_type(ObjectType.DOCUMENT)) == 1
+
+
+def test_commit_ineligible_item_422(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage, status=IntakeItemStatus.STAGED.value)
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 422
+    assert client.get(f"{API}/items/{item.id}/commit-preview").status_code == 422
+
+
+def test_commit_missing_item_404(harness):
+    client, *_ = harness
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.post(f"{API}/items/{ghost}/commit").status_code == 404
+    assert client.get(f"{API}/items/{ghost}/commit-preview").status_code == 404
+
+
+def test_commit_requires_authentication(harness):
+    client, *_ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.post(f"{API}/items/{ghost}/commit").status_code == 401
+    assert client.get(f"{API}/items/{ghost}/commit-preview").status_code == 401
+
+
+def test_proposal_http_full_workflow(harness):
+    """The production review->commit loop over HTTP: generate -> review ->
+    commit -> document. The M1.3 commit gate is satisfied by the HTTP
+    proposal endpoints — no direct service calls."""
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+    # Drop the seed's inline proposal so we exercise the HTTP generate path.
+    from app.application.dtos.intake import KEY_PROPOSAL
+
+    item.set_metadata(
+        MetadataEntry(KEY_PROPOSAL, "", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+        actor="intake",
+    )
+    repo = SQLAlchemyObjectRepository(request_session)
+    repo.save(item)
+
+    # 1. GET before generation -> 422 (no proposal yet).
+    assert client.get(f"{API}/items/{item.id}/proposal").status_code == 422
+
+    # 2. PUT without an existing proposal -> 422 (generate first).
+    assert (
+        client.put(
+            f"{API}/items/{item.id}/proposal",
+            json={"title": "x", "document_type": "pdf", "description": "d"},
+        ).status_code
+        == 422
+    )
+
+    # 3. Regenerate acts as the generator -> 200 with factual proposal.
+    gen = client.post(f"{API}/items/{item.id}/proposal/regenerate")
+    assert gen.status_code == 200, gen.text
+    body = gen.json()
+    assert body["item_id"] == str(item.id)
+    assert body["document_type"] == "pdf"
+    assert body["title"] == "seed.pdf"
+
+    # 4. GET returns it.
+    got = client.get(f"{API}/items/{item.id}/proposal")
+    assert got.status_code == 200
+    assert got.json()["title"] == "seed.pdf"
+
+    # 5. Review (PUT) with an invalid type -> 422; valid -> 200.
+    assert (
+        client.put(
+            f"{API}/items/{item.id}/proposal",
+            json={"title": "Reviewed", "document_type": "not-a-type", "description": "d"},
+        ).status_code
+        == 422
+    )
+    reviewed = client.put(
+        f"{API}/items/{item.id}/proposal",
+        json={"title": "Reviewed Title", "document_type": "txt", "description": "human"},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["title"] == "Reviewed Title"
+    assert reviewed.json()["confidence"] == 1.0
+
+    # 6. Commit now succeeds and uses the reviewed title.
+    commit = client.post(f"{API}/items/{item.id}/commit")
+    assert commit.status_code == 200, commit.text
+    assert commit.json()["document_title"] == "Reviewed Title"
+    doc_id = commit.json()["document_id"]
+
+    # 7. The document exists with the reviewed title.
+    doc = repo.get_by_id(ObjectId(doc_id))
+    assert doc is not None and doc.title == "Reviewed Title"
+
+    # 8. Replay: commit again -> 409; proposal GET still returns the review.
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 409
+    assert client.get(f"{API}/items/{item.id}/proposal").status_code == 200
+
+
+def test_proposal_http_status_codes(harness):
+    """401/404 matrix for the proposal endpoints."""
+    client, *_ = harness
+    app.dependency_overrides.pop(get_current_user, None)
+    ghost = str(ObjectId.generate(ObjectType.INTAKE_ITEM))
+    assert client.get(f"{API}/items/{ghost}/proposal").status_code == 401
+    assert client.put(f"{API}/items/{ghost}/proposal",
+                      json={"title": "x", "document_type": "pdf", "description": ""}).status_code == 401
+    assert client.post(f"{API}/items/{ghost}/proposal/regenerate").status_code == 401
+
+
+# ----------------------------------------------------------- M9 — review API
+
+
+def test_review_approve_commits_and_returns_document_id(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["item_id"] == str(item.id)
+    assert body["status"] == "committed"
+    assert body["document_id"]
+
+    # The item list reflects the committed state + the decision.
+    listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+    row = next(x for x in listing if x["id"] == str(item.id))
+    assert row["status"] == "committed"
+    assert row["review_decision"] == "approved"
+    assert row["document_id"] == body["document_id"]
+
+
+def test_review_reject_marks_terminal(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "reject"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "rejected"
+
+    listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+    row = next(x for x in listing if x["id"] == str(item.id))
+    assert row["status"] == "rejected"
+    assert row["review_decision"] == "rejected"
+
+    # A rejected item cannot be committed.
+    assert client.post(f"{API}/items/{item.id}/commit").status_code == 422
+
+
+def test_review_approve_is_idempotent_guarded(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    first = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    assert first.status_code == 200
+    second = client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"})
+    # The engine's idempotency guard surfaces as 422 (already committed).
+    assert second.status_code == 422
+
+
+def test_review_rejects_unknown_decision(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+
+    r = client.post(f"{API}/items/{item.id}/review", json={"decision": "maybe"})
+    assert r.status_code == 422
+
+
+def test_bulk_review_approve_all_commits_every_item(harness):
+    client, storage, _manager, request_session = harness
+    shared = None
+    first = _seed_commit_item(request_session, storage, session_obj=shared)
+    shared = _find_session(request_session, first)
+    second = _seed_commit_item(request_session, storage, session_obj=shared)
+
+    r = client.post(
+        f"{API}/sessions/{_session_of(first)}/review",
+        json={"decision": "approve"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["succeeded"] == 2
+    assert all(i["document_id"] for i in body["items"])
+
+    for item in (first, second):
+        listing = client.get(f"{API}/sessions/{_session_of(item)}/items").json()["items"]
+        row = next(x for x in listing if x["id"] == str(item.id))
+        assert row["status"] == "committed"
+
+
+def test_bulk_review_reject_all(harness):
+    client, storage, _manager, request_session = harness
+    shared = None
+    first = _seed_commit_item(request_session, storage, session_obj=shared)
+    shared = _find_session(request_session, first)
+    _seed_commit_item(request_session, storage, session_obj=shared)
+
+    r = client.post(
+        f"{API}/sessions/{_session_of(first)}/review",
+        json={"decision": "reject"},
+    )
+    assert r.status_code == 200
+    assert r.json()["succeeded"] == 2
+    listing = client.get(f"{API}/sessions/{_session_of(first)}/items").json()["items"]
+    assert all(x["status"] == "rejected" for x in listing)
+
+
+def test_review_endpoints_require_authentication(harness):
+    client, storage, _manager, request_session = harness
+    item = _seed_commit_item(request_session, storage)
+    app.dependency_overrides.pop(get_current_user, None)
+    try:
+        assert client.post(f"{API}/items/{item.id}/review", json={"decision": "approve"}).status_code == 401
+        assert client.post(f"{API}/sessions/{_session_of(item)}/review", json={"decision": "approve"}).status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: _fake_user()
+
+
+def _session_of(item) -> str:
+    return item.metadata.get_value("intake.session_id")
+
+
+def _find_session(session, item):
+    from app.domain.repositories.object_repository import ObjectRepository  # noqa: F401
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    return SQLAlchemyObjectRepository(session).get_by_id(ObjectId(_session_of(item)))
+
+
+def _fake_user():
+    from app.domain.entities.object import UniversalObject as UO
+
+    return UO.create(
+        object_type=ObjectType.USER, title="test.user", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:test-user-0001"),
+    )

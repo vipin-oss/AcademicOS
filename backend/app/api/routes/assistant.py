@@ -25,10 +25,16 @@ Surface:
 """
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.ai import get_ai_core
+from app.api.dependencies.auth import get_current_user, require_object_acl
 from app.api.mappers.assistant_mapper import (
     output_dict,
     to_ask_input,
@@ -36,17 +42,40 @@ from app.api.mappers.assistant_mapper import (
     to_delete_input,
     to_update_input,
 )
-from app.application.assistant.providers import RuleBasedAssistantProvider
+from app.api.routes.eval_history import get_eval_history
+from app.api.routes.search import get_embedder, get_vector_repository
+from app.application.ai.errors import UnknownProviderError
+from app.application.assistant.citations import CitationBuilder
+from app.application.assistant.context_builder import AssistantContextBuilder
+from app.application.assistant.prompt_builder import (
+    SYSTEM_INSTRUCTIONS,
+    AssistantPromptBuilder,
+)
+from app.application.assistant.verifier import AnswerVerifier
 from app.application.commands.ask_question import AskQuestionCommand
 from app.application.commands.create_conversation import CreateConversationCommand
 from app.application.commands.delete_conversation import DeleteConversationCommand
 from app.application.commands.update_conversation import UpdateConversationCommand
 from app.application.dtos.assistant import INTENT_GROUPS, INTENT_LABELS, SUGGESTED_QUESTIONS
+from app.application.dtos.memory import MemoryWriteCommand
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.application.ports.assistant_provider import AssistantProvider
+from app.application.ports.embedder import Embedder
 from app.application.queries.get_assistant_home import GetAssistantHomeQuery
 from app.application.queries.get_conversation import GetConversationQuery
 from app.application.queries.list_conversations import ListConversationsQuery
+from app.application.services.assistant_eval import EvaluationHistory
+from app.application.services.assistant_memory import AssistantMemoryService
+from app.application.services.assistant_retrieval import AssistantRetrievalService
+from app.application.services.assistant_review import (
+    REVIEW_NOTES_MAX,
+    REVIEW_RATING_MAX,
+    REVIEW_RATING_MIN,
+    AssistantReviewQueue,
+)
+from app.application.services.graph_runtime import GraphRuntimeService
+from app.application.services.memory_consolidation import MemoryConsolidationService
+from app.application.services.prompt_registry import DEFAULT_PROMPT_ID, PromptAsset, PromptRegistry
 from app.application.use_cases.assistant.ask_question import AskQuestionUseCase
 from app.application.use_cases.assistant.create_conversation import CreateConversationUseCase
 from app.application.use_cases.assistant.delete_conversation import DeleteConversationUseCase
@@ -54,12 +83,24 @@ from app.application.use_cases.assistant.get_conversation import GetConversation
 from app.application.use_cases.assistant.get_home import GetAssistantHomeUseCase
 from app.application.use_cases.assistant.list_conversations import ListConversationsUseCase
 from app.application.use_cases.assistant.update_conversation import UpdateConversationUseCase
+from app.application.use_cases.search.search_objects import SearchObjectsUseCase
+from app.core.config import settings
+from app.domain.entities.object import UniversalObject
+from app.domain.repositories.vector_repository import VectorRepository
+from app.infrastructure.assistant.provider_factory import build_assistant_provider
 from app.infrastructure.db.session import get_db
+from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+from app.infrastructure.persistence.review_decision_store import (
+    SQLReviewDecisionStore,
+)
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
+from app.infrastructure.repositories.sqlalchemy_search_repository import (
+    SQLAlchemySearchRepository,
+)
 
-router = APIRouter(prefix="/assistant", tags=["Assistant"])
+router = APIRouter(prefix="/assistant", tags=["Assistant"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
@@ -68,10 +109,133 @@ def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
 
 def get_assistant_provider(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    ai_core=Depends(get_ai_core),
 ) -> AssistantProvider:
-    """Composition seam: V1 = local rules; future sanctioned LLM adapters plug
-    in HERE (integration tests already override this dependency)."""
-    return RuleBasedAssistantProvider(repo)
+    """The DEFAULT assistant provider, resolved through the AI Core (ADR-001).
+
+    AI Core owns provider/model/config/credentials/policy. The assistant only
+    composes the translator over the AI Core's gateway with the deterministic
+    rules fallback. With no configured provider (or no usable default), the
+    rules provider answers (degrade, never disappear). Integration tests
+    override this dependency to inject stubs/transports."""
+    if not ai_core.provider_ids:
+        return build_assistant_provider(
+            _NULL_GATEWAY, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+        )
+    try:
+        gateway = ai_core.gateway()
+    except UnknownProviderError:
+        return build_assistant_provider(
+            _NULL_GATEWAY, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+        )
+    provider = build_assistant_provider(
+        gateway, repo, ai_core=ai_core, offline=_offline_answerer(repo)
+    )
+    # Retain the deterministic offline answerer as the degradation seam for the
+    # executable LLM path: a non-grounded ask that carries no prompt must
+    # degrade to the offline answerer instead of raising (ADR-020 "degrade,
+    # never disappear"). Mirrors the LLM+fallback composition the LLM
+    # integration tests use. The offline answerer is the ADR-020 fast-path
+    # answerer, not rules-v1, so the active-path L4 guardrail is unaffected.
+    try:
+        ready = bool(gateway.health().executable)
+    except Exception:  # noqa: BLE001 — a broken gateway degrades, never raises
+        ready = False
+    if ready:
+        from app.application.assistant.providers import FallbackAssistantProvider
+
+        return FallbackAssistantProvider(provider, _offline_answerer(repo))
+    return provider
+
+
+def _offline_answerer(repo) -> AssistantProvider:
+    """The deterministic offline fast-path answer seam (ADR-020).
+
+    Answers the common data queries offline (no LLM) deterministically, WITHOUT
+    regex ``parse_question`` intent routing. This is the fast-path executor the
+    frozen contract mandates for the offline path — not a phrase→intent table.
+    """
+    from app.infrastructure.assistant.offline_answerer import OfflineFastPathAnswerer
+
+    return OfflineFastPathAnswerer(repo, permission_evaluator=ObjectPermissionEvaluator())
+
+
+def get_assistant_provider_factory(ai_core=Depends(get_ai_core)):
+    """Per-conversation provider factory bound to the AI Core (ADR-001):
+    builds a provider for a resolved provider id. Overridable in tests."""
+    def factory(provider_id, repository, *, fallback=None):
+        return build_assistant_provider(
+            ai_core.gateway(provider_id), repository, ai_core=ai_core, fallback=fallback
+        )
+    return factory
+
+
+class _NullGateway:
+    """A never-configured gateway so the rules fallback is selected when no
+    AI Core provider is available (the assistant degrades, never disappears)."""
+    provider_id = "rules"
+    display_name = "Rules fallback"
+    kind = "local"
+
+    def health(self):
+        import datetime as _dt
+
+        from app.application.dtos.ai import (
+            NOT_CONFIGURED_DETAIL,
+            STATUS_NOT_CONFIGURED,
+            ProviderHealth,
+        )
+        return ProviderHealth(
+            provider_id=self.provider_id,
+            display_name=self.display_name,
+            kind=self.kind,
+            status=STATUS_NOT_CONFIGURED,
+            configured=False,
+            models_configured=0,
+            detail=NOT_CONFIGURED_DETAIL.format(provider_id=self.provider_id, kind=self.kind),
+            checked_at=_dt.datetime.now(_dt.UTC).isoformat(),
+        )
+
+
+_NULL_GATEWAY = _NullGateway()
+
+
+def get_assistant_retrieval(
+    db: Session = Depends(get_db),
+    vector_repository: VectorRepository | None = Depends(get_vector_repository),
+    embedder: Embedder = Depends(get_embedder),
+) -> AssistantRetrievalService:
+    """Composition seam for the S6 M1 retrieval pipeline: hybrid search +
+    graph runtime, both gated by the shared R4 evaluator. The semantic leg
+    reuses the search route's overrideable dependencies and degrades to
+    lexical when unavailable."""
+    search = SearchObjectsUseCase(
+        search_repository=SQLAlchemySearchRepository(db),
+        object_repository=SQLAlchemyObjectRepository(db),
+        permission_evaluator=ObjectPermissionEvaluator(),
+        vector_repository=vector_repository,
+        embedder=embedder,
+    )
+    graph = GraphRuntimeService(SQLAlchemyObjectRepository(db), ObjectPermissionEvaluator())
+    # P0-2: the repository enriches graph-only retrieval items with their
+    # metadata so the LLM receives evidence beyond titles.
+    return AssistantRetrievalService(
+        search, graph, repository=SQLAlchemyObjectRepository(db)
+    )
+
+
+def get_assistant_memory(
+    db: Session = Depends(get_db),
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+) -> AssistantMemoryService:
+    """Composition seam (Sprint-8 M1/M3): assistant memory over the SAME
+    retrieval pipeline as the ask flow. Sprint-8 M3 — the review-decision
+    store (S7 M5) is wired so recalled memories are re-ranked by human
+    review history. Overridable in tests."""
+    return AssistantMemoryService(
+        repo, retrieval, decision_store=SQLReviewDecisionStore(db)
+    )
 
 
 def _not_found(exc: ObjectNotFoundError) -> HTTPException:
@@ -88,13 +252,17 @@ def _unprocessable(exc: Exception) -> HTTPException:
 # Request models (extra=forbid, module doctrine)
 # ---------------------------------------------------------------------------
 class StrictBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # ``model_id`` (S7 M2) collides with pydantic's "model_" protected
+    # namespace — disabled like the other assistant body fields.
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
 
 class AskBody(StrictBody):
     question: str
     conversation_id: str | None = None
     asked_by: str | None = None
+    provider_id: str | None = None  # M11.3.1: the provider selection key
+    model_id: str | None = None  # DEPRECATED alias for provider_id (legacy API)
 
 
 class CreateConversationBody(StrictBody):
@@ -128,16 +296,276 @@ def ask_question(
     body: AskBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     provider: AssistantProvider = Depends(get_assistant_provider),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+    provider_factory=Depends(get_assistant_provider_factory),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
+    ai_core=Depends(get_ai_core),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
-        out = AskQuestionUseCase(repo, provider).execute(
-            AskQuestionCommand(input=to_ask_input(body.model_dump()))
+        out = _ask_use_case(repo, provider, retrieval, provider_factory, memory, ai_core).execute(
+            AskQuestionCommand(input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
+    except KeyError as exc:
+        # S7 M2: an unknown model override is a client error (422).
+        raise _unprocessable(exc) from exc
+    except UnknownProviderError as exc:
+        # ADR-001: an unknown provider/model override is a client error (422).
+        raise _unprocessable(exc) from exc
     return output_dict(out)
+
+
+def _ask_use_case(
+    repo: SQLAlchemyObjectRepository,
+    provider: AssistantProvider,
+    retrieval: AssistantRetrievalService,
+    provider_factory=None,
+    memory: AssistantMemoryService | None = None,
+    ai_core=None,
+) -> AskQuestionUseCase:
+    """One construction site for the ask pipeline (sync and stream modes)."""
+    prompt_registry = _default_prompt_registry()
+    return AskQuestionUseCase(
+        repo,
+        provider,
+        retrieval=retrieval,
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=AssistantPromptBuilder(prompt_registry=prompt_registry),
+        # S8 M2: memory-augmented asks — prior conversations are recalled
+        # before answering and become distinct prompt sections.
+        memory=memory,
+        # ADR-001 (M11.3): the AI Core owns provider/model selection.
+        ai_core=ai_core,
+        provider_factory=provider_factory,
+        citation_builder=CitationBuilder(),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        # Human review gate (S6 M5): when enabled, every fresh answer is
+        # stored PENDING and only becomes visible after approval. Sync and
+        # stream share this wiring through the one construction site.
+        review_queue=(
+            AssistantReviewQueue(repo) if settings.assistant_review_enabled else None
+        ),
+    )
+
+
+def _default_prompt_registry() -> PromptRegistry:
+    """The default prompt registry: the assistant.default asset v1 carries
+    the canonical system instructions (Sprint-7 M1, AI doc A7.1)."""
+    registry = PromptRegistry()
+    registry.register(
+        PromptAsset(
+            id=DEFAULT_PROMPT_ID,
+            version=1,
+            version_label="1.0",
+            owner="assistant",
+            system_text=SYSTEM_INSTRUCTIONS,
+        )
+    )
+    return registry
+
+
+def _sse(event: str, data: dict) -> str:
+    """One Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/ask/stream")
+def ask_question_stream(
+    body: AskBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    provider: AssistantProvider = Depends(get_assistant_provider),
+    retrieval: AssistantRetrievalService = Depends(get_assistant_retrieval),
+    provider_factory=Depends(get_assistant_provider_factory),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
+    ai_core=Depends(get_ai_core),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Streaming ask (Sprint-6 M4): Server-Sent Events over the SAME
+    pipeline as ``POST /ask``. Events: ``token`` (partial deltas),
+    ``completion`` (verified answer + persisted conversation, mirroring
+    the sync response shape) or ``error`` (nothing persisted). The client
+    can disconnect at any time - partial tokens are never stored."""
+    use_case = _ask_use_case(repo, provider, retrieval, provider_factory, memory, ai_core)
+    command = AskQuestionCommand(
+        input=to_ask_input({**body.model_dump(), "asked_by": str(user.id)})
+    )
+    from app.application.validators.assistant import assert_valid_ask_input
+
+    try:
+        assert_valid_ask_input(command.input)
+        # Eager provider validation (ADR-001): an unknown override fails fast
+        # with 422 instead of mid-stream. The AI Core is the single authority.
+        if command.input.provider_id and not ai_core.has_provider(command.input.provider_id):
+            raise _unprocessable(ValueError(f"Unknown provider: {command.input.provider_id}"))
+    except ValidationError as exc:
+        raise _unprocessable(exc) from exc
+
+    def events():
+        for event in use_case.stream(command):
+            yield _sse(event["event"], event["data"])
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/memory/recall")
+def memory_recall(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    memory: AssistantMemoryService = Depends(get_assistant_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Assistant memory recall (Sprint-8 M1): prior conversations relevant
+    to ``q`` — the latest question/answer pair with the preserved
+    citations (review-gated: pending/rejected answers are recalled with
+    empty content) — plus the graph-discovered related knowledge objects.
+    Deterministic ordering; bounded by ``limit``."""
+    out = memory.recall(q, user, limit=limit)
+    return {
+        "conversations": [asdict(item) for item in out.conversations],
+        "knowledge": [asdict(item) for item in out.knowledge],
+        "search_count": out.search_count,
+        "graph_count": out.graph_count,
+    }
+
+
+@router.post("/memory/consolidate")
+def consolidate_memory(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """One memory-consolidation pass (Sprint-8 M4): redundant
+    conversations are marked SUPERSEDED by their canonical memory —
+    nothing is ever deleted, and consolidated memories disappear from
+    recall by default. Mirrors the search index-sync action pattern."""
+    report = MemoryConsolidationService(repo).consolidate(actor=str(user.id))
+    return {
+        "scanned": report.scanned,
+        "consolidated": report.consolidated,
+        "superseded": [
+            {
+                "conversation_id": pair.conversation_id,
+                "canonical_id": pair.canonical_id,
+            }
+            for pair in report.superseded
+        ],
+    }
+
+
+class MemoryArtifactBody(StrictBody):
+    """Write command for a persistent memory artifact (L7, ADR-041)."""
+
+    question: str = ""
+    answer: str = ""
+    provenance: str = "system"  # "asserted" | "inferred" | "system"
+    source_ids: list[str] = Field(default_factory=list)
+    readers: list[str] = Field(default_factory=list)
+    writers: list[str] = Field(default_factory=list)
+    managers: list[str] = Field(default_factory=list)
+    title: str | None = None
+
+
+def _persistent_memory(
+    db: Session = Depends(get_db),
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> PersistentMemoryService:
+    """Composition seam (L7): persistent memory over the existing object store."""
+    from app.application.services.persistent_memory import PersistentMemoryService
+
+    return PersistentMemoryService(repo, ObjectPermissionEvaluator())
+
+
+@router.post("/memory")
+def write_memory(
+    body: MemoryArtifactBody,
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Persist one memory artifact (L7, ADR-041). ``provenance`` selects
+    user-authored (``asserted``) vs system/AI-derived (``inferred``/``system``).
+    Memory is context, never evidence (ADR-015)."""
+    from app.domain.value_objects.enums import Provenance
+
+    provenance = Provenance(body.provenance) if body.provenance in {"asserted", "inferred", "system"} else Provenance.SYSTEM
+    art = memory.write(
+        MemoryWriteCommand(
+            question=body.question,
+            answer=body.answer,
+            provenance=provenance,
+            source_ids=tuple(body.source_ids),
+            readers=tuple(body.readers),
+            writers=tuple(body.writers),
+            managers=tuple(body.managers),
+            title=body.title,
+        ),
+        user=user,
+    )
+    return {
+        "artifact_id": art.artifact_id,
+        "title": art.title,
+        "question": art.question,
+        "answer": art.answer,
+        "provenance": art.provenance.value,
+        "review_status": art.review_status,
+        "version": art.version,
+        "created_at": art.created_at,
+    }
+
+
+@router.get("/memory")
+def list_memory(
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """The principal's ACL-visible, review-approved memory artifacts (L7)."""
+    result = memory.list(user)
+    return {
+        "artifacts": [
+            {
+                "artifact_id": a.artifact_id,
+                "title": a.title,
+                "question": a.question,
+                "answer": a.answer,
+                "review_status": a.review_status,
+                "provenance": a.provenance.value,
+                "source_ids": list(a.source_ids),
+                "version": a.version,
+                "created_at": a.created_at,
+            }
+            for a in result.artifacts
+        ],
+        "count": result.count,
+    }
+
+
+@router.delete("/memory/{artifact_id}")
+def forget_memory(
+    artifact_id: str,
+    memory: PersistentMemoryService = Depends(_persistent_memory),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Forget one memory artifact (mark SUPERSEDED; no delete). Owner/manager only."""
+    try:
+        art = memory.forget(artifact_id, user=user)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return {
+        "artifact_id": art.artifact_id,
+        "status": art.status,
+        "version": art.version,
+    }
 
 
 @router.get("/suggested")
@@ -174,10 +602,11 @@ def list_conversations(
 def create_conversation(
     body: CreateConversationBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateConversationUseCase(repo).execute(
-            CreateConversationCommand(input=to_create_input(body.model_dump()))
+            CreateConversationCommand(input=to_create_input({**body.model_dump(), "created_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -202,10 +631,11 @@ def _update_conversation(
     conversation_id: str,
     body: UpdateConversationBody,
     repo: SQLAlchemyObjectRepository,
+    user: UniversalObject,
 ):
     try:
         out = UpdateConversationUseCase(repo).execute(
-            UpdateConversationCommand(input=to_update_input(conversation_id, body.model_dump()))
+            UpdateConversationCommand(input=to_update_input(conversation_id, {**body.model_dump(), "updated_by": str(user.id)}))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -214,14 +644,17 @@ def _update_conversation(
     return output_dict(out)
 
 
+
+
 @router.put("/conversations/{conversation_id}")
 @router.patch("/conversations/{conversation_id}")
 def update_conversation(
     conversation_id: str,
     body: UpdateConversationBody,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
-    return _update_conversation(conversation_id, body, repo)
+    return _update_conversation(conversation_id, body, repo, user)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -237,3 +670,150 @@ def delete_conversation(
         raise _unprocessable(exc) from exc
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
+
+
+# ---------------------------------------------------------------------------
+# Review queue (Sprint-6 M5) — human approval before publication
+# ---------------------------------------------------------------------------
+@router.get("/review/pending")
+def review_pending(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+):
+    """Every conversation awaiting human review, oldest first. The queue is
+    a projection over the conversation objects (no separate storage)."""
+    items = AssistantReviewQueue(repo).pending()
+    return {
+        "items": [
+            {
+                "conversation": asdict(item.conversation),
+                "question": item.question,
+                "answer": item.answer,
+                "message_seq": item.message_seq,
+            }
+            for item in items
+        ]
+    }
+
+
+class ReviewActionBody(StrictBody):
+    """The human review action (Sprint-7 M5 — human feedback loop).
+
+    ``conversation_id`` alone remains valid (backward compatible); the
+    feedback fields are optional: reviewer notes, a 1-5 rating, a 0-1
+    confidence, and an optional linked evaluation run (validated against
+    the evaluation history — an unknown run id is a client error)."""
+
+    conversation_id: str
+    notes: str | None = Field(None, max_length=REVIEW_NOTES_MAX)
+    rating: int | None = Field(None, ge=REVIEW_RATING_MIN, le=REVIEW_RATING_MAX)
+    confidence: float | None = Field(None, ge=0.0, le=1.0)
+    eval_run_id: str | None = Field(None, max_length=64)
+
+
+def _review_queue(
+    repo: SQLAlchemyObjectRepository, db: Session
+) -> AssistantReviewQueue:
+    """The workspace queue: state transitions on the conversation objects
+    plus the durable audit trail (Sprint-7 M5)."""
+    return AssistantReviewQueue(
+        repo, decision_store=SQLReviewDecisionStore(db)
+    )
+
+
+def _validated_eval_run(
+    eval_run_id: str | None,
+    history: EvaluationHistory,
+) -> str | None:
+    """The eval-run link must reference a recorded run (Sprint-7 M5): an
+    unknown id is a client error (422), never a broken link. Reuses the
+    evaluation-history dependency — no duplicated evaluation logic."""
+    if eval_run_id is None:
+        return None
+    if history.get(eval_run_id) is None:
+        raise _unprocessable(ValueError(f"Unknown evaluation run: {eval_run_id}"))
+    return eval_run_id
+
+
+def _review_response(out) -> dict:
+    """The workspace action response: the conversation output (unchanged
+    shape) plus the recorded audit decision (None when not recorded)."""
+    return {
+        "conversation": asdict(out.conversation),
+        "decision": asdict(out.decision) if out.decision is not None else None,
+    }
+
+
+@router.post("/review/approve")
+def review_approve(
+    body: ReviewActionBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+    history: EvaluationHistory = Depends(get_eval_history),
+):
+    """Approve a conversation's latest answer: it becomes visible. Records
+    the review decision (reviewer = the authenticated user) with the
+    optional notes / rating / confidence / evaluation-run link."""
+    eval_run_id = _validated_eval_run(body.eval_run_id, history)
+    try:
+        out = _review_queue(repo, db).approve(
+            body.conversation_id,
+            reviewer=str(user.id),
+            notes=body.notes or "",
+            rating=body.rating,
+            confidence=body.confidence,
+            eval_run_id=eval_run_id,
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return _review_response(out)
+
+
+@router.post("/review/reject")
+def review_reject(
+    body: ReviewActionBody,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+    history: EvaluationHistory = Depends(get_eval_history),
+):
+    """Reject a conversation's latest answer: it stays hidden. Records the
+    review decision with the optional feedback fields."""
+    eval_run_id = _validated_eval_run(body.eval_run_id, history)
+    try:
+        out = _review_queue(repo, db).reject(
+            body.conversation_id,
+            reviewer=str(user.id),
+            notes=body.notes or "",
+            rating=body.rating,
+            confidence=body.confidence,
+            eval_run_id=eval_run_id,
+        )
+    except ObjectNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return _review_response(out)
+
+
+@router.get("/review/decisions")
+def review_decisions(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """The workspace activity feed: the most recent review decisions,
+    newest first (Sprint-7 M5)."""
+    items = _review_queue(repo, db).recent_decisions(limit)
+    return {"items": [asdict(item) for item in items]}
+
+
+@router.get("/review/decisions/{conversation_id}")
+def review_decisions_for_conversation(
+    conversation_id: str,
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    db: Session = Depends(get_db),
+):
+    """The complete audit trail of one conversation, oldest first —
+    every decision ever taken on it, including re-reviews (Sprint-7 M5).
+    Empty when the conversation has never been reviewed."""
+    items = _review_queue(repo, db).decisions(conversation_id)
+    return {"items": [asdict(item) for item in items]}

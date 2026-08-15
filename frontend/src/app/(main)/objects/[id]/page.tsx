@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -29,7 +29,8 @@ import { ObjectPublications } from "@/components/features/publications/ObjectPub
 import { Spinner } from "@/components/features/objects/Spinner";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useObject } from "@/hooks/useObject";
-import { deleteObject } from "@/lib/api/objects";
+import { deleteObject, getObjectAcl, getObjectGraph } from "@/lib/api/objects";
+import type { AclResponse, GraphResponse } from "@/lib/api/objects";
 import { toErrorMessage } from "@/lib/api/client";
 import { setFlash } from "@/lib/objects/flash";
 import { formatDateTime, titleCase } from "@/lib/utils";
@@ -61,6 +62,20 @@ export default function ObjectDetailsPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [graph, setGraph] = useState<GraphResponse | null>(null);
+  const [acl, setAcl] = useState<AclResponse | null>(null);
+
+  useEffect(() => {
+    if (!object) return;
+    let cancelled = false;
+    getObjectGraph(object.id)
+      .then((g) => { if (!cancelled) setGraph(g); })
+      .catch(() => { if (!cancelled) setGraph(null); });
+    getObjectAcl(object.id)
+      .then((a) => { if (!cancelled) setAcl(a); })
+      .catch(() => { if (!cancelled) setAcl(null); });
+    return () => { cancelled = true; };
+  }, [object]);
 
   const handleSaved = useCallback(
     (result: ObjectSaveResult) => {
@@ -265,11 +280,47 @@ export default function ObjectDetailsPage() {
                     </p>
                   </Section>
 
-                  <SectionPlaceholder
-                    title="Relationships"
-                    description="Typed graph edges (authored_by, belongs_to, cites…) will appear here once the API exposes an object's relationships."
-                    icon={<Network className="h-4 w-4" aria-hidden="true" />}
-                  />
+                  <Section title={`Relationships (${graph?.total_count ?? 0})`}>
+                    {graph && graph.items.length > 0 ? (
+                      <ul className="space-y-1.5">
+                        {graph.items.map((edge) => (
+                          <li
+                            key={`${edge.kind}:${edge.id}`}
+                            className="flex items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] px-3 py-2 text-sm"
+                          >
+                            <span className="text-[var(--text-primary)]">
+                              {edge.title || edge.id}
+                            </span>
+                            <span className="ml-3 shrink-0 rounded bg-[var(--accent-subtle)] px-2 py-0.5 text-xs text-[var(--accent)]">
+                              {edge.kind}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-[var(--text-tertiary)]">No relationships yet.</p>
+                    )}
+                  </Section>
+                  <Section title="Permissions (ACL)">
+                    {acl ? (
+                      <dl className="space-y-2 text-sm">
+                        <div>
+                          <dt className="text-xs font-medium text-[var(--text-tertiary)]">Owner</dt>
+                          <dd className="text-[var(--text-primary)]">{acl.owner || "—"}</dd>
+                        </div>
+                        {(["readers", "writers", "managers"] as const).map((key) => (
+                          <div key={key}>
+                            <dt className="text-xs font-medium capitalize text-[var(--text-tertiary)]">{key}</dt>
+                            <dd className="text-[var(--text-primary)]">
+                              {acl[key].length > 0 ? acl[key].join(", ") : "—"}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    ) : (
+                      <p className="text-sm text-[var(--text-tertiary)]">No ACL metadata.</p>
+                    )}
+                  </Section>
                   <Section title="Documents">
                     <ObjectDocuments objectId={object.id} />
                   </Section>

@@ -59,6 +59,12 @@ class IntakeItemStatus(str, Enum):
     RETRYING = "retrying"
     AWAITING_REVIEW = "awaiting_review"
     ERROR = "error"
+    # M9 review workflow: the item was rejected by a human reviewer.
+    # Terminal — a rejected item can never be committed.
+    REJECTED = "rejected"
+    # Sprint-3 M1 (commit engine): the item was promoted to a Document.
+    # Terminal and idempotent — a committed item is never committed twice.
+    COMMITTED = "committed"
 
 
 class IntakeStage(str, Enum):
@@ -99,9 +105,9 @@ DEFERRED_STAGE_MILESTONES: dict[IntakeStage, str] = {
     IntakeStage.PROPOSE: "M8 (proposal engine)",
 }
 
-#: Terminal item statuses for M1 (commit arrives with the proposal engine).
+#: Terminal item statuses (commit is delivered by the M9 review workflow).
 TERMINAL_ITEM_STATUSES: frozenset[IntakeItemStatus] = frozenset(
-    {IntakeItemStatus.AWAITING_REVIEW, IntakeItemStatus.ERROR}
+    {IntakeItemStatus.AWAITING_REVIEW, IntakeItemStatus.ERROR, IntakeItemStatus.REJECTED}
 )
 
 # Control transition guards — everything else is a 422 at the boundary.
@@ -183,6 +189,41 @@ KEY_ATTEMPTS = "intake.attempts"
 # separate storage blob under the intake-extracted/ prefix, never staged data)
 KEY_EXTRACTION = "intake.extraction"
 KEY_EXTRACTED_KEY = "intake.extracted_key"
+# Sprint-3 M1: the Document Object id the item was committed to (set once,
+# read for idempotency).
+KEY_COMMITTED_DOCUMENT = "intake.committed_document"
+# M9: the human review decision for one item (approved | rejected), kept
+# as a durable audit fact next to the committed-document pointer.
+KEY_REVIEW_DECISION = "intake.review_decision"
+
+
+# Sprint-3 M2 (proposal engine): the generated reviewable proposal for an
+# item, stored as JSON metadata. Persisted once per item; the review
+# workflow edits it in place before commit.
+KEY_PROPOSAL = "intake.proposal"
+
+
+@dataclass
+class ItemProposal:
+    """A reviewable proposal for one intake item (Sprint-3 M2).
+
+    Generated deterministically from the item's real facts; human-editable
+    through the review workflow before the item is committed.
+    """
+
+    title: str
+    document_type: str
+    description: str
+    confidence: float
+
+
+@dataclass
+class CommitItemOutput:
+    """Result of committing one intake item to a Document (Sprint-3 M1)."""
+
+    item_id: str
+    document_id: str
+    document_title: str
 
 
 # --------------------------------------------------------------------------
@@ -257,6 +298,8 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         IntakeItemStatus.RETRYING.value: 0,
         IntakeItemStatus.AWAITING_REVIEW.value: 0,
         IntakeItemStatus.ERROR.value: 0,
+        IntakeItemStatus.REJECTED.value: 0,  # M9 terminal
+        IntakeItemStatus.COMMITTED.value: 0,  # M9 terminal
     }
     hashed = 0
     staged = 0
@@ -268,7 +311,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
     by_extension: dict[str, int] = {}
     by_mime: dict[str, int] = {}
     for fact in facts:
-        counts[fact.status.value] += 1
+        counts[fact.status.value] = counts.get(fact.status.value, 0) + 1
         total_bytes += max(fact.size_bytes, 0)
         if fact.extension:
             by_extension[fact.extension] = by_extension.get(fact.extension, 0) + 1
@@ -286,7 +329,11 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
             needs_ocr += 1
         if fact.status is IntakeItemStatus.ERROR and fact.attempts < RETRY_LIMIT:
             retryable += 1
-    processed = counts[IntakeItemStatus.AWAITING_REVIEW.value] + counts[IntakeItemStatus.ERROR.value]
+    processed = (
+        counts[IntakeItemStatus.AWAITING_REVIEW.value]
+        + counts[IntakeItemStatus.COMMITTED.value]
+        + counts[IntakeItemStatus.ERROR.value]
+    )
     percent = round(100.0 * processed / total, 1) if total else (100.0 if enumerated else 0.0)
     return {
         "total_items": total,
@@ -297,6 +344,7 @@ def summarize_items(facts: list[IntakeItemFacts], *, enumerated: bool) -> dict[s
         "hashed": hashed,
         "staged_items": staged,
         "awaiting_review": counts[IntakeItemStatus.AWAITING_REVIEW.value],
+        "committed_items": counts[IntakeItemStatus.COMMITTED.value],
         "errors": counts[IntakeItemStatus.ERROR.value],
         "total_bytes": total_bytes,
         "by_extension": dict(sorted(by_extension.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -399,6 +447,8 @@ class IntakeItemOutput:
     extraction: dict[str, Any] | None  # M2 descriptor (None until EXTRACT runs)
     created_at: str | None
     updated_at: str | None
+    review_decision: str | None = None  # M9: approved | rejected | None
+    document_id: str | None = None  # M9: the committed document, once committed
 
 
 @dataclass(frozen=True)
@@ -526,6 +576,8 @@ def intake_item_output(obj: UniversalObject) -> IntakeItemOutput:
         extraction=intake_item_extraction(obj),
         created_at=obj.audit.created_at.isoformat() if obj.audit else None,
         updated_at=obj.audit.updated_at.isoformat() if obj.audit and obj.audit.updated_at else None,
+        review_decision=obj.metadata.get_value(KEY_REVIEW_DECISION),
+        document_id=obj.metadata.get_value(KEY_COMMITTED_DOCUMENT),
     )
 
 
@@ -557,6 +609,7 @@ def intake_session_progress_of(
     remaining = (
         summary["total_items"]
         - summary["awaiting_review"]
+        - summary["committed_items"]
         - (summary["errors"] - summary["retryable_items"])
     )
     avg = timing["avg_seconds_per_item"]
@@ -568,6 +621,7 @@ def intake_session_progress_of(
         "staged": summary["staged"],
         "hashed": summary["hashed"],
         "awaiting_review": summary["awaiting_review"],
+        "committed_items": summary["committed_items"],
         "errors": summary["errors"],
         # M2.3 — queue counters
         "extracting": summary["extracting"],
@@ -639,6 +693,7 @@ def intake_progress_output(obj: UniversalObject, items: list[UniversalObject]) -
             "staged": progress["staged"],
             "hashed": progress["hashed"],
             "awaiting_review": progress["awaiting_review"],
+            "committed": progress["committed_items"],
             "errors": progress["errors"],
             "extracting": progress["extracting"],
             "retrying": progress["retrying"],

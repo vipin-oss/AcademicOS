@@ -18,6 +18,8 @@ import { INTAKE_STAGES, formatBytes } from "@/lib/intake/constants";
 import { StatusChip } from "./StatusChip";
 import { ExtractionBadges } from "./ExtractionBadges";
 import { ExtractionViewer } from "./ExtractionViewer";
+import { CheckCheck, CheckCircle2, XCircle } from "lucide-react";
+import { reviewIntakeItem } from "@/lib/api/intake";
 import { cn } from "@/lib/utils";
 
 function ProgressCard({
@@ -97,6 +99,8 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
     refresh,
     act,
     remove,
+    reviewItem,
+    bulkReview,
   } = useIntakeSession(sessionId);
 
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -238,6 +242,28 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
               {busyAction === "retry" ? "Retrying…" : `Retry failed (${retryable})`}
             </button>
           )}
+          {progress.awaiting_review > 0 && (
+            <span className="ml-auto flex items-center gap-1.5" aria-label="Bulk review">
+              <button
+                type="button"
+                onClick={() => void bulkReview("approve")}
+                disabled={busyAction === "review"}
+                className="inline-flex items-center gap-1 rounded-lg bg-[var(--success-subtle,#dcfce7)] px-2.5 py-1.5 text-xs font-semibold text-[var(--success,#16a34a)] hover:opacity-80 disabled:opacity-50"
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                Approve all ({progress.awaiting_review})
+              </button>
+              <button
+                type="button"
+                onClick={() => void bulkReview("reject")}
+                disabled={busyAction === "review"}
+                className="inline-flex items-center gap-1 rounded-lg bg-[var(--danger-subtle)] px-2.5 py-1.5 text-xs font-semibold text-[var(--danger)] hover:opacity-80 disabled:opacity-50"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Reject all
+              </button>
+            </span>
+          )}
           {canCancel && (
             <button
               type="button"
@@ -301,7 +327,7 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
         <ProgressCard
           label="Awaiting review"
           value={String(progress.awaiting_review)}
-          hint="commit arrives in M9"
+          hint="approve to commit & index"
         />
         <ProgressCard
           label="Errors"
@@ -433,6 +459,40 @@ export function SessionDetailsView({ sessionId }: { sessionId: string }) {
                       <ExtractionBadges item={item} size="xs" />
                     </td>
                     <td className="px-4 py-2.5 text-right">
+                      {item.status === "awaiting_review" && (
+                        <>
+                          <button
+                            type="button"
+                            aria-label={`Approve ${item.relative_path}`}
+                            disabled={busyAction === "review"}
+                            onClick={() => void reviewItem(item.id, "approve")}
+                            className="mr-1 inline-flex items-center gap-1 rounded-lg bg-[var(--success-subtle,#dcfce7)] px-2.5 py-1.5 text-xs font-semibold text-[var(--success,#16a34a)] hover:opacity-80 disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Reject ${item.relative_path}`}
+                            disabled={busyAction === "review"}
+                            onClick={() => void reviewItem(item.id, "reject")}
+                            className="mr-1 inline-flex items-center gap-1 rounded-lg bg-[var(--danger-subtle)] px-2.5 py-1.5 text-xs font-semibold text-[var(--danger)] hover:opacity-80 disabled:opacity-50"
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      {item.status === "committed" && item.document_id && (
+                        <Link
+                          href={`/documents/${encodeURIComponent(item.document_id)}`}
+                          className="mr-1 inline-flex items-center gap-1 rounded-lg bg-[var(--success-subtle,#dcfce7)] px-2.5 py-1.5 text-xs font-semibold text-[var(--success,#16a34a)] hover:opacity-80"
+                          aria-label={`Open document ${item.relative_path}`}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Open
+                        </Link>
+                      )}
                       <button
                         type="button"
                         aria-label={`View extraction for ${item.relative_path}`}

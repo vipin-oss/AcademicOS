@@ -22,6 +22,7 @@ from app.application.validators.publication import (
 )
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType
+from app.domain.value_objects.object_id import ObjectId
 
 
 def _searchable_text(out: PublicationOutput) -> str:
@@ -66,6 +67,46 @@ class ListPublicationsUseCase:
 
     def execute(self, query: ListPublicationsQuery) -> ListPublicationsResult:
         assert_valid_list_publications_query(query)
+
+        # M26 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find) instead of loading every PUBLICATION and hydrating all
+        # JSONB metadata before slicing. The slow path below is preserved for
+        # queries with criteria the SQL projection cannot express (q tokens,
+        # year/quartile/pipeline filters, the relationship-scoped lens).
+        plain = (
+            not (query.q or "").strip()
+            and query.object_id is None
+            and query.publication_type is None
+            and query.year is None
+            and query.quartile is None
+            and query.pipeline_stage is None
+            and query.status is None
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.PUBLICATION)
+            page = self._repository.find(
+                object_type=ObjectType.PUBLICATION,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="id",
+                order="asc",
+            )
+            all_ids: list[ObjectId] = []
+            for pub in page:
+                all_ids.extend(linked_target_ids(pub))
+            linked_by_id = {
+                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+            }
+            items = [
+                PublicationOutput.from_domain(pub, [], linked_by_id=linked_by_id)
+                for pub in page
+            ]
+            return ListPublicationsResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
 
         publications = self._repository.find_by_type(ObjectType.PUBLICATION)
 

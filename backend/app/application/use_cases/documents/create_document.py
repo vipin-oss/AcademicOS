@@ -29,6 +29,7 @@ from app.application.dtos.document import (
 from app.application.exceptions import ValidationError
 from app.application.ports.event_publisher import DomainEventPublisher
 from app.application.ports.file_storage import FileStorage
+from app.application.services.outbox import to_outbox_row
 from app.application.validators.document import assert_valid_create_document_input
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
@@ -132,11 +133,17 @@ class CreateDocumentUseCase:
                 actor=data.uploaded_by,
             )
 
-        # 7. Persist via the abstract repository interface
-        self._repository.save(obj)
-
-        # 8. Collect + project domain events
+        # 7. Collect the domain events BEFORE persisting so the durable
+        #    outbox rows ride the SAME transaction as the aggregate write
+        #    (Sprint-4 M1 — a committed document never loses its events).
         events = obj.pop_domain_events()
+        outbox_rows = [to_outbox_row(event) for event in events]
+
+        # 8. Persist via the abstract repository interface (events appended
+        #    transactionally inside the same save)
+        self._repository.save(obj, outbox_events=outbox_rows)
+
+        # 9. Optional projection for non-outbox consumers (none wired today).
         if self._event_publisher is not None:
             self._event_publisher.publish(events)
 

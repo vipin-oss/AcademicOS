@@ -10,9 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.domain.entities.object import UniversalObject
-from app.domain.value_objects.enums import ObjectStatus, ObjectType
+from app.domain.value_objects.enums import MetadataLayer, ObjectStatus, ObjectType
 from app.domain.value_objects.metadata import Metadata
 from app.domain.value_objects.object_id import ObjectId
+
+# Object-level ACL (Sprint-2 M1): JSON lists of principal ids or "role:<name>".
+ACL_OWNER = "acl.owner"
+ACL_READERS = "acl.readers"
+ACL_WRITERS = "acl.writers"
+ACL_MANAGERS = "acl.managers"
+ACL_KEYS = (ACL_OWNER, ACL_READERS, ACL_WRITERS, ACL_MANAGERS)
 
 
 @dataclass
@@ -51,7 +58,7 @@ class CreateObjectOutput:
     events: list[str] = field(default_factory=list)
 
     @staticmethod
-    def from_domain(obj: UniversalObject, events: list) -> "CreateObjectOutput":
+    def from_domain(obj: UniversalObject, events: list) -> CreateObjectOutput:
         return CreateObjectOutput(
             id=str(obj.id),
             object_type=obj.object_type.value,
@@ -60,7 +67,11 @@ class CreateObjectOutput:
             version=obj.version,
             created_by=obj.audit.created_by if obj.audit else "",
             created_at=obj.audit.created_at.isoformat() if obj.audit else "",
-            metadata={e.key: e.value for e in obj.metadata.entries},
+            metadata={
+                e.key: e.value
+                for e in obj.metadata.entries
+                if e.layer is not MetadataLayer.L1_SYSTEM
+            },
             events=[e.__class__.__name__ for e in events],
         )
 

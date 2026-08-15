@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, toErrorMessage, isAbortError } from "@/lib/api/client";
 import {
+  bulkReviewIntakeItems,
   cancelIntakeSession,
   deleteIntakeSession,
   getIntakeSession,
@@ -10,6 +11,7 @@ import {
   pauseIntakeSession,
   resumeIntakeSession,
   retryIntakeSession,
+  reviewIntakeItem,
 } from "@/lib/api/intake";
 import { ACTIVE_STATUSES, INTAKE_ACTIVE_POLL_MS, INTAKE_ITEMS_PAGE_SIZE } from "@/lib/intake/constants";
 import type { IntakeItem, IntakeSession } from "@/types";
@@ -28,12 +30,16 @@ export interface UseIntakeSessionResult {
   error: string | null;
   /** 404 state — the session id does not exist (anymore). */
   notFound: boolean;
-  busyAction: IntakeAction | "delete" | null;
+  busyAction: IntakeAction | "delete" | "review" | null;
   actionError: string | null;
   setPage: (page: number) => void;
   refresh: () => Promise<void>;
   act: (action: IntakeAction) => Promise<boolean>;
   remove: () => Promise<boolean>;
+  /** M9: approve (commit) or reject one item; returns {ok, error?}. */
+  reviewItem: (itemId: string, decision: "approve" | "reject") => Promise<{ ok: boolean; error?: string }>;
+  /** M9: bulk approve/reject; returns {succeeded, failed}. */
+  bulkReview: (decision: "approve" | "reject") => Promise<{ succeeded: number; failed: number }>;
 }
 
 export function useIntakeSession(
@@ -48,7 +54,7 @@ export function useIntakeSession(
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [busyAction, setBusyAction] = useState<IntakeAction | "delete" | null>(null);
+  const [busyAction, setBusyAction] = useState<IntakeAction | "delete" | "review" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const mounted = useRef(true);
 
@@ -134,6 +140,49 @@ export function useIntakeSession(
     [sessionId, load],
   );
 
+  const reviewItem = useCallback(
+    async (
+      itemId: string,
+      decision: "approve" | "reject",
+    ): Promise<{ ok: boolean; error?: string }> => {
+      setBusyAction("review");
+      setActionError(null);
+      try {
+        await reviewIntakeItem(itemId, decision);
+        await load(false);
+        return { ok: true };
+      } catch (err) {
+        const message = toErrorMessage(err);
+        if (mounted.current) setActionError(message);
+        return { ok: false, error: message };
+      } finally {
+        if (mounted.current) setBusyAction(null);
+      }
+    },
+    [load],
+  );
+
+  const bulkReview = useCallback(
+    async (decision: "approve" | "reject"): Promise<{ succeeded: number; failed: number }> => {
+      setBusyAction("review");
+      setActionError(null);
+      try {
+        const result = await bulkReviewIntakeItems(sessionId, decision);
+        await load(false);
+        return {
+          succeeded: result.succeeded,
+          failed: result.items.length - result.succeeded,
+        };
+      } catch (err) {
+        if (mounted.current) setActionError(toErrorMessage(err));
+        return { succeeded: 0, failed: 0 };
+      } finally {
+        if (mounted.current) setBusyAction(null);
+      }
+    },
+    [sessionId, load],
+  );
+
   const remove = useCallback(async (): Promise<boolean> => {
     setBusyAction("delete");
     setActionError(null);
@@ -166,6 +215,8 @@ export function useIntakeSession(
       refresh: () => load(false),
       act,
       remove,
+      reviewItem,
+      bulkReview,
     }),
     [
       session,

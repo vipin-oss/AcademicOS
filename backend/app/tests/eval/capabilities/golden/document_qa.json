@@ -1,0 +1,56 @@
+{
+  "capability_id": "document_qa",
+  "cases": [
+    {
+      "case_id": "document_qa.en.named-pdf",
+      "language": "en",
+      "question": "According to Cblu Jan, 2024.pdf, what is the conference name?",
+      "checks": {
+        "output_kind": "answer",
+        "named_document_required": true,
+        "evidence_required": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "document_qa.en.quote-letter",
+      "language": "en",
+      "question": "What does the sanction letter say about the amount?",
+      "checks": {
+        "output_kind": "answer",
+        "evidence_required": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "document_qa.hi-en.pdf-se",
+      "language": "hi-en",
+      "question": "Cblu Jan, 2024.pdf ke hisaab se conference ka naam kya hai?",
+      "checks": {
+        "output_kind": "answer",
+        "named_document_required": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "document_qa.en.do-not-infer-filename",
+      "language": "en",
+      "question": "Quote only the dates supported by Cblu Jan, 2024.pdf. Do not infer from the filename.",
+      "checks": {
+        "output_kind": "answer",
+        "named_document_required": true
+      },
+      "gate_level": "l5"
+    },
+    {
+      "case_id": "document_qa.hi-en.letter-kya-kehti",
+      "language": "hi-en",
+      "question": "sanction letter amount ke baare mein kya kehti hai?",
+      "checks": {
+        "output_kind": "answer",
+        "evidence_required": true
+      },
+      "gate_level": "l5"
+    }
+  ]
+}

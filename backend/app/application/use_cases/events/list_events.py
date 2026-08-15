@@ -52,6 +52,51 @@ class ListEventsUseCase:
     def execute(self, query: ListEventsQuery) -> ListEventsResult:
         assert_valid_list_query(query.page, query.page_size)
         assert_optional_year(query.year)
+
+        # M26 fast path: an unfiltered directory listing pages directly in SQL
+        # (count + find, title-ordered — the registry's title order) instead
+        # of loading every EVENT row and hydrating all JSONB metadata before
+        # slicing. The slow path below is preserved for queries with criteria
+        # the SQL projection cannot express (q tokens, type/year/role/
+        # department/organizer/status filters).
+        plain = (
+            not (query.q or "").strip()
+            and not (query.event_type or "").strip()
+            and not (query.year or "").strip()
+            and not (query.role or "").strip()
+            and not (query.department or "").strip()
+            and not (query.organizer or "").strip()
+            and not (query.status or "").strip()
+        )
+        if plain:
+            total_count = self._repository.count(object_type=ObjectType.EVENT)
+            page = self._repository.find(
+                object_type=ObjectType.EVENT,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            items: list[EventOutput] = []
+            for obj in page:
+                link_ids = [
+                    rel.target
+                    for rel in obj.relationships
+                    if rel.kind is RelationshipKind.RELATED_TO
+                ]
+                linked_by_id = {
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                }
+                out = EventOutput.from_domain(obj, [], linked_by_id=linked_by_id)
+                enrich_event_output(self._repository, obj, out)
+                items.append(out)
+            return ListEventsResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
         objects = self._repository.find_by_type(ObjectType.EVENT)
 
         tokens = (query.q or "").strip().casefold().split()

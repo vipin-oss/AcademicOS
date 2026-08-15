@@ -25,6 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.auth import get_current_user, require_object_acl
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.committee_mapper import (
     action_item_response,
     committee_response,
@@ -75,7 +77,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/committees", tags=["committees"])
+router = APIRouter(prefix="/committees", tags=["committees"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +337,12 @@ def list_committees(
 def create_committee(
     request: CreateCommitteeRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = CreateCommitteeUseCase(repo).execute(
             CreateCommitteeCommand(
-                input=to_create_committee_input(body=request.model_dump())
+                input=to_create_committee_input(body={**request.model_dump(), "uploaded_by": str(user.id)})
             )
         )
     except ObjectAlreadyExistsError as exc:
@@ -372,6 +375,7 @@ def add_meeting(
     committee_id: str,
     request: CreateMeetingRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = AddMeetingUseCase(repo).execute(
@@ -380,7 +384,7 @@ def add_meeting(
                 input=to_create_meeting_input(
                     committee_id=committee_id, body=request.model_dump()
                 ),
-                actor=request.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:
@@ -447,6 +451,7 @@ def add_action_item(
     meeting_id: str,
     request: CreateActionItemRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ):
     try:
         out = AddActionItemUseCase(repo).execute(
@@ -455,7 +460,7 @@ def add_action_item(
                 input=to_create_action_item_input(
                     meeting_id=meeting_id, body=request.model_dump()
                 ),
-                actor=request.uploaded_by,
+                actor=str(user.id),
             )
         )
     except ObjectNotFoundError as exc:

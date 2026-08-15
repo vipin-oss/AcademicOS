@@ -57,6 +57,11 @@ export type DocumentTypeValue =
   | "zip"
   | "image"
   | "video"
+  | "png"
+  | "jpg"
+  | "jpeg"
+  | "tiff"
+  | "svg"
   | "unknown";
 
 /**
@@ -2203,7 +2208,11 @@ export type IntakeItemStatus =
   /** M2.3: attempt 2..N running after a failure (retry budget: 3). */
   | "retrying"
   | "awaiting_review"
-  | "error";
+  | "error"
+  /** M9: rejected by a human reviewer — terminal, never committed. */
+  | "rejected"
+  /** M9: committed — promoted to a Document (see document_id). */
+  | "committed";
 export type IntakeStageName =
   | "enumerate"
   | "stage"
@@ -2381,6 +2390,10 @@ export interface IntakeItem {
   error: IntakeError | null;
   /** M2 extraction descriptor; `null` until the extract stage has run. */
   extraction: IntakeExtractionDescriptor | null;
+  /** M9: the human review decision (approved | rejected | null). */
+  review_decision: string | null;
+  /** M9: the committed Document id once the item is committed. */
+  document_id: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -2405,4 +2418,224 @@ export interface CreateIntakeSessionPayload {
   paths?: string[];
   actor?: string;
   title?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (final release)
+// ---------------------------------------------------------------------------
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  created_at: string;
+  roles: string[];
+}
+
+export interface ForgotPasswordResult {
+  reset_token: string;
+  expires_in_seconds: number;
+}
+
+// ---------------------------------------------------------------------------
+// Document viewer & annotations (Sprint M10)
+// ---------------------------------------------------------------------------
+export type AnnotationType = "highlight" | "note" | "bookmark";
+
+export interface AnnotationRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface HighlightPayload {
+  rects: AnnotationRect[];
+  text?: string;
+}
+
+export interface NotePayload {
+  text: string;
+  x?: number;
+  y?: number;
+}
+
+export interface BookmarkPayload {
+  label?: string;
+}
+
+export type AnnotationPayload = HighlightPayload | NotePayload | BookmarkPayload;
+
+export interface DocumentAnnotation {
+  annotation_id: string;
+  document_id: string;
+  annotation_type: AnnotationType;
+  page: number;
+  payload: AnnotationPayload;
+  created_by: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface ExtractedTextResponse {
+  text: string;
+  session_id: string;
+  item_id: string;
+}
+
+// ---------------------------------------------------------------------------
+// AI Core (Sprint M11.1) — mirrors `backend/app/api/routes/ai.py`
+// ---------------------------------------------------------------------------
+
+/** Aggregate AI health (`GET /ai/health`). */
+export interface AiHealth {
+  status: "ok" | "configured" | "not_configured" | "disabled" | "error";
+  ai_enabled: boolean;
+  default_provider: string;
+  default_model: string;
+  default_provider_valid: boolean;
+  providers_total: number;
+  providers_configured: number;
+  feature_flags: Record<string, boolean>;
+  checked_at: string;
+}
+
+/** One model in the aggregated catalogue (`GET /ai/models`). */
+export interface AiModelInfo {
+  provider_id: string;
+  model_id: string;
+  display_name: string;
+  context_window: number | null;
+  capabilities: string[];
+  configured: boolean;
+}
+
+/** `GET /ai/models` response. */
+export interface AiModelsResponse {
+  default_provider: string;
+  default_model: string;
+  models: AiModelInfo[];
+}
+
+/** One provider row (`GET /ai/providers`). */
+export interface AiProviderInfo {
+  provider_id: string;
+  display_name: string;
+  kind: string;
+  status: "configured" | "not_configured" | "error";
+  configured: boolean;
+  executable: boolean;
+  operational: boolean | null;
+  models: AiModelInfo[];
+  detail: string;
+}
+
+/** `GET /ai/providers` response. */
+export interface ListAiProvidersResponse {
+  items: AiProviderInfo[];
+}
+
+/** Citation in a grounded AI response. */
+export interface AiCitation {
+  number: number;
+  object_id: string;
+  object_type: string;
+  title: string;
+}
+
+/** `POST /ai/chat` response. */
+export interface AiChatResponse {
+  answer: string;
+  available: boolean;
+  /** Why the answer is unavailable (empty when available). */
+  unavailable_reason?: string;
+  retrieved_count: number;
+  truncated: boolean;
+  citations: AiCitation[];
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  confidence: string;
+  conversation_id: string | null;
+}
+
+
+/** `POST /ai/summarize` response. */
+export interface SummarizeResponse {
+  summary: string;
+  available: boolean;
+  truncated: boolean;
+  chars_used: number;
+  chars_total: number;
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+}
+
+/** `POST /ai/enrich` response. */
+export interface EnrichResponse {
+  title: string;
+  summary: string;
+  tags: string[];
+  categories: string[];
+  keywords: string[];
+  available: boolean;
+  truncated: boolean;
+  chars_used: number;
+  chars_total: number;
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  persisted: boolean;
+}
+
+/** One domain-assistant role in the catalogue (`GET /ai/assistants`). */
+export interface AssistantRole {
+  key: string;
+  display_name: string;
+  description: string;
+}
+
+/** `GET /ai/assistants` response (Group D, F18-F21). */
+export interface ListAssistantRolesResponse {
+  items: AssistantRole[];
+}
+
+/** `POST /ai/assistants/{role}` response - a grounded answer tagged with role. */
+export interface AssistantResponse {
+  role: string;
+  answer: string;
+  available: boolean;
+  unavailable_reason?: string;
+  retrieved_count: number;
+  truncated: boolean;
+  citations: AiCitation[];
+  provider_id: string;
+  model: string;
+  prompt_id: string;
+  prompt_version: number;
+  input_tokens: number;
+  output_tokens: number;
+  token_usage_estimated: boolean;
+  latency_ms: number;
+  confidence: string;
 }
