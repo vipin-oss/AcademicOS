@@ -37,6 +37,11 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-050 | Ollama configured as OpenAI-compatible provider | [ADR-050](ADR-050-ollama-openai-compatible-configuration.md) (V3 M1) | V3 M1 |
 | ADR-051 | Two PDF-reader ports distinct; dead `/documents/ingest` removed | [ADR-051](ADR-051-v3-m2-pdf-reader-and-pipeline-reconciliation.md) (V3 M2) | V3 M2 |
 | ADR-052 | Unicode-first tokenization (diacritic folding) + OCR engine choice | [ADR-052](ADR-052-v3-m4-unicode-tokenization-and-ocr.md) (V3 M4) | V3 M4 |
+| ADR-053 | Document classification + Wave 1 predicate catalogue | [ADR-053](ADR-053-v3-m6-document-classification-and-predicate-waves.md) (V3 M6) | V3 M6 |
+| ADR-054 | Review at scale + extraction-health correction loop | [ADR-054](ADR-054-v3-m7-review-at-scale-and-correction-loop.md) (V3 M7) | V3 M7 |
+| ADR-055 | Retrieval speed, parallel fan-out, fact/dossier cache | [ADR-055](ADR-055-v3-m8-retrieval-speed-and-parallelism.md) (V3 M8) | V3 M8 |
+| ADR-056 | Deny-by-default security posture, pre-filter, revocation | [ADR-056](ADR-056-v3-m9-security-deny-by-default.md) (V3 M9) | V3 M9 |
+| ADR-057 | Durable jobs + separate worker/relay processes | [ADR-057](ADR-057-v3-m10-durable-jobs-and-worker-process.md) (V3 M10) | V3 M10 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

@@ -24,9 +24,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.application.services.bulk_confirmation import (
+    BULK_CONFIRM_MIN_CONFIDENCE,
+    BulkConfirmationService,
+)
 from app.application.services.cdm_confirmation import CdmConfirmationService
 from app.application.services.claim_confirmation import ClaimConfirmationService
 from app.application.services.confirmation_queue import ConfirmationQueue
+from app.application.services.extraction_health import (
+    ConflictReport,
+    ExtractionHealthService,
+)
 from app.domain.entities.object import UniversalObject
 from app.infrastructure.db.session import get_db
 from app.infrastructure.persistence.cdm_decision_store import SQLCdmDecisionStore
@@ -174,6 +182,82 @@ def claim_decisions(
 ) -> list[DecisionOut]:
     records = SQLClaimDecisionStore(db).by_claim(claim_id)
     return [_to_decision(r) for r in records]
+
+
+class BulkConfirmOut(BaseModel):
+    confirmed: int
+    skipped: int
+    decisions: list[DecisionOut]
+
+
+@router.post("/suggested/confirm-all", response_model=BulkConfirmOut)
+def bulk_confirm_suggested(
+    min_confidence: float = Query(
+        default=BULK_CONFIRM_MIN_CONFIDENCE, ge=0.0, le=1.0,
+        description="Minimum fact_confidence for a suggested claim to be bulk-confirmed.",
+    ),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> BulkConfirmOut:
+    """Bulk human confirmation of AUTO_SUGGESTED claims (V3 M7, ADR-054).
+
+    Confirms every suggested claim at/above ``min_confidence`` that the
+    reviewer is allowed to decide on, in one transaction. Every confirmation
+    is a separate durable, attributable decision row (never auto-approval);
+    the batch is atomic (a failure rolls the whole run back) and undoable
+    through the existing reject/correct endpoints.
+    """
+    service = BulkConfirmationService(
+        SQLClaimStore(db), SQLClaimDecisionStore(db)
+    )
+    result = service.confirm_suggested(
+        reviewer=str(user.id),
+        min_confidence=min_confidence,
+        can_decide=_can_decide(user),
+    )
+    db.commit()
+    return BulkConfirmOut(
+        confirmed=result.confirmed,
+        skipped=result.skipped,
+        decisions=[_to_decision(d) for d in result.decisions],
+    )
+
+
+class HealthOut(BaseModel):
+    total_corrections: int
+    by_predicate: dict[str, int]
+    conflicts: list[dict]
+
+
+@router.get("/health", response_model=HealthOut)
+def extraction_health(
+    db: Session = Depends(get_db),
+) -> HealthOut:
+    """Extraction health + conflict escalation (V3 M7, ADR-054).
+
+    Aggregates the ``correct`` decision trail into per-predicate correction
+    counts and surfaces value conflicts between non-authoritative candidates
+    and CONFIRMED facts (both sides shown; never auto-resolved).
+    """
+    health = ExtractionHealthService(
+        SQLClaimStore(db), SQLClaimDecisionStore(db)
+    ).health()
+    conflicts = ConflictReport(SQLClaimStore(db)).conflicts()
+    return HealthOut(
+        total_corrections=health.total_corrections,
+        by_predicate=health.by_predicate,
+        conflicts=[
+            {
+                "predicate_id": c.predicate_id,
+                "confirmed_claim_id": c.confirmed_claim_id,
+                "confirmed_value": c.confirmed_value,
+                "candidate_claim_id": c.candidate_claim_id,
+                "candidate_value": c.candidate_value,
+                "candidate_status": c.candidate_status,
+            }
+            for c in conflicts
+        ],
+    )
 
 
 @router.post("/cdm/{block_id}/approve", response_model=DecisionOut)

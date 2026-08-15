@@ -54,6 +54,15 @@ class SQLClaimDecisionStore(ClaimDecisionStore):
         ).scalars().all()
         return [_from_model(r) for r in rows]
 
+    def recent_corrections(self, limit: int = 200) -> list[DecisionRecord]:
+        rows = self._session.execute(
+            select(ClaimDecisionModel)
+            .where(ClaimDecisionModel.decision == "correct")
+            .order_by(ClaimDecisionModel.created_at.desc(), ClaimDecisionModel.id.desc())
+            .limit(limit)
+        ).scalars().all()
+        return [_from_model(r) for r in rows]
+
 
 def _from_model(row: ClaimDecisionModel) -> DecisionRecord:
     return DecisionRecord(

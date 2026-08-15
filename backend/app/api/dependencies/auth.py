@@ -57,6 +57,25 @@ def get_current_user(
         # A refresh token must never satisfy a protected endpoint.
         raise UnauthorizedError("Invalid or expired token")
 
+    # V3 M9 (ADR-056): a revoked token is dead even before its exp. Best-effort
+    # defense-in-depth: if the denylist table is absent (pre-migration schema),
+    # the check is skipped and the token's own absolute expiry remains the
+    # primary boundary — revocation must never break authentication.
+    jti = claims.get("jti")
+    if jti:
+        from sqlalchemy.exc import OperationalError
+
+        from app.infrastructure.persistence.token_revocation_store import (
+            SQLTokenRevocationStore,
+        )
+
+        try:
+            revoked = SQLTokenRevocationStore(db).is_revoked(jti, now=_utcnow_iso())
+        except OperationalError:
+            revoked = False
+        if revoked:
+            raise UnauthorizedError("Invalid or expired token")
+
     subject = claims.get("sub")
     if subject is None:
         # A token signed without a subject is malformed — never a 500.
@@ -68,6 +87,12 @@ def get_current_user(
         # The account no longer exists — the token is dead.
         raise UnauthorizedError("Invalid or expired token")
     return user
+
+
+def _utcnow_iso() -> str:
+    import datetime as dt
+
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def require_permission(action: PermissionAction):

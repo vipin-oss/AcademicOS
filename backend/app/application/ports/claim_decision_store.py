@@ -28,3 +28,11 @@ class ClaimDecisionStore(abc.ABC):
     @abc.abstractmethod
     def recent(self, limit: int = 50) -> list[DecisionRecord]:
         """Most recent claim decisions, newest first (bounded)."""
+
+    @abc.abstractmethod
+    def recent_corrections(self, limit: int = 200) -> list[DecisionRecord]:
+        """Most recent ``correct`` decisions, newest first (bounded).
+
+        V3 M7 extraction-health signal: the human fixes that point at the
+        predicates the extractor keeps getting wrong.
+        """

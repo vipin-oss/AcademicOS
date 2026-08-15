@@ -56,6 +56,29 @@ class Settings(BaseSettings):
     # L10 — bounded intake worker pool size (default 1 = single dispatcher).
     intake_max_workers: int = 1
 
+    # V3 M8 — retrieval speed. Parallel lexical+semantic search fan-out is
+    # bounded and safe (the semantic leg never touches the DB session); flip
+    # OFF to roll back to sequential. The fact/dossier in-process caches are
+    # best-effort and invalidated on the authoritative write paths.
+    search_parallel_enabled: bool = True
+
+    # V3 M9 — security posture. Deny-by-default is OFF by default to preserve
+    # the single-user M1-M5 status quo (objects without an ACL stay readable).
+    # Flip ON before admitting a second user (the blueprint's hard gate); the
+    # leak-matrix suite gates that flip. Security rollback must NEVER restore
+    # fail-open: these flags only move fail-open -> fail-closed.
+    security_deny_by_default: bool = False
+    security_tenant_enforcement: bool = False
+
+    # V3 M10 — durable jobs + worker/relay processes. The in-process intake
+    # worker pool (IntakeJobManager) is retained; set durable_jobs_enabled to
+    # run the separate worker.py / relay.py processes instead.
+    durable_jobs_enabled: bool = False
+    job_global_concurrency: int = 10
+    job_per_user_quota: int = 5
+    job_per_type_concurrency: int = 5
+    relay_interval_seconds: float = 1.0
+
     # Public base URL of this API, used to build absolute download links
     public_base_url: str = "http://localhost:8000"
 

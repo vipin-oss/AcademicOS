@@ -145,12 +145,16 @@ def _search_use_case(
     vector_repository: VectorRepository | None,
     embedder: Embedder,
 ) -> SearchObjectsUseCase:
+    # V3 M8: parallel semantic/lexical fan-out, feature-flag rollback.
+    from app.core.config import settings
+
     return SearchObjectsUseCase(
         search_repository=SQLAlchemySearchRepository(db),
         object_repository=SQLAlchemyObjectRepository(db),
         permission_evaluator=ObjectPermissionEvaluator(),
         vector_repository=vector_repository,
         embedder=embedder,
+        parallel=settings.search_parallel_enabled,
     )
 
 

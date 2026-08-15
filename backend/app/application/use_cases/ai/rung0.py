@@ -124,6 +124,23 @@ class Rung0ClaimAnswerer:
         self._claim_store = claim_store
         self._permission_evaluator = permission_evaluator
 
+    def _confirmed_claims(self, predicate_id: str) -> list[tuple[Claim, list[Span]]]:
+        """Confirmed claims for a predicate, cached (V3 M8, law 22).
+
+        The cache is invalidated by the claim store's write paths (confirm /
+        reject / correct / supersede), so cached entries can never go stale
+        across a fact change.
+        """
+        from app.application.services.fact_cache import FACT_CACHE
+
+        key = f"confirmed:{predicate_id}"
+        cached = FACT_CACHE.get(key)
+        if cached is not None:
+            return cached
+        result = self._claim_store.confirmed_by_predicate(predicate_id)
+        FACT_CACHE.put(key, result)
+        return result
+
     def answer(self, question: str, principal: dict | None = None) -> Rung0Answer | None:
         """Answer from a confirmed claim the principal may READ, or ``None``.
 
@@ -139,7 +156,7 @@ class Rung0ClaimAnswerer:
             predicate_tokens = _predicate_tokens(spec.predicate_id)
             if not predicate_tokens or not predicate_tokens.issubset(tokens):
                 continue
-            confirmed = self._claim_store.confirmed_by_predicate(spec.predicate_id)
+            confirmed = self._confirmed_claims(spec.predicate_id)
             for claim, spans in confirmed:
                 if self._permission_evaluator is not None and not self._permission_evaluator.can(
                     principal=principal,
