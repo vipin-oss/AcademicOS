@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies.ai import get_ai_core
 from app.api.dependencies.auth import get_current_user
 from app.api.mappers.document_mapper import to_create_input
 from app.api.routes.documents import (
@@ -27,8 +28,10 @@ from app.api.routes.documents import (
     _read_upload,
     get_storage,
 )
+from app.application.ai.core import AiCore
 from app.application.commands.create_document import CreateDocumentCommand
 from app.application.exceptions import ValidationError
+from app.application.services.ai_semantic_extractor import AiSemanticExtractor
 from app.application.services.claim_service import ClaimService
 from app.application.services.document_annotation_service import DocumentAnnotationService
 from app.application.services.document_intake import DocumentAnalysis, DocumentIntakeService
@@ -64,6 +67,8 @@ class AnalysisOut(BaseModel):
     duplicates: list[dict]
     conflicts: list[dict]
     routing: list[dict] = []
+    extraction_mode: str = "deterministic"
+    ai_rejected: int = 0
 
 
 def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None) -> AnalysisOut:
@@ -76,9 +81,10 @@ def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None
     return AnalysisOut(**d)
 
 
-def _service(db: Session) -> DocumentIntakeService:
+def _service(db: Session, ai_core: AiCore | None = None) -> DocumentIntakeService:
     store = SQLClaimStore(db)
-    return DocumentIntakeService(ClaimService(store), store)
+    extractor = AiSemanticExtractor(ai_core) if ai_core is not None else None
+    return DocumentIntakeService(ClaimService(store), store, ai_extractor=extractor)
 
 
 def _fields_dict(a: DocumentAnalysis) -> dict[str, object]:
@@ -120,6 +126,7 @@ def _text_for(db: Session, storage, document_id: str) -> str:
 def analyze_upload(
     storage: LocalFileStorage = Depends(get_storage),
     db: Session = Depends(get_db),
+    ai_core: AiCore = Depends(get_ai_core),
     *,
     title: str = Form(...),
     document_type: str = Form("pdf"),
@@ -152,7 +159,7 @@ def analyze_upload(
     except Exception:  # noqa: BLE001 - indexing best-effort
         pass
 
-    analysis = _service(db).analyze(
+    analysis = _service(db, ai_core).analyze(
         text=_text_for(db, storage, str(out.id)),
         filename=file_name,
         document_id=str(out.id),
@@ -169,6 +176,7 @@ def analyze_document(
     document_id: str,
     db: Session = Depends(get_db),
     storage: LocalFileStorage = Depends(get_storage),
+    ai_core: AiCore = Depends(get_ai_core),
     user: UniversalObject = Depends(get_current_user),
 ) -> AnalysisOut:
     """Analyze an already-uploaded document (classify + extract + dedupe + route)."""
@@ -184,7 +192,7 @@ def analyze_document(
             status="unknown", review_required=True,
         ))
 
-    analysis = _service(db).analyze(
+    analysis = _service(db, ai_core).analyze(
         text=text,
         filename=doc.title or document_id,
         document_id=document_id,

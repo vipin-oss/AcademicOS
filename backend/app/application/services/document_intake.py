@@ -4,9 +4,10 @@ The "upload → understand → extract → validate → dedupe → route → str
 record" pipeline, built on the existing M6/M7 document-understanding + claims
 knowledge plane — NOT a parallel document system.
 
-Deterministic-first (no LLM dependency): classification and field extraction
-are pure rules + regex; the AI layer (enrich / grounded QA) remains available
-for semantic work but is never required for storage to succeed.
+Deterministic-first: classification and field extraction are pure rules +
+regex; the AI semantic-extraction layer (ADR-069) is an OPTIONAL enrichment
+that fills fields the deterministic pass missed, but storage never depends on
+it (absent extractor or any provider failure -> pure deterministic).
 
 Flow (per uploaded document's text + filename):
 
@@ -64,6 +65,7 @@ class ExtractedField:
     original_text: str
     confidence: float
     extractor: str
+    spans: tuple = ()        # source spans (TEXT_RANGE for AI-derived fields)
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,8 @@ class DocumentAnalysis:
     conflicts: tuple[ConflictHit, ...] = field(default_factory=tuple)
     review_required: bool = True
     status: str = "unknown"   # unknown | analyzed | review_required | ingested
+    extraction_mode: str = "deterministic"   # "deterministic" | "ai_assisted"
+    ai_rejected: int = 0                      # AI fields rejected (low-conf / ungrounded)
 
     def all_types(self) -> tuple[str, ...]:
         """Primary + secondary type ids (primary first)."""
@@ -119,6 +123,8 @@ class DocumentAnalysis:
             "target_module": self.target_module,
             "status": self.status,
             "review_required": self.review_required,
+            "extraction_mode": self.extraction_mode,
+            "ai_rejected": self.ai_rejected,
             "fields": [
                 {
                     "field_name": f.field_name,
@@ -157,11 +163,13 @@ class DocumentIntakeService:
         claim_store: ClaimStore,
         classifier: DocumentClassifier | None = None,
         policy: SuggestionPolicy | None = None,
+        ai_extractor=None,  # duck-typed: .extract(**kw) -> AiExtractionResult
     ) -> None:
         self._claims = claim_service
         self._store = claim_store
         self._classifier = classifier or DocumentClassifier()
         self._policy = policy or SuggestionPolicy()
+        self._ai_extractor = ai_extractor
 
     def analyze(
         self,
@@ -206,6 +214,45 @@ class DocumentIntakeService:
                 confidence=min(0.85, classification.confidence),
                 extractor="prose",
             ))
+
+        # AI semantic enrichment (ADR-069): the FALLBACK layer. Only fields the
+        # deterministic + prose passes could NOT obtain are offered to the
+        # configured AI provider; every returned value is validated, confidence-
+        # gated and grounded in the source text (never fabricated). Absent an
+        # extractor (or on any provider/format failure) this is a no-op and the
+        # pipeline stays deterministic-only.
+        ai_rejected = 0
+        if self._ai_extractor is not None and classification.document_type_id is not None:
+            existing_preds = {f.predicate_id for f in fields}
+            # Candidate fields across ALL matched types (primary + secondary),
+            # de-duplicated by predicate, minus what the deterministic pass got.
+            seen_specs: dict[str, object] = {}
+            for type_id in type_ids:
+                for s in fields_for(type_id):
+                    if s.predicate_id not in existing_preds:
+                        seen_specs.setdefault(s.predicate_id, s)
+            # "Important" = every schema field the deterministic pass missed
+            # (the schema IS the type's important-field definition). The AI is
+            # asked to fill what it can and return null for what it cannot.
+            missing = tuple(seen_specs.values())
+            if missing:
+                ai = self._ai_extractor.extract(
+                    text=text,
+                    type_id=classification.document_type_id,
+                    missing_fields=missing,
+                    source_id=document_id,
+                )
+                for af in ai.fields:
+                    fields.append(ExtractedField(
+                        field_name=af.field_name, predicate_id=af.predicate_id,
+                        value=af.value, original_text=af.original_text,
+                        confidence=min(af.confidence, classification.confidence),
+                        extractor="ai",
+                        spans=(af.span,) if af.span is not None else (),
+                    ))
+                ai_rejected = (
+                    len(ai.rejected_low_confidence) + len(ai.rejected_ungrounded)
+                )
 
         if classification.document_type_id is None and not fields:
             return DocumentAnalysis(
@@ -256,6 +303,15 @@ class DocumentIntakeService:
         review_required = bool(duplicates or conflicts) or any(
             r.status != "auto_suggested" for r in records
         )
+        # AI enrichment that rejected candidate values (low confidence or
+        # ungrounded) means important fields could not be reliably extracted —
+        # flag the document for human review rather than silently proceeding.
+        if ai_rejected:
+            review_required = True
+        extraction_mode = (
+            "ai_assisted" if any(f.extractor == "ai" for f in unique_fields)
+            else "deterministic"
+        )
         status = "unknown" if not records else ("review_required" if review_required else "ingested")
 
         return DocumentAnalysis(
@@ -270,6 +326,8 @@ class DocumentIntakeService:
             conflicts=tuple(conflicts),
             review_required=review_required,
             status=status,
+            extraction_mode=extraction_mode,
+            ai_rejected=ai_rejected,
         )
 
     def _write_record(self, f: ExtractedField, document_id, version, acl_scope, spans) -> RecordOutcome:
@@ -278,13 +336,14 @@ class DocumentIntakeService:
             self._policy.allows_auto_suggest(f.predicate_id)
             and f.confidence >= 0.9
         )
+        field_spans = list(f.spans) if f.spans else list(spans or [])
         try:
             if can_suggest:
                 claim = self._claims.suggest(
                     predicate_id=f.predicate_id, raw_value=f.value,
                     source_text=f.original_text,
                     source_document_id=document_id, source_version=version,
-                    spans=spans or [], acl_scope=acl_scope,
+                    spans=field_spans, acl_scope=acl_scope,
                     fact_confidence=f.confidence,
                 )
                 return RecordOutcome(f.predicate_id, f.value, "auto_suggested", claim.claim_id)
@@ -292,7 +351,7 @@ class DocumentIntakeService:
                 predicate_id=f.predicate_id, raw_value=f.value,
                 source_text=f.original_text,
                 source_document_id=document_id, source_version=version,
-                spans=spans or [], acl_scope=acl_scope,
+                spans=field_spans, acl_scope=acl_scope,
                 fact_confidence=f.confidence,
             )
             return RecordOutcome(f.predicate_id, f.value, "proposed", claim.claim_id)

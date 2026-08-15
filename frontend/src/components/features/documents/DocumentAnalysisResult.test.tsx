@@ -68,4 +68,41 @@ describe("DocumentAnalysisResult", () => {
     const { container } = render(<DocumentAnalysisResult analysis={null} analyzing={false} />);
     expect(container.firstChild).toBeNull();
   });
+
+  it("shows AI-assisted extraction mode and AI field badges", () => {
+    render(
+      <DocumentAnalysisResult
+        analysis={analysis({
+          extraction_mode: "ai_assisted",
+          fields: [
+            {
+              field_name: "conference_name",
+              predicate_id: "conference_name",
+              value: "Quantum Materials",
+              original_text: "…",
+              confidence: 0.9,
+              extractor: "prose",
+            },
+            {
+              field_name: "city",
+              predicate_id: "city",
+              value: "New Delhi",
+              original_text: "New Delhi",
+              confidence: 0.95,
+              extractor: "ai",
+            },
+          ],
+        })}
+        analyzing={false}
+      />,
+    );
+    expect(screen.getByText(/AI-assisted/)).toBeTruthy();
+    expect(screen.getByText(/New Delhi/)).toBeTruthy();
+    expect(screen.getByText("AI")).toBeTruthy();
+  });
+
+  it("shows deterministic extraction mode by default", () => {
+    render(<DocumentAnalysisResult analysis={analysis()} analyzing={false} />);
+    expect(screen.getByText(/Deterministic/)).toBeTruthy();
+  });
 });

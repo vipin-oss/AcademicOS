@@ -53,6 +53,7 @@ See [NUMBERING.md](NUMBERING.md).
 | ADR-066 | Production hardening (Docker/TLS/logging/backup) | [ADR-066](ADR-066-v3-m19-production-hardening.md) (V3 M19) | V3 M19 |
 | ADR-067 | Intelligent document intake (classify → extract → route → review) | [ADR-067](ADR-067-v3-document-intake.md) (V3) | V3 |
 | ADR-068 | Domain-record routing, prose extraction, conversational guard | [ADR-068](ADR-068-v3-domain-record-routing.md) (V3) | V3 |
+| ADR-069 | AI-assisted semantic extraction layer (fallback/enrichment) | [ADR-069](ADR-069-ai-semantic-extraction.md) (V3) | V3 |
 
 Repo ADR-001 is preserved. Freeze-Contract ADR-001 is a different decision
 and is referred to by its full title, never by overwriting the repo id.

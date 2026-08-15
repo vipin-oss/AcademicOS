@@ -51,6 +51,10 @@ export interface DocumentAnalysisResponse {
     extracted_value: unknown;
   }>;
   routing: DocumentAnalysisRoute[];
+  /** "deterministic" | "ai_assisted" — whether the AI enrichment layer added fields. */
+  extraction_mode?: string;
+  /** Number of AI candidate values rejected (low confidence / ungrounded). */
+  ai_rejected?: number;
 }
 
 function statusFallback(status: number): string {

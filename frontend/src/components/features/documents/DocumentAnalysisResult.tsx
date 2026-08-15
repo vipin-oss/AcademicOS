@@ -61,6 +61,8 @@ export function DocumentAnalysisResult({
   const created = analysis.routing.filter((r) => r.kind === "created");
   const duplicates = analysis.routing.filter((r) => r.kind === "duplicate");
   const status = analysis.review_required ? "Review required" : "Ready";
+  const aiAssisted = analysis.extraction_mode === "ai_assisted";
+  const targetLabel = MODULE_LABELS[analysis.target_module] ?? analysis.target_module;
 
   return (
     <div className="space-y-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-sm">
@@ -81,12 +83,16 @@ export function DocumentAnalysisResult({
           <span>{Math.round(analysis.confidence * 100)}%</span>
         </div>
         <div>
-          <span className="text-[var(--text-tertiary)]">Target: </span>
-          <span>{MODULE_LABELS[analysis.target_module] ?? analysis.target_module}</span>
+          <span className="text-[var(--text-tertiary)]">Extraction: </span>
+          <span>{aiAssisted ? "AI-assisted" : "Deterministic"}</span>
         </div>
         <div>
           <span className="text-[var(--text-tertiary)]">Status: </span>
           <span>{status}</span>
+        </div>
+        <div className="col-span-2">
+          <span className="text-[var(--text-tertiary)]">Target: </span>
+          <span>{targetLabel}</span>
         </div>
       </div>
 
@@ -99,6 +105,11 @@ export function DocumentAnalysisResult({
             {analysis.fields.slice(0, 8).map((f) => (
               <li key={f.predicate_id} className="truncate">
                 <span className="capitalize">{fieldLabel(f)}</span>: {String(f.value)}
+                {f.extractor === "ai" ? (
+                  <span className="ml-1 rounded bg-[var(--bg-hover)] px-1 text-[10px] text-[var(--text-tertiary)]">
+                    AI
+                  </span>
+                ) : null}
               </li>
             ))}
             {analysis.fields.length > 8 ? (
