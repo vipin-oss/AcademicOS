@@ -56,7 +56,10 @@ def test_money_parses_rs_prefix() -> None:
 
 
 def test_document_types_are_data() -> None:
-    assert {t.type_id for t in DOCUMENT_TYPES} == {"grant_sanction_letter", "office_order"}
+    # The Wave-1 types remain; ADR-067 expanded the taxonomy additively.
+    ids = {t.type_id for t in DOCUMENT_TYPES}
+    assert {"grant_sanction_letter", "office_order"} <= ids
+    assert isinstance(DOCUMENT_TYPES, tuple)
     assert get_document_type("grant_sanction_letter") is not None
     assert get_document_type("unknown") is None
 

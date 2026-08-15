@@ -21,6 +21,7 @@ from app.api.routes.committees import router as committees_router
 from app.api.routes.confirmations import router as confirmations_router
 from app.api.routes.document_viewer import router as document_viewer_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.document_intake import router as document_intake_router
 from app.api.routes.eval_history import router as eval_history_router
 from app.api.routes.events import router as events_router
 from app.api.routes.evidence import router as evidence_router
@@ -143,6 +144,8 @@ def create_app() -> FastAPI:
     app.include_router(ai_router, prefix=settings.api_v1_prefix)
     app.include_router(objects_router, prefix=settings.api_v1_prefix)
     app.include_router(documents_router, prefix=settings.api_v1_prefix)
+    # V3 ADR-067: document intake (upload → understand → structured records).
+    app.include_router(document_intake_router, prefix=settings.api_v1_prefix)
     app.include_router(document_viewer_router, prefix=settings.api_v1_prefix)
     app.include_router(faculty_router, prefix=settings.api_v1_prefix)
     app.include_router(publications_router, prefix=settings.api_v1_prefix)
