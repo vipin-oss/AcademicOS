@@ -205,3 +205,9 @@ class UserRole(str, Enum):
     """
 
     ADMIN = "admin"
+    # V3 M14 (ADR-061): the four academic role classes the blueprint names
+    # (Professor / Scholar / HoD / Admin). Each is one enum member; their
+    # capability mapping lives in RoleBasedPermissionEvaluator's policy map.
+    PROFESSOR = "professor"
+    SCHOLAR = "scholar"
+    HOD = "hod"

@@ -66,12 +66,25 @@ from app.infrastructure.db.models.tool_call_log_model import (  # noqa: F401
 from app.infrastructure.db.models.session_revocation_model import (  # noqa: F401
     SessionRevocationModel,
 )
+from app.infrastructure.db.models.document_revision_model import (  # noqa: F401
+    DocumentRevisionModel,
+)
 from app.infrastructure.db.models.job_model import (  # noqa: F401
     JobAttemptModel,
     JobModel,
 )
+from app.infrastructure.db.models.organization_model import (  # noqa: F401
+    MembershipModel,
+    OrganizationModel,
+)
+from app.infrastructure.db.models.saved_view_model import (  # noqa: F401
+    SavedViewModel,
+)
+from app.infrastructure.db.models.spend_ledger_model import (  # noqa: F401
+    SpendLedgerModel,
+)
 
-CURRENT_MIGRATION = "0018_durable_jobs"
+CURRENT_MIGRATION = "0022_organizations_memberships"
 
 
 def main() -> None:

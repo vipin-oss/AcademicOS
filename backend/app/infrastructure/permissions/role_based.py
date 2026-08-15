@@ -26,6 +26,11 @@ _ROLE_ACTIONS: dict[str, set[PermissionAction]] = {
         PermissionAction.WRITE,
         PermissionAction.MANAGE,
     },
+    # V3 M14 (ADR-061): academic roles hold READ + WRITE (never MANAGE — the
+    # administrative capability stays admin-only).
+    UserRole.PROFESSOR.value: {PermissionAction.READ, PermissionAction.WRITE},
+    UserRole.SCHOLAR.value: {PermissionAction.READ, PermissionAction.WRITE},
+    UserRole.HOD.value: {PermissionAction.READ, PermissionAction.WRITE},
 }
 _DEFAULT_ACTIONS: frozenset[PermissionAction] = frozenset(
     {PermissionAction.READ, PermissionAction.WRITE}

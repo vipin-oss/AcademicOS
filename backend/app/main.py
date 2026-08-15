@@ -33,6 +33,8 @@ from app.api.routes.plans import router as plans_router
 from app.api.routes.productivity import router as productivity_router
 from app.api.routes.publications import router as publications_router
 from app.api.routes.reports import router as reports_router
+from app.api.routes.saved_views import router as saved_views_router
+from app.api.routes.admin import router as admin_router
 from app.api.routes.research import router as research_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
@@ -165,6 +167,10 @@ def create_app() -> FastAPI:
     app.include_router(plans_router, prefix=settings.api_v1_prefix)
     app.include_router(tools_router, prefix=settings.api_v1_prefix)
     app.include_router(evidence_router, prefix=settings.api_v1_prefix)
+    # V3 M13 (ADR-060): saved ad-hoc query/export views.
+    app.include_router(saved_views_router, prefix=settings.api_v1_prefix)
+    # V3 M14 (ADR-061): admin panel operational views (MANAGE-gated).
+    app.include_router(admin_router, prefix=settings.api_v1_prefix)
     return app
 
 
