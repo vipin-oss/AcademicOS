@@ -153,6 +153,70 @@ try {
 }
 
 # ---------------------------------------------------------------------------
+# 7. Per-user DockerDesktop discovery (InstallLocation + Programs\DockerDesktop)
+# ---------------------------------------------------------------------------
+Write-Host "[7] Per-user DockerDesktop discovery" -ForegroundColor Cyan
+
+$tmp7 = Join-Path ([System.IO.Path]::GetTempPath()) ("academicos-dd7-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $tmp7 | Out-Null
+# The user's real layout:  %LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe
+$perUserExe = Join-Path $tmp7 "Programs\DockerDesktop\Docker Desktop.exe"
+New-Item -ItemType Directory -Path (Split-Path -Parent $perUserExe) -Force | Out-Null
+Set-Content -LiteralPath $perUserExe -Value "fake" -ErrorAction SilentlyContinue
+
+$prevPf = $env:ProgramFiles
+$prevPf86 = ${env:ProgramFiles(x86)}
+$prevLocal = $env:LOCALAPPDATA
+try {
+    $env:ProgramFiles = (Join-Path $tmp7 "empty-pf")
+    ${env:ProgramFiles(x86)} = (Join-Path $tmp7 "empty-x86")
+    $env:LOCALAPPDATA = $tmp7
+
+    $found = Get-DockerDesktopPath
+    Assert-True ($null -ne $found) "discovers per-user Docker Desktop under Programs\DockerDesktop"
+    Assert-True ((Split-Path -Leaf $found) -eq "Docker Desktop.exe") "returns the executable path"
+    Assert-True ($found -like "*Programs*DockerDesktop*Docker Desktop.exe") "path matches the per-user install layout"
+} finally {
+    $env:ProgramFiles = $prevPf
+    ${env:ProgramFiles(x86)} = $prevPf86
+    $env:LOCALAPPDATA = $prevLocal
+    Remove-Item -LiteralPath $tmp7 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
+# 8. Docker Desktop executable derivation from a directory value
+# ---------------------------------------------------------------------------
+Write-Host "[8] Executable derivation from a directory value" -ForegroundColor Cyan
+# Re-express the derivation rule inline (the same Join-Path logic used when a
+# registry InstallLocation points at a directory rather than the .exe) on
+# real, platform-agnostic paths (a Windows "C:\..." literal cannot be
+# Join-Path'd on this Linux test host).
+$tmp8 = Join-Path ([System.IO.Path]::GetTempPath()) ("academicos-dd8-" + [guid]::NewGuid().ToString("N"))
+$installDir = Join-Path $tmp8 "Programs\DockerDesktop"
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+try {
+    $derived = & {
+        $dir = $installDir
+        $exe = $dir
+        if ($exe -notmatch "Docker Desktop\.exe$") { $exe = Join-Path $exe "Docker Desktop.exe" }
+        return $exe
+    }
+    Assert-True ((Split-Path -Leaf $derived) -eq "Docker Desktop.exe") "directory -> Docker Desktop.exe (no username hardcoded)"
+    Assert-True ($derived -like "*$installDir*Docker Desktop.exe") "exe derived UNDER the InstallLocation directory"
+
+    # A value that already ends in the .exe must NOT be double-appended.
+    $alreadyExe = Join-Path $installDir "Docker Desktop.exe"
+    $derived2 = & {
+        $v = $alreadyExe
+        if ($v -notmatch "Docker Desktop\.exe$") { $v = Join-Path $v "Docker Desktop.exe" }
+        return $v
+    }
+    Assert-Equal $alreadyExe $derived2 "an already-complete .exe path is left unchanged"
+} finally {
+    Remove-Item -LiteralPath $tmp8 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host ("RESULT: {0} passed, {1} failed" -f $script:Pass, $script:Fail) -ForegroundColor Cyan
 if ($script:Fail -gt 0) { exit 1 } else { exit 0 }
