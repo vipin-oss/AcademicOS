@@ -317,3 +317,67 @@ def test_grounded_query_with_no_evidence_is_honest(harness, ollama_stub):
     assert data["available"] is True
     assert data["retrieved_count"] == 0
     assert data["citations"] == []
+
+
+# ---------------------------------------------------------------------------
+# Ollama NATIVE streaming format (the actual /v1/chat/completions SSE shape)
+# ---------------------------------------------------------------------------
+
+
+class _OllamaNativeHandler(BaseHTTPRequestHandler):
+    """Emits Ollama's REAL /v1/chat/completions streaming format (top-level
+    ``message.content`` + ``done`` flag — NOT OpenAI's choices[].delta)."""
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length))
+        assert body.get("stream") is True, "this handler is for streaming only"
+        frames = (
+            'data: {"model":"qwen2.5:1.5b","created_at":"2024-01-01T00:00:00Z",'
+            '"message":{"role":"assistant","content":"AcademicOS AI OK"},"done":false}\n\n'
+            'data: {"model":"qwen2.5:1.5b","created_at":"2024-01-01T00:00:00Z",'
+            '"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop",'
+            '"total_duration":100,"prompt_eval_count":4,"eval_count":4}\n\n'
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(frames.encode())))
+        self.end_headers()
+        self.wfile.write(frames.encode())
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture()
+def ollama_native_stub():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaNativeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+def test_real_ollama_native_streaming_format_is_parsed(harness, ollama_native_stub):
+    """Proves the actual Ollama SSE shape (message.content + done, no choices)
+    yields a real answer through the real streaming path — the regression that
+    previously produced "LLM stream contained no text" -> unavailable."""
+    port = ollama_native_stub.server_address[1]
+    cfg = ProviderConfig(
+        provider_id="local-ollama", kind="openai", model="qwen2.5:1.5b",
+        base_url=f"http://127.0.0.1:{port}/v1",
+    )
+    gateway = OpenAIProvider(cfg, client=httpx.Client(timeout=10.0))
+    app.dependency_overrides[get_ai_core] = lambda: _core_with_gateway(gateway)
+
+    with harness.stream(
+        "POST", f"{API}/chat/stream", json={"message": "Reply with exactly: AcademicOS AI OK"}
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        body = resp.read().decode()
+
+    assert "event: token" in body
+    assert "AcademicOS AI OK" in body
+    assert "event: completion" in body
+    assert '"available": true' in body
