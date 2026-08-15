@@ -15,3 +15,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["app/tests"]
+markers = [
+    "slow_timing: intake throughput/timing-sensitive tests (large single-worker queue drain under a hard wall-clock settle deadline); excluded from CI via '-m not slow_timing' but fully runnable locally",
+]
