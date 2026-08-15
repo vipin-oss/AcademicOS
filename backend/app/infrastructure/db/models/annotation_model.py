@@ -12,11 +12,11 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class DocumentAnnotationModel(Base):
+class DocumentAnnotationModel(TenantStampMixin, Base):
     __tablename__ = "document_annotations"
     __table_args__ = (
         # Viewer read: one document's annotations, page-ordered.

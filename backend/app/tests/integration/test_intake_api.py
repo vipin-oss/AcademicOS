@@ -319,6 +319,7 @@ class TestFullLifecycle:
 
 
 class TestControlFlow:
+    @pytest.mark.slow_timing
     def test_pause_resume_completes_exactly_all_items(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(
@@ -348,6 +349,7 @@ class TestControlFlow:
         assert final["processed_items"] == 500
         assert final["counts"]["awaiting_review"] == 500
 
+    @pytest.mark.slow_timing
     def test_cancel_is_terminal(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(
@@ -361,6 +363,7 @@ class TestControlFlow:
         assert client.post(f"{API}/sessions/{sid}/resume").status_code == 422
         assert client.post(f"{API}/sessions/{sid}/cancel").status_code == 422
 
+    @pytest.mark.slow_timing
     def test_cancel_while_paused_persists_immediately(self, harness, big_root: Path) -> None:
         client, *_ = harness
         sid = client.post(

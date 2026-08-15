@@ -17,7 +17,29 @@ from app.infrastructure.db.types import JSONBType
 Base = declarative_base()
 
 
-class ObjectModel(Base):
+class TenantStampMixin:
+    """V3 M3 — tenancy stamping columns (columns only, no enforcement).
+
+    Every table carries ``tenant_id`` + ``owner_user_id`` so the retrofit
+    (blueprint V3 §M3, correcting audit A7) never has to rewrite the schema
+    later. In the single-tenant present both default to ``'default'``.
+    Enforcement — reads filtered by tenant, ownership checks — is M9; here the
+    columns simply exist, are backfilled, and are indexed. Because both columns
+    are ``nullable=False`` with a server default, no write path can forget to
+    stamp them (ORM inserts include the Python default; raw SQL inserts get the
+    server default), and post-backfill ``tenant_id`` is NULL-free by
+    construction.
+    """
+
+    tenant_id: Mapped[str] = mapped_column(
+        String, nullable=False, default="default", server_default="default", index=True
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        String, nullable=False, default="default", server_default="default", index=True
+    )
+
+
+class ObjectModel(TenantStampMixin, Base):
     __tablename__ = "objects"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)

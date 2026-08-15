@@ -28,10 +28,10 @@ from __future__ import annotations
 from sqlalchemy import Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class ReviewDecisionModel(Base):
+class ReviewDecisionModel(TenantStampMixin, Base):
     __tablename__ = "review_decisions"
     __table_args__ = (
         Index(

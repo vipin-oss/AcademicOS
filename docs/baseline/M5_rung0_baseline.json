@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-08-14",
+  "milestone": "V3-M5",
+  "what": "rung-0 confirmed-claims fast path (no retrieval, no LLM)",
+  "environment": {
+    "python": "3.13.14",
+    "platform": "Linux",
+    "database": "sqlite (in-process; NOT production PostgreSQL)"
+  },
+  "endpoints": {
+    "rung0_lookup": {
+      "status": "MEASURED",
+      "runs": 200,
+      "p50_ms": 0.539,
+      "p95_ms": 0.7,
+      "p99_ms": 0.771,
+      "max_ms": 0.972,
+      "budget_ms": 100,
+      "note": "well under the blueprint <=100ms rung-0 target"
+    }
+  },
+  "caveats": [
+    "In-process SQLite measurement; PostgreSQL numbers are not claimed from these.",
+    "Later milestones must compare against THIS report, not absolute guesses (same rule as M1_baseline.json)."
+  ]
+}

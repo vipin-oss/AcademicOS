@@ -30,11 +30,11 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class EvalRunModel(Base):
+class EvalRunModel(TenantStampMixin, Base):
     __tablename__ = "eval_runs"
     __table_args__ = (
         # Benchmark history queries: per-model runs, newest first.

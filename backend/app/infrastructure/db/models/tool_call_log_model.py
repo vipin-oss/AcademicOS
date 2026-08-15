@@ -9,10 +9,10 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class ToolCallLogModel(Base):
+class ToolCallLogModel(TenantStampMixin, Base):
     __tablename__ = "tool_call_log"
     __table_args__ = (
         Index("ix_tool_call_log_tool_principal", "tool_name", "principal"),

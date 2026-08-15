@@ -138,6 +138,35 @@ class TestPdfParser:
         assert "Title" not in result.embedded_metadata
         assert "Author" not in result.embedded_metadata
 
+    # V3 M2 — PDF metadata regression (audit A2): empty/malformed dates used to
+    # raise IndexError/ValueError out of pypdf's `creation_date`/`modification_date`
+    # properties, escaping the `hasattr` guard and crashing the whole parse.
+    def test_empty_creation_date_is_none_not_a_crash(self) -> None:
+        result = PdfParser().parse(make_pdf_bytes("x", creation="", modified=None))
+        assert result.text == "x"
+        assert result.created_at is None
+
+    def test_empty_mod_date_is_none_not_a_crash(self) -> None:
+        result = PdfParser().parse(make_pdf_bytes("x", creation=None, modified=""))
+        assert result.text == "x"
+        assert result.modified_at is None
+
+    def test_malformed_non_empty_date_is_none_not_a_crash(self) -> None:
+        result = PdfParser().parse(make_pdf_bytes("x", creation="not-a-date"))
+        assert result.text == "x"
+        assert result.created_at is None
+
+    def test_scanned_pdf_with_no_text_layer_reports_empty_text(self) -> None:
+        result = PdfParser().parse(make_pdf_bytes(""))
+        assert result.text == ""
+        assert result.page_count == 1
+
+    def test_unrelated_engine_failures_are_still_visible(self) -> None:
+        # A corrupt page tree / unreadable body must still surface as a factual
+        # ExtractionFailure — the metadata fix must not swallow engine errors.
+        with pytest.raises(ExtractionFailure, match="PDF could not be parsed"):
+            PdfParser().parse(b"%PDF-1.4 fake")
+
     def test_corrupt_pdf_raises_factual_error(self) -> None:
         with pytest.raises(ExtractionFailure, match="PDF could not be parsed"):
             PdfParser().parse(b"%PDF-1.4 fake")

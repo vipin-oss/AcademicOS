@@ -21,10 +21,10 @@ from __future__ import annotations
 
 from sqlalchemy import Column, Integer, String
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class DocumentIdentityModel(Base):
+class DocumentIdentityModel(TenantStampMixin, Base):
     __tablename__ = "document_registry"
 
     content_hash = Column(String, primary_key=True)

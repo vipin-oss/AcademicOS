@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-08-14T15:16:06.792646+00:00",
+  "milestone": "V3-M1",
+  "environment": {
+    "python": "3.13.14",
+    "platform": "Linux-6.1.158+-x86_64-with-glibc2.41",
+    "database": "sqlite (NOT production PostgreSQL)"
+  },
+  "ai": {
+    "warmup_attempted": true,
+    "model_resident": false,
+    "model": "",
+    "warmup_ms": null,
+    "detail": "no provider configured"
+  },
+  "endpoints": {
+    "liveness": {
+      "status": "MEASURED",
+      "http_status": [
+        200
+      ],
+      "runs": 30,
+      "p50_ms": 0.54,
+      "p95_ms": 0.659,
+      "p99_ms": 0.83,
+      "min_ms": 0.375,
+      "max_ms": 0.898,
+      "mean_ms": 0.536
+    },
+    "readiness": {
+      "status": "MEASURED",
+      "http_status": [
+        200
+      ],
+      "runs": 30,
+      "p50_ms": 8.165,
+      "p95_ms": 9.534,
+      "p99_ms": 10.53,
+      "min_ms": 7.911,
+      "max_ms": 10.817,
+      "mean_ms": 8.401
+    }
+  },
+  "caveats": [
+    "SQLite measurements; PostgreSQL numbers are not claimed from these.",
+    "In-process TestClient excludes network and reverse-proxy overhead.",
+    "Later milestones must compare against THIS report, not absolute guesses."
+  ]
+}

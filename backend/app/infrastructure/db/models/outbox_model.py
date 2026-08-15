@@ -12,11 +12,11 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class OutboxEventModel(Base):
+class OutboxEventModel(TenantStampMixin, Base):
     __tablename__ = "outbox_events"
     __table_args__ = (
         # Delivery sweep: undelivered rows, oldest first.

@@ -61,3 +61,13 @@ class ClaimStore(abc.ABC):
     def for_source_version(self, source_document_id: str, version: int) -> list[Claim]:
         """Claims produced from a specific source version (for reprocessing /
         version-replacement cascade)."""
+
+    @abc.abstractmethod
+    def confirmed_by_predicate(
+        self, predicate_id: str
+    ) -> list[tuple[Claim, list[Span]]]:
+        """CONFIRMED claims for one predicate, each with its spans (evidence).
+
+        V3 M5 rung-0: the authoritative fast-path fact source. Only CONFIRMED
+        claims qualify (``AUTO_SUGGESTED`` / ``PROPOSED`` never appear here).
+        """

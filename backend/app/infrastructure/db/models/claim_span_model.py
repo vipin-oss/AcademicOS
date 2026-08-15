@@ -11,11 +11,11 @@ from __future__ import annotations
 from sqlalchemy import Column, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 from app.infrastructure.db.types import JSONBType
 
 
-class ClaimSpanModel(Base):
+class ClaimSpanModel(TenantStampMixin, Base):
     __tablename__ = "claim_spans"
     __table_args__ = (
         Index("ix_claim_spans_claim_id", "claim_id"),

@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 
 from app.application.ports.embedder import Embedder
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+from app.infrastructure.search.tokenizer import mark_tokens
 
 
 class HashingEmbedder(Embedder):
@@ -31,7 +29,7 @@ class HashingEmbedder(Embedder):
 
     def embed(self, text: str) -> list[float]:
         vector = [0.0] * self._dimensions
-        for token in _TOKEN_RE.findall((text or "").lower()):
+        for token in mark_tokens((text or "").lower()):
             digest = hashlib.sha256(token.encode("utf-8")).digest()
             index = int.from_bytes(digest[:4], "little") % self._dimensions
             sign = 1.0 if digest[4] & 1 else -1.0

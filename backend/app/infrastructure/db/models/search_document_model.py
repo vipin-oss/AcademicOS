@@ -21,10 +21,10 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class SearchDocumentModel(Base):
+class SearchDocumentModel(TenantStampMixin, Base):
     __tablename__ = "search_documents"
     __table_args__ = (
         # Exact object-type filtering (the only indexed exact-match column).

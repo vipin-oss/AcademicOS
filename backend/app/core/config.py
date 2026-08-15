@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     ai_semantic_search_enabled: bool = False
     # M13.1: grounded question answering.
     ai_qa_enabled: bool = False
+    # V3 M5: rung-0 confirmed-claims fast path (deterministic, ₹0, no LLM).
+    # Default ON — it is the product's structured-facts fast path; flip OFF to
+    # roll back rung-0 without touching the typed columns (they are additive).
+    ai_rung0_enabled: bool = True
     # M13.2: document enrichment (structured metadata extraction).
     ai_enrichment_enabled: bool = False
     # M13.3: related documents (semantic similarity over the existing index).

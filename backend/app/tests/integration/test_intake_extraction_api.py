@@ -321,6 +321,7 @@ class TestM2JobControls:
     def _wait_paused(self, client: TestClient, sid: str) -> dict:
         return wait_status(client, sid, "paused")
 
+    @pytest.mark.slow_timing
     def test_pause_resume_with_real_engines(self, harness, bulk_root: Path) -> None:
         client, _engine, _storage, _ = harness
         sid = _create(client, bulk_root)
@@ -337,6 +338,7 @@ class TestM2JobControls:
         assert session["statistics"]["extracted_items"] == 300
         assert session["statistics"]["errors"] == 0
 
+    @pytest.mark.slow_timing
     def test_cancel_with_real_engines(self, harness, bulk_root: Path) -> None:
         client, _engine, _storage, _ = harness
         sid = _create(client, bulk_root)

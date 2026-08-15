@@ -16,10 +16,10 @@ from __future__ import annotations
 from sqlalchemy import Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class ClaimDecisionModel(Base):
+class ClaimDecisionModel(TenantStampMixin, Base):
     __tablename__ = "claim_decisions"
     __table_args__ = (
         Index("ix_claim_decisions_claim_id", "subject_id"),

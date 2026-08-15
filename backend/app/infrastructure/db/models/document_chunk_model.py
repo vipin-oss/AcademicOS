@@ -15,10 +15,10 @@ from sqlalchemy import Column, Integer, String, Text
 
 from app.infrastructure.db.types import JSONBType
 
-from app.infrastructure.db.models.object_model import Base
+from app.infrastructure.db.models.object_model import Base, TenantStampMixin
 
 
-class DocumentChunkModel(Base):
+class DocumentChunkModel(TenantStampMixin, Base):
     __tablename__ = "document_chunks"
 
     document_id = Column(String, primary_key=True)
