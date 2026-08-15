@@ -375,6 +375,17 @@ def retrieval_plan(question: str) -> RetrievalPlan:
     if doc_ref:
         return RetrievalPlan(terms=(doc_ref,), document_ref=doc_ref)
 
+    # A0.5 (V3 ADR-068). Conversational / system-capability guard: a pure
+    #     small-talk or liveness question ("are you working?", "hello",
+    #     "what can you do?") that names NO domain noun and NO document
+    #     reference must NOT run broad document retrieval — that is how an
+    #     unrelated "trial" document used to leak into the answer. A
+    #     domain-noun-bearing question ("are you working on my research
+    #     project?") still retrieves, because "project" is a domain noun.
+    noun, _noun_type = _domain_noun_type(norm)
+    if noun is None and _is_conversational(norm):
+        return RetrievalPlan(terms=())
+
     # A. topic markers keep the existing marker behavior ("related to X"),
     #    matched as WHOLE WORDS — "for" inside "information" must never
     #    fire and reduce the query to "mation".
@@ -445,6 +456,45 @@ def formulate_query(question: str) -> str:
     if all_words:
         return all_words[-1]
     return norm
+
+
+#: System / liveness question openers (V3 ADR-068). A question that starts
+#: with one of these AND names no domain noun is treated as conversational —
+#: no broad document retrieval. Deliberately EXCLUDES bare greetings
+#: ("hello", "hi", "thanks") so a knowledge query can still legitimately match
+#: a document whose title/text contains such a word (existing retrieval
+#: contract); greetings are handled upstream by the assistant greeting intent.
+_CONVERSATIONAL_OPENERS = (
+    "are you working",
+    "are you there",
+    "are you alive",
+    "are you awake",
+    "are you ok",
+    "are you okay",
+    "are you ready",
+    "are you free",
+    "are you busy",
+    "how are you",
+    "who are you",
+    "what are you",
+    "what can you do",
+    "what do you do",
+    "test",
+    "ping",
+)
+
+
+def _is_conversational(norm: str) -> bool:
+    """True when the normalized question is pure small-talk / liveness.
+
+    Deliberately NOT triggered when the question carries a domain noun
+    ("are you working on my research project?" -> "project" is a domain noun,
+    so retrieval proceeds) — the caller checks that first.
+    """
+    for opener in _CONVERSATIONAL_OPENERS:
+        if norm == opener or norm.startswith(opener + " "):
+            return True
+    return False
 
 
 def _singularize(term: str) -> str:

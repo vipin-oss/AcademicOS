@@ -32,6 +32,7 @@ from app.application.exceptions import ValidationError
 from app.application.services.claim_service import ClaimService
 from app.application.services.document_annotation_service import DocumentAnnotationService
 from app.application.services.document_intake import DocumentAnalysis, DocumentIntakeService
+from app.application.services.domain_record_router import DomainRecordRouter, RouteOutcome
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.use_cases.object_acl import object_acl_scope
 from app.domain.entities.object import UniversalObject
@@ -62,16 +63,48 @@ class AnalysisOut(BaseModel):
     records: list[dict]
     duplicates: list[dict]
     conflicts: list[dict]
+    routing: list[dict] = []
 
 
-def _analysis_out(a: DocumentAnalysis) -> AnalysisOut:
+def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None) -> AnalysisOut:
     d = a.to_dict()
+    d["routing"] = [
+        {"module": r.module, "kind": r.kind, "object_id": r.object_id,
+         "existing_id": r.existing_id, "reason": r.reason}
+        for r in (routing or [])
+    ]
     return AnalysisOut(**d)
 
 
 def _service(db: Session) -> DocumentIntakeService:
     store = SQLClaimStore(db)
     return DocumentIntakeService(ClaimService(store), store)
+
+
+def _fields_dict(a: DocumentAnalysis) -> dict[str, object]:
+    """predicate_id -> normalized value (for domain-record routing)."""
+    return {f.predicate_id: f.value for f in a.fields}
+
+
+def _route_records(
+    repo: SQLAlchemyObjectRepository,
+    analysis: DocumentAnalysis,
+    created_by: str,
+    source_document_id: str,
+) -> list[RouteOutcome]:
+    """Create actual domain records when high-confidence and conflict-free."""
+    if analysis.review_required or not analysis.document_type_id:
+        return []
+    fields = _fields_dict(analysis)
+    fields["__types__"] = analysis.all_types()
+    router = DomainRecordRouter(repo)
+    return router.route(
+        type_ids=analysis.all_types(),
+        fields=fields,
+        created_by=created_by,
+        source_document_id=source_document_id,
+        confidence=analysis.confidence,
+    )
 
 
 def _text_for(db: Session, storage, document_id: str) -> str:
@@ -126,8 +159,9 @@ def analyze_upload(
         version=out.version,
         acl_scope=object_acl_scope(_load(db, repo, str(out.id))),
     )
+    routing = _route_records(repo, analysis, str(user.id), str(out.id))
     db.commit()
-    return _analysis_out(analysis)
+    return _analysis_out(analysis, routing)
 
 
 @router.post("/{document_id}/analyze", response_model=AnalysisOut)
@@ -157,8 +191,9 @@ def analyze_document(
         version=doc.version,
         acl_scope=object_acl_scope(doc),
     )
+    routing = _route_records(repo, analysis, str(user.id), document_id)
     db.commit()
-    return _analysis_out(analysis)
+    return _analysis_out(analysis, routing)
 
 
 def _load(db: Session, repo: SQLAlchemyObjectRepository, document_id: str) -> UniversalObject:

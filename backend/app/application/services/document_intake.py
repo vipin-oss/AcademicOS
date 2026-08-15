@@ -192,6 +192,21 @@ class DocumentIntakeService:
                     extractor=extractor,
                 ))
 
+        # Prose fallback (ADR-068): fill fields the label pass missed, using
+        # deterministic natural-language patterns. Never overrides a label hit.
+        existing_preds = {f.predicate_id for f in fields}
+        from app.application.services.prose_extractor import prose_fields
+
+        for predicate_id, (value, original) in prose_fields(text).items():
+            if predicate_id in existing_preds:
+                continue
+            fields.append(ExtractedField(
+                field_name=predicate_id, predicate_id=predicate_id,
+                value=value, original_text=original,
+                confidence=min(0.85, classification.confidence),
+                extractor="prose",
+            ))
+
         if classification.document_type_id is None and not fields:
             return DocumentAnalysis(
                 document_id=document_id, document_type_id=None, confidence=0.0,
@@ -299,10 +314,18 @@ class DocumentIntakeService:
             v = normalize_url(text)
             return (v, v, "url") if v else (None, "", kind)
         if kind == "date":
-            # label-scoped when synonyms exist (e.g. "Start Date: ..."), else
-            # the first date line in the document.
-            lines = _label_lines(text, spec.synonyms) or text.splitlines()
-            for line in lines:
+            # label-scoped when synonyms exist (e.g. "Start Date: ..."); when a
+            # label is declared but absent, do NOT fall back to the whole
+            # document (a prose "from X to Y" would otherwise grab the wrong
+            # date and block the prose extractor) — return None instead.
+            if spec.synonyms:
+                lines = _label_lines(text, spec.synonyms)
+                for line in lines:
+                    v = normalize_date(line)
+                    if v:
+                        return (v, line.strip(), kind)
+                return (None, "", kind)
+            for line in text.splitlines():
                 v = normalize_date(line)
                 if v:
                     return (v, line.strip(), kind)
