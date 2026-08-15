@@ -185,7 +185,7 @@ pre-existing processes):
 
 | Command | Purpose |
 |---|---|
-| `.\start_academicos.ps1` | **One-command startup**: environment checks → Ollama (+ model) → PostgreSQL/Docker/Qdrant → deps + migrations → backend → AI/Ollama connectivity check → frontend → browser. Options: `-NoOpenBrowser`, `-SkipDocker`, `-SkipOllama` |
+| `.\start_academicos.ps1` | **One-command startup**: environment checks → Ollama (+ model) → PostgreSQL → Docker Desktop auto-start + daemon readiness poll → Qdrant → deps + migrations → backend → AI/Ollama connectivity check → frontend → browser. Options: `-NoOpenBrowser`, `-SkipDocker`, `-SkipOllama` |
 | `.\stop_academicos.ps1` | Stop ONLY the backend/frontend/Ollama processes this system launched (PID-tracked). PostgreSQL and unrelated processes are never touched. `-KeepQdrant` leaves the Qdrant container running |
 | `.\health.ps1` | PASS/FAIL for PostgreSQL, DB connection, Docker, Qdrant, backend, frontend, storage, Alembic, node_modules, Python packages |
 | `.\start.ps1` / `.\stop.ps1` | Legacy aliases (delegate to the same `scripts\windows\*.ps1`); kept for compatibility |
@@ -222,6 +222,10 @@ pre-existing processes):
 
 - **Backend won't start** — `$env:TEMP\academicos_backend.out.log` / `.err.log`
 - **Frontend won't start** — `$env:TEMP\academicos_frontend.out.log` / `.err.log`
+- **Docker daemon not ready** (`failed to connect to docker API at npipe://…`) —
+  the startup script detects this, launches Docker Desktop (if installed but
+  stopped) and polls for up to 180s. If it still fails, open Docker Desktop and
+  confirm it shows "Engine running", then re-run `.\start_academicos.ps1`.
 - **Qdrant unreachable** — `docker start academicos-qdrant` (or re-run `.\start_academicos.ps1`)
 - **Ollama not running** — the startup script reports this and attempts to
   start `ollama serve`. If Ollama is installed elsewhere, start it manually and
