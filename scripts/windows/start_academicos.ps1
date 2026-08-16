@@ -491,9 +491,10 @@ if (Test-Path -LiteralPath $frontendEnvLocal) {
 if ($env:PORT -and $env:PORT -match "^\d+$") { $configuredPort = [int]$env:PORT }
 
 # Is a healthy AcademicOS frontend already serving on a known port?
+# Uses the SAME deterministic probe as the wait loop below (marker-gated, so
+# an unrelated HTTP service on the port is never mistaken for the frontend).
 for ($p = $FrontendDefaultPort; $p -le ($FrontendDefaultPort + 10); $p++) {
-    $r = Test-Http ("http://127.0.0.1:{0}" -f $p) 2
-    if ($r -and $r.Content -match "__next") {
+    if (Test-FrontendHttp -Hostname "127.0.0.1" -Port $p -Marker "__next") {
         $frontendPort = $p
         $frontendOk = $true
         Write-OK ("Frontend already running on {0} (reused; not owned by this run)" -f $p)
@@ -513,8 +514,13 @@ if (-not $frontendOk) {
     if (-not $npmCmd) {
         Write-Fail "npm.cmd not found (npm is required to run the frontend). Install Node 18+ LTS and retry."
     } else {
-        $null = Start-FrontendDevServer -NpmCmd $npmCmd -FrontendDir $frontendDir -Port $configuredPort -Hostname "127.0.0.1" -LogOut $logOut -LogErr $logErr
-        $launchAttempted = $true
+        try {
+            $null = Start-FrontendDevServer -NpmCmd $npmCmd -FrontendDir $frontendDir -Port $configuredPort -Hostname "127.0.0.1" -LogOut $logOut -LogErr $logErr
+            $launchAttempted = $true
+        } catch {
+            Write-Fail ("Frontend launch failed: {0} (see {1})" -f $_.Exception.Message, $logErr)
+            $launchAttempted = $false
+        }
     }
     # Wait for a Next.js server to come up; detect the actual port (next may
     # auto-increment if the requested one is taken).

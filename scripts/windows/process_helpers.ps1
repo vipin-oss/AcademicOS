@@ -113,10 +113,24 @@ function Start-FrontendDevServer {
 }
 
 # ---------------------------------------------------------------------------
-# True when http://<host>:<port>/ answers HTTP 200 and the body contains the
+# True when http://<host>:<port>/ answers HTTP 200 AND the body contains the
 # marker (Next.js always renders its app inside <div id="__next">, so
 # "__next" is a reliable "the dev server is actually serving" signal).
-# Never throws; a timeout / connection refusal / non-200 returns $false.
+#
+# WHY RAW SOCKETS (not Invoke-WebRequest):
+#   Windows PowerShell 5.1's Invoke-WebRequest renders a progress bar and goes
+#   through the system proxy, and its -TimeoutSec does NOT reliably bound a
+#   request whose server has accepted the connection but is not yet responding
+#   (Next.js dev blocks the first GET / for 5-30s while it compiles). A raw
+#   TcpClient probe with an explicit connect timeout (BeginConnect + WaitOne)
+#   and read timeout (NetworkStream.ReadTimeout) is deterministic, fast, and
+#   behaves identically on Windows PowerShell 5.1 and PowerShell 7.
+#
+# Guarantees:
+#   - returns EXACTLY ONE [bool] (never null / array / extra output);
+#   - never throws (every failure path returns [bool]$false);
+#   - only accepts a real HTTP 200 whose body contains the marker, so an
+#     unrelated service that returns 200 is NOT mistaken for the frontend.
 # ---------------------------------------------------------------------------
 function Test-FrontendHttp {
     param(
@@ -125,19 +139,46 @@ function Test-FrontendHttp {
         [string]$Marker = "__next",
         [int]$TimeoutSec = 2
     )
+    if ([string]::IsNullOrWhiteSpace($Hostname) -or $Port -le 0) { return [bool]$false }
+    $timeoutMs = [Math]::Max(250, [int]($TimeoutSec * 1000))
+    $client = New-Object System.Net.Sockets.TcpClient
     try {
-        $r = Invoke-WebRequest -Uri ("http://{0}:{1}" -f $Hostname, $Port) -UseBasicParsing -TimeoutSec $TimeoutSec
-        if ($r.StatusCode -eq 200 -and ($r.Content -match $Marker)) { return $true }
+        $async = $client.BeginConnect($Hostname, $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne($timeoutMs, $false)) { return [bool]$false }
+        $client.EndConnect($async)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = $timeoutMs
+        # HTTP/1.1 with Connection: close so the server closes after the
+        # response (the read loop below then terminates on EOF). No
+        # Accept-Encoding is sent, so the server must NOT gzip the body.
+        $req = "GET / HTTP/1.1`r`nHost: ${Hostname}:${Port}`r`nUser-Agent: AcademicOS-startup`r`nAccept: */*`r`nConnection: close`r`n`r`n"
+        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes($req)
+        $stream.Write($reqBytes, 0, $reqBytes.Length)
+        $buffer = New-Object -TypeName 'System.Byte[]' -ArgumentList 8192
+        $ms = New-Object System.IO.MemoryStream
+        while ($true) {
+            $n = $stream.Read($buffer, 0, $buffer.Length)
+            if ($n -le 0) { break }
+            $ms.Write($buffer, 0, $n)
+            if ($ms.Length -ge 131072) { break }   # 128 KiB cap
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
     } catch {
-        # connection refused / timeout / non-200 -> not ready yet
+        return [bool]$false
+    } finally {
+        $client.Close()
     }
-    return $false
+    # Status line must be an HTTP 200 (rejects 404/500/redirects).
+    if (-not ($text.StartsWith("HTTP/1.0 200") -or $text.StartsWith("HTTP/1.1 200"))) { return [bool]$false }
+    # Body must contain the Next.js marker (rejects unrelated HTTP services).
+    if ($text.IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return [bool]$false }
+    return [bool]$true
 }
 
 # ---------------------------------------------------------------------------
 # Poll a port range until the frontend dev server answers with the marker.
-# Returns the ready port, or 0 on timeout. Next.js dev may auto-increment the
-# port if the requested one is taken, hence the span.
+# Returns EXACTLY ONE [int] (the ready port) or [int]0 on timeout. Next.js dev
+# may auto-increment the port if the requested one is taken, hence the span.
 # ---------------------------------------------------------------------------
 function Wait-FrontendReady {
     param(
@@ -151,10 +192,10 @@ function Wait-FrontendReady {
     for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
         for ($p = $StartPort; $p -le ($StartPort + $PortSpan); $p++) {
             if (Test-FrontendHttp -Hostname $Hostname -Port $p -Marker $Marker) {
-                return $p
+                return [int]$p
             }
         }
         Start-Sleep -Seconds $SleepSeconds
     }
-    return 0
+    return [int]0
 }

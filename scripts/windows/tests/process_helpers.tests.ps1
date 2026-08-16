@@ -146,28 +146,31 @@ $specUnspaced = Get-FrontendLaunchCommand -NpmCmd "C:\tools\npm.cmd" -Port 3000 
 Assert-Equal $expectedUnspaced $specUnspaced.ArgumentList "unspaced path also quoted (harmless, still correct)"
 
 # ---------------------------------------------------------------------------
-# 8. End-to-end: launch -> readiness -> PID tracking (real HTTP server)
+# 8-15. Real HTTP-server readiness tests (raw-socket probe + wait + launch)
 # ---------------------------------------------------------------------------
-Write-Host "[8] End-to-end launch -> readiness -> PID tracking" -ForegroundColor Cyan
 
-# A stand-in "Next.js dev server": a tiny HTTP server that answers 200 with
-# the same __next marker a real Next.js page renders (<div id="__next">).
-# It parses --hostname/--port from its argv exactly like `next dev`.
+# A stand-in "Next.js dev server": serves the __next marker (or plain HTML with
+# --plain), and parses --port/--hostname from argv exactly like `next dev`.
 $fakeServerSource = @'
 #!/usr/bin/env python3
 import sys, http.server, socketserver
 port, host = 3000, "127.0.0.1"
 args = sys.argv[1:]
+plain = "--plain" in args
 i = 0
 while i < len(args):
-    if args[i] == "--port" and i + 1 < len(args):
+    a = args[i]
+    if a == "--port" and i + 1 < len(args):
         port = int(args[i + 1]); i += 2; continue
-    if args[i] == "--hostname" and i + 1 < len(args):
+    if a == "--hostname" and i + 1 < len(args):
         host = args[i + 1]; i += 2; continue
     i += 1
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b'<!DOCTYPE html><html><body><div id="__next">AcademicOS dev</div></body></html>'
+        if plain:
+            body = b'<!DOCTYPE html><html><head><title>Other</title></head><body><h1>unrelated service</h1></body></html>'
+        else:
+            body = b'<!DOCTYPE html><html><head><title>AcademicOS</title></head><body><div id="__next">AcademicOS dev</div></body></html>'
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -176,53 +179,120 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer((host, port), Handler) as srv:
-    srv.serve_forever()
+socketserver.TCPServer((host, port), Handler).serve_forever()
 '@
 
 $py = (Get-Command python3 -ErrorAction SilentlyContinue).Source
 if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
 if (-not $py) {
-    Write-Host "  SKIP  python3 not available for the end-to-end launch test" -ForegroundColor Yellow
+    Write-Host "  SKIP  python3 not available for the HTTP readiness tests" -ForegroundColor Yellow
 } else {
-    $tmp8 = Join-Path ([System.IO.Path]::GetTempPath()) ("academicos-e2e-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $tmp8 | Out-Null
-    $server = Join-Path $tmp8 "fake_next.py"
-    Set-Content -LiteralPath $server -Value $fakeServerSource -Encoding utf8
-    # Make it directly executable (Start-Process with UseShellExecute=false).
-    & chmod +x $server 2>$null
-    $lo = Join-Path $tmp8 "out.log"
-    $le = Join-Path $tmp8 "err.log"
-    $port = 31999
-    Push-Location $tmp8
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("academicos-http-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
+    $srvScript = Join-Path $tmpDir "fake_next.py"
+    Set-Content -LiteralPath $srvScript -Value $fakeServerSource -Encoding utf8
+    & chmod +x $srvScript 2>$null
+
+    $started = New-Object System.Collections.Generic.List[object]
+    function Start-FakeHttp {
+        param([int]$Port, [switch]$Plain)
+        $args = @($srvScript, "--port", [string]$Port)
+        if ($Plain) { $args += "--plain" }
+        $proc = Start-Process -FilePath $py -ArgumentList $args -PassThru
+        $script:started.Add($proc)
+        return $proc
+    }
+
     try {
-        $before = (Get-Location).Path
-        $proc = $null
-        try {
-            $proc = Start-FrontendDevServer -NpmCmd $server -FrontendDir $tmp8 -Port $port -Hostname "127.0.0.1" -LogOut $lo -LogErr $le
-        } catch {
-            $proc = $null
+        # Case 7: Test-FrontendHttp returns EXACTLY one [bool] (true path).
+        Write-Host "[8] Test-FrontendHttp returns [bool] true (HTTP 200 + __next)" -ForegroundColor Cyan
+        $null = Start-FakeHttp -Port 32001
+        Start-Sleep -Milliseconds 600
+        $r = Test-FrontendHttp -Hostname "127.0.0.1" -Port 32001 -Marker "__next"
+        Assert-True ($r -is [bool]) "returns exactly [bool]"
+        Assert-Equal $true $r "detects HTTP 200 + __next marker"
+
+        # Case 6: HTTP 200 without the Next.js marker is rejected.
+        Write-Host "[9] Test-FrontendHttp returns [bool] false (200 but no __next)" -ForegroundColor Cyan
+        $null = Start-FakeHttp -Port 32002 -Plain
+        Start-Sleep -Milliseconds 600
+        $r2 = Test-FrontendHttp -Hostname "127.0.0.1" -Port 32002 -Marker "__next"
+        Assert-True ($r2 -is [bool]) "returns exactly [bool] (reject case)"
+        Assert-Equal $false $r2 "rejects an unrelated 200 without the Next.js marker"
+
+        # Connection refused -> false (no crash).
+        Write-Host "[10] Test-FrontendHttp returns [bool] false (connection refused)" -ForegroundColor Cyan
+        $r3 = Test-FrontendHttp -Hostname "127.0.0.1" -Port 32099 -Marker "__next"
+        Assert-True ($r3 -is [bool]) "returns exactly [bool] (refused case)"
+        Assert-Equal $false $r3 "closed port -> false"
+
+        # Case 8: Wait-FrontendReady returns EXACTLY one [int].
+        Write-Host "[11] Wait-FrontendReady returns [int] and finds the port" -ForegroundColor Cyan
+        $null = Start-FakeHttp -Port 32003
+        Start-Sleep -Milliseconds 600
+        $ready = Wait-FrontendReady -StartPort 32003 -PortSpan 0 -Marker "__next" -Attempts 10 -SleepSeconds 1 -Hostname "127.0.0.1"
+        Assert-True ($ready -is [int]) "returns exactly [int]"
+        Assert-Equal 32003 $ready "detects the ready port"
+
+        # Case 3/4: skip an unrelated 200 on one port, find __next on the next.
+        Write-Host "[12] Wait-FrontendReady skips unrelated 200, finds __next on the next port" -ForegroundColor Cyan
+        $null = Start-FakeHttp -Port 32004 -Plain
+        $null = Start-FakeHttp -Port 32005
+        Start-Sleep -Milliseconds 600
+        $ready2 = Wait-FrontendReady -StartPort 32004 -PortSpan 1 -Marker "__next" -Attempts 10 -SleepSeconds 1 -Hostname "127.0.0.1"
+        Assert-True ($ready2 -is [int]) "returns exactly [int] (multi-port case)"
+        Assert-Equal 32005 $ready2 "skips the unrelated 200 on 32004 and detects 32005"
+
+        # Timeout -> exactly [int] 0.
+        Write-Host "[13] Wait-FrontendReady returns [int] 0 on timeout" -ForegroundColor Cyan
+        $ready3 = Wait-FrontendReady -StartPort 32006 -PortSpan 0 -Marker "__next" -Attempts 2 -SleepSeconds 1 -Hostname "127.0.0.1"
+        Assert-True ($ready3 -is [int]) "returns exactly [int] (timeout case)"
+        Assert-Equal 0 $ready3 "nothing comes up -> 0"
+
+        # Case 1: already-running frontend is detected (reuse, no launch).
+        Write-Host "[14] Already-running frontend is reused (no launch)" -ForegroundColor Cyan
+        $null = Start-FakeHttp -Port 32007
+        Start-Sleep -Milliseconds 600
+        $reused = $false
+        for ($pp = 32007; $pp -le 32007; $pp++) {
+            if (Test-FrontendHttp -Hostname "127.0.0.1" -Port $pp -Marker "__next") { $reused = $true; break }
         }
-        $after = (Get-Location).Path
-        Assert-True ($null -ne $proc) "dev server process launched"
-        Assert-Equal $before $after "caller location restored after launch"
+        Assert-True $reused "already-running frontend detected immediately (reuse path)"
 
-        # Readiness via the SAME helper the startup script uses.
-        $readyPort = Wait-FrontendReady -StartPort $port -PortSpan 1 -Marker "__next" -Attempts 15 -SleepSeconds 1 -Hostname "127.0.0.1"
-        Assert-Equal $port $readyPort ("http://127.0.0.1:{0} becomes ready (HTTP 200 + __next)" -f $port)
-        Assert-True (Test-FrontendHttp -Hostname "127.0.0.1" -Port $port -Marker "__next") "ready check confirms __next marker"
-
-        # PID tracking: the launched process owns the port — killing it must
-        # take the server down (proves the tracked PID is the listener).
-        if ($proc -and $readyPort -gt 0) {
-            Assert-True ($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) "launched process is alive (trackable PID)"
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-            Assert-True (-not (Test-FrontendHttp -Hostname "127.0.0.1" -Port $port -Marker "__next")) "killing the tracked PID stops the server (ownership verified)"
+        # Case 2: end-to-end launch -> readiness -> PID tracking.
+        Write-Host "[15] End-to-end: launch -> readiness -> PID tracking" -ForegroundColor Cyan
+        $lo = Join-Path $tmpDir "out.log"
+        $le = Join-Path $tmpDir "err.log"
+        $port = 32008
+        Push-Location $tmpDir
+        try {
+            $before = (Get-Location).Path
+            $proc = $null
+            try {
+                $proc = Start-FrontendDevServer -NpmCmd $srvScript -FrontendDir $tmpDir -Port $port -Hostname "127.0.0.1" -LogOut $lo -LogErr $le
+            } catch {
+                $proc = $null
+            }
+            $after = (Get-Location).Path
+            Assert-True ($null -ne $proc) "dev server process launched"
+            Assert-Equal $before $after "caller location restored after launch"
+            if ($proc) { $started.Add($proc) }
+            $readyPort = Wait-FrontendReady -StartPort $port -PortSpan 1 -Marker "__next" -Attempts 15 -SleepSeconds 1 -Hostname "127.0.0.1"
+            Assert-Equal $port $readyPort ("http://127.0.0.1:{0} becomes ready (HTTP 200 + __next)" -f $port)
+            if ($proc -and $readyPort -gt 0) {
+                Assert-True ($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) "launched process is alive (trackable PID)"
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
+                Assert-True (-not (Test-FrontendHttp -Hostname "127.0.0.1" -Port $port -Marker "__next")) "killing the tracked PID stops the server (ownership verified)"
+            }
+        } finally {
+            Pop-Location
         }
     } finally {
-        Pop-Location
-        Remove-Item -LiteralPath $tmp8 -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($p in $started) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
