@@ -184,6 +184,7 @@ class DocumentIntakeService:
         classification = self._classifier.classify(text, filename)
         type_ids = classification.all_types()
 
+        # Phase 1: Deterministic extraction (fast, always runs)
         fields: list[ExtractedField] = []
         for type_id in type_ids:
             for spec in fields_for(type_id):
@@ -200,8 +201,7 @@ class DocumentIntakeService:
                     extractor=extractor,
                 ))
 
-        # Prose fallback (ADR-068): fill fields the label pass missed, using
-        # deterministic natural-language patterns. Never overrides a label hit.
+        # Prose fallback (ADR-068): fill fields the label pass missed
         existing_preds = {f.predicate_id for f in fields}
         from app.application.services.prose_extractor import prose_fields
 
@@ -215,44 +215,39 @@ class DocumentIntakeService:
                 extractor="prose",
             ))
 
-        # AI semantic enrichment (ADR-069): the FALLBACK layer. Only fields the
-        # deterministic + prose passes could NOT obtain are offered to the
-        # configured AI provider; every returned value is validated, confidence-
-        # gated and grounded in the source text (never fabricated). Absent an
-        # extractor (or on any provider/format failure) this is a no-op and the
-        # pipeline stays deterministic-only.
+        # Phase 2: AI enrichment (background, optional)
         ai_rejected = 0
+        ai_enrichment_result = None
         if self._ai_extractor is not None and classification.document_type_id is not None:
             existing_preds = {f.predicate_id for f in fields}
-            # Candidate fields across ALL matched types (primary + secondary),
-            # de-duplicated by predicate, minus what the deterministic pass got.
             seen_specs: dict[str, object] = {}
             for type_id in type_ids:
                 for s in fields_for(type_id):
                     if s.predicate_id not in existing_preds:
                         seen_specs.setdefault(s.predicate_id, s)
-            # "Important" = every schema field the deterministic pass missed
-            # (the schema IS the type's important-field definition). The AI is
-            # asked to fill what it can and return null for what it cannot.
             missing = tuple(seen_specs.values())
             if missing:
-                ai = self._ai_extractor.extract(
-                    text=text,
-                    type_id=classification.document_type_id,
-                    missing_fields=missing,
-                    source_id=document_id,
-                )
-                for af in ai.fields:
-                    fields.append(ExtractedField(
-                        field_name=af.field_name, predicate_id=af.predicate_id,
-                        value=af.value, original_text=af.original_text,
-                        confidence=min(af.confidence, classification.confidence),
-                        extractor="ai",
-                        spans=(af.span,) if af.span is not None else (),
-                    ))
-                ai_rejected = (
-                    len(ai.rejected_low_confidence) + len(ai.rejected_ungrounded)
-                )
+                try:
+                    ai = self._ai_extractor.extract(
+                        text=text,
+                        type_id=classification.document_type_id,
+                        missing_fields=missing,
+                        source_id=document_id,
+                    )
+                    for af in ai.fields:
+                        fields.append(ExtractedField(
+                            field_name=af.field_name, predicate_id=af.predicate_id,
+                            value=af.value, original_text=af.original_text,
+                            confidence=min(af.confidence, classification.confidence),
+                            extractor="ai",
+                            spans=(af.span,) if af.span is not None else (),
+                        ))
+                    ai_rejected = (
+                        len(ai.rejected_low_confidence) + len(ai.rejected_ungrounded)
+                    )
+                except Exception:
+                    # AI failure must not break deterministic extraction
+                    pass
 
         if classification.document_type_id is None and not fields:
             return DocumentAnalysis(
@@ -261,8 +256,43 @@ class DocumentIntakeService:
                 status="unknown", review_required=True,
             )
 
-        # De-duplicate fields by (predicate_id, normalized value) — one claim
-        # per distinct fact, not one per matching rule.
+        # Phase 3: Reconciliation (compare deterministic vs AI)
+        from app.application.services.field_candidate import FieldCandidate, FieldSource
+        from app.application.services.reconciliation import (
+            compute_document_confidence,
+            reconcile_fields,
+        )
+
+        # Convert extracted fields to candidates for reconciliation
+        det_candidates: list[FieldCandidate] = []
+        ai_candidates: list[FieldCandidate] = []
+        for f in fields:
+            candidate = FieldCandidate(
+                predicate_id=f.predicate_id,
+                field_name=f.field_name,
+                value=str(f.value),
+                source=FieldSource.AI if f.extractor == "ai" else (
+                    FieldSource.PROSE if f.extractor == "prose" else (
+                        FieldSource.LABEL if f.extractor == "label" else FieldSource.REGEX
+                    )
+                ),
+                confidence=f.confidence,
+                evidence=f.original_text or "",
+            )
+            if f.extractor == "ai":
+                ai_candidates.append(candidate)
+            else:
+                det_candidates.append(candidate)
+
+        # Reconcile
+        reconciled = reconcile_fields(det_candidates, ai_candidates, self._policy)
+
+        # Compute document-level confidence
+        doc_confidence = compute_document_confidence(
+            classification.confidence, reconciled
+        )
+
+        # Phase 4: De-duplicate and write records
         seen: dict[tuple[str, object], ExtractedField] = {}
         for f in fields:
             key = (f.predicate_id, _norm(f.value))
@@ -303,9 +333,6 @@ class DocumentIntakeService:
         review_required = bool(duplicates or conflicts) or any(
             r.status != "auto_suggested" for r in records
         )
-        # AI enrichment that rejected candidate values (low confidence or
-        # ungrounded) means important fields could not be reliably extracted —
-        # flag the document for human review rather than silently proceeding.
         if ai_rejected:
             review_required = True
         extraction_mode = (
@@ -317,7 +344,7 @@ class DocumentIntakeService:
         return DocumentAnalysis(
             document_id=document_id,
             document_type_id=classification.document_type_id,
-            confidence=classification.confidence,
+            confidence=doc_confidence,
             secondary_types=tuple(m.type_id for m in classification.secondary_types),
             target_module=target_module(classification.document_type_id or "general_document"),
             fields=tuple(unique_fields),
