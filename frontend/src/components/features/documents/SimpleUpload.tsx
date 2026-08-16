@@ -31,6 +31,18 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const runAnalysis = useCallback(async (docId: string) => {
+    setAnalyzing(true);
+    try {
+      const analysisResult = await analyzeDocument(docId);
+      setAnalysis(analysisResult);
+    } catch {
+      setAnalysis(null);
+    } finally {
+      setAnalyzing(false);
+    }
+  }, []);
+
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const file = files[0];
@@ -56,17 +68,8 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         setResult(uploadResult);
         onUploaded?.(uploadResult);
 
-        // Trigger document intelligence analysis (async, non-blocking)
-        setAnalyzing(true);
-        try {
-          const analysisResult = await analyzeDocument(saved.id);
-          setAnalysis(analysisResult);
-        } catch {
-          // Analysis failure does not fail the upload
-          setAnalysis(null);
-        } finally {
-          setAnalyzing(false);
-        }
+        // Run document analysis
+        await runAnalysis(saved.id);
       } catch (err) {
         setError(toErrorMessage(err, "Upload failed. Please try again."));
       } finally {
@@ -74,8 +77,14 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         setProgress(null);
       }
     },
-    [onUploaded],
+    [onUploaded, runAnalysis],
   );
+
+  const handleRetry = useCallback(() => {
+    if (result?.id) {
+      void runAnalysis(result.id);
+    }
+  }, [result?.id, runAnalysis]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -126,6 +135,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         </div>
       )}
 
+      {/* Upload success with link */}
       {result && !analysis && !analyzing && (
         <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
@@ -142,10 +152,15 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         </div>
       )}
 
-      {/* Show document intelligence analysis with confidence */}
+      {/* Document analysis result with enrichment status */}
       {(analysis || analyzing) && (
         <div className="space-y-2">
-          <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} />
+          <DocumentAnalysisResult
+            analysis={analysis}
+            analyzing={analyzing}
+            fileName={result?.file_name}
+            onRetryEnrichment={handleRetry}
+          />
           {result && analysis && (
             <Link
               href={`/documents/${result.id}`}

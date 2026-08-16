@@ -17,6 +17,16 @@ export interface DocumentAnalysisField {
   extractor: string;
 }
 
+export interface FieldConfidence {
+  field_name: string;
+  predicate_id: string;
+  value: string;
+  confidence: number;
+  source: string;  // "label" | "regex" | "prose" | "ai" | "agreement"
+  risk: string;    // "low" | "medium" | "high"
+  status: string;  // "auto_applied" | "proposed" | "review_required" | "conflict"
+}
+
 export interface DocumentAnalysisRecord {
   predicate_id: string;
   value: unknown;
@@ -55,6 +65,12 @@ export interface DocumentAnalysisResponse {
   extraction_mode?: string;
   /** Number of AI candidate values rejected (low confidence / ungrounded). */
   ai_rejected?: number;
+  /** Field-level confidence information. */
+  field_confidence?: FieldConfidence[];
+  /** AI enrichment status: not_started | running | completed | failed | skipped */
+  enrichment_status?: string;
+  /** Timestamp of last enrichment attempt */
+  enrichment_timestamp?: string | null;
 }
 
 function statusFallback(status: number): string {
