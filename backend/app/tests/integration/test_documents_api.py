@@ -104,7 +104,7 @@ def test_upload_then_get_document(client):
     assert body["file_name"] == "syllabus.pdf"
     assert body["file_size"] == len(b"%PDF-sample-bytes")
     assert body["mime_type"] == "application/pdf"
-    assert body["status"] == "draft"
+    assert body["status"] == "active"
     assert body["uploaded_by"] == "obj:user:test-user-0001"
     assert body["object_id"] is None
     assert body["url"] is not None  # stored blob -> working download link

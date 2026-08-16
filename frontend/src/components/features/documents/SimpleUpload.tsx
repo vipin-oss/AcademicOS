@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, CheckCircle2, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Upload, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
 import { toErrorMessage } from "@/lib/api/client";
 import { uploadDocument, type UploadProgress } from "@/lib/api/documents";
 import { analyzeDocument, type DocumentAnalysisResponse } from "@/lib/api/documentIntake";
@@ -132,12 +133,28 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
             <p className="truncate text-sm font-medium text-emerald-900">{result.title}</p>
             <p className="text-xs text-emerald-700">{result.document_type.toUpperCase()} · {result.file_name}</p>
           </div>
+          <Link
+            href={`/documents/${result.id}`}
+            className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2.5 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
+          >
+            <ExternalLink className="h-3 w-3" /> View
+          </Link>
         </div>
       )}
 
       {/* Show document intelligence analysis with confidence */}
       {(analysis || analyzing) && (
-        <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} />
+        <div className="space-y-2">
+          <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} />
+          {result && analysis && (
+            <Link
+              href={`/documents/${result.id}`}
+              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" /> View document details
+            </Link>
+          )}
+        </div>
       )}
 
       {error && (

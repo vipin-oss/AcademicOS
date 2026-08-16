@@ -364,7 +364,7 @@ def create_document(
     object_id: str | None = Form(None),
     description: str | None = Form(None),
     tags: str = Form("[]"),
-    doc_status: str = Form("draft", alias="status"),
+    doc_status: str = Form("active", alias="status"),
     user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
     content = _read_upload(file)
