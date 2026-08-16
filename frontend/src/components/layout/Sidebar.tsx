@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2 } from "lucide-react";
+import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2, Layout } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
-interface NavItem { id: string; label: string; icon: typeof Home; href: string; visible: boolean; custom?: boolean; }
+interface NavItem { id: string; label: string; icon: typeof Home; href: string; visible: boolean; custom?: boolean; modules?: string[]; }
 
 const AVAILABLE_MODULES = [
   { id: "publications", label: "Publications", icon: BookOpen, href: "/publications" },
@@ -27,23 +27,22 @@ const DEFAULT_NAV: NavItem[] = [
 ];
 
 const STORAGE_KEY = "academicos-nav-config";
+const WORKSPACE_KEY = "academicos-workspaces";
 
 function loadNavConfig(): NavItem[] {
   if (typeof window === "undefined") return DEFAULT_NAV;
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return DEFAULT_NAV;
-    const parsed = JSON.parse(stored) as { id: string; label?: string; icon?: string; href?: string; visible: boolean; order: number; custom?: boolean }[];
-    // Merge with defaults + available modules
+    const parsed = JSON.parse(stored) as { id: string; label?: string; icon?: string; href?: string; visible: boolean; order: number; custom?: boolean; modules?: string[] }[];
     const allDefaults = [...DEFAULT_NAV, ...AVAILABLE_MODULES.map((m) => ({ ...m, visible: false }))];
     const merged = allDefaults.map((item) => {
       const saved = parsed.find((s) => s.id === item.id);
-      return saved ? { ...item, visible: saved.visible, custom: saved.custom } : item;
+      return saved ? { ...item, visible: saved.visible, custom: saved.custom, modules: saved.modules } : item;
     });
-    // Add custom items that don't match defaults
     const customItems = parsed.filter((s) => s.custom && !allDefaults.find((d) => d.id === s.id));
     for (const c of customItems) {
-      merged.push({ id: c.id, label: c.label ?? c.id, icon: FileText, href: c.href ?? "/", visible: c.visible, custom: true });
+      merged.push({ id: c.id, label: c.label ?? c.id, icon: c.modules && c.modules.length > 1 ? Layout : FileText, href: c.href ?? "/", visible: c.visible, custom: true, modules: c.modules });
     }
     const orderMap = new Map(parsed.map((s, i) => [s.id, s.order]));
     merged.sort((a, b) => (orderMap.get(a.id) ?? 99) - (orderMap.get(b.id) ?? 99));
@@ -53,7 +52,20 @@ function loadNavConfig(): NavItem[] {
 
 function saveNavConfig(items: NavItem[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.map((item, i) => ({ id: item.id, label: item.label, href: item.href, visible: item.visible, order: i, custom: item.custom }))));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.map((item, i) => ({ id: item.id, label: item.label, href: item.href, visible: item.visible, order: i, custom: item.custom, modules: item.modules }))));
+}
+
+function saveWorkspace(id: string, name: string, modules: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    const stored = localStorage.getItem(WORKSPACE_KEY);
+    const workspaces = stored ? JSON.parse(stored) : [];
+    const existing = workspaces.findIndex((w: { id: string }) => w.id === id);
+    const workspace = { id, name, modules };
+    if (existing >= 0) workspaces[existing] = workspace;
+    else workspaces.push(workspace);
+    localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspaces));
+  } catch { /* ignore */ }
 }
 
 export function Sidebar() {
@@ -65,7 +77,7 @@ export function Sidebar() {
   const [mounted, setMounted] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTabName, setNewTabName] = useState("");
-  const [newTabHref, setNewTabHref] = useState("/documents");
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
 
   useEffect(() => { setNavItems(loadNavConfig()); setMounted(true); }, []);
 
@@ -75,22 +87,52 @@ export function Sidebar() {
     setNavItems((prev) => { const next = prev.map((item) => item.id === id ? { ...item, visible: !item.visible } : item); saveNavConfig(next); return next; });
   }, []);
 
-  const resetConfig = useCallback(() => { setNavItems(DEFAULT_NAV); saveNavConfig(DEFAULT_NAV); }, []);
+  const resetConfig = useCallback(() => {
+    setNavItems(DEFAULT_NAV);
+    saveNavConfig(DEFAULT_NAV);
+    localStorage.removeItem(WORKSPACE_KEY);
+  }, []);
 
   const addCustomTab = useCallback(() => {
     if (!newTabName.trim()) return;
-    const id = `custom-${Date.now()}`;
+    const id = `workspace-${Date.now()}`;
+    const isWorkspace = selectedModules.length > 1;
+    const href = isWorkspace ? `/workspace?id=${id}` : (AVAILABLE_MODULES.find((m) => m.id === selectedModules[0])?.href ?? "/documents");
+    const icon = isWorkspace ? Layout : (AVAILABLE_MODULES.find((m) => m.id === selectedModules[0])?.icon ?? FileText);
+
     setNavItems((prev) => {
-      const next = [...prev, { id, label: newTabName.trim(), icon: FileText, href: newTabHref, visible: true, custom: true }];
+      const next = [...prev, { id, label: newTabName.trim(), icon, href, visible: true, custom: true, modules: selectedModules }];
       saveNavConfig(next);
       return next;
     });
+
+    if (isWorkspace) {
+      saveWorkspace(id, newTabName.trim(), selectedModules);
+    }
+
     setNewTabName("");
+    setSelectedModules([]);
     setShowCreateForm(false);
-  }, [newTabName, newTabHref]);
+  }, [newTabName, selectedModules]);
 
   const removeCustomTab = useCallback((id: string) => {
     setNavItems((prev) => { const next = prev.filter((item) => item.id !== id); saveNavConfig(next); return next; });
+    // Also remove workspace config
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem(WORKSPACE_KEY);
+        if (stored) {
+          const workspaces = JSON.parse(stored).filter((w: { id: string }) => w.id !== id);
+          localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspaces));
+        }
+      } catch { /* ignore */ }
+    }
+  }, []);
+
+  const toggleModule = useCallback((moduleId: string) => {
+    setSelectedModules((prev) =>
+      prev.includes(moduleId) ? prev.filter((id) => id !== moduleId) : [...prev, moduleId]
+    );
   }, []);
 
   const onDragStart = useCallback((index: number) => setDragIndex(index), []);
@@ -151,7 +193,7 @@ export function Sidebar() {
           <div className="border-t border-[var(--border-subtle)] pt-2 space-y-1">
             {!showCreateForm ? (
               <button type="button" onClick={() => setShowCreateForm(true)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--accent)] hover:bg-[var(--bg-hover)]">
-                <Plus className="h-3 w-3" /> Create custom tab
+                <Plus className="h-3 w-3" /> Create workspace
               </button>
             ) : (
               <div className="space-y-2 px-3 py-2">
@@ -159,22 +201,38 @@ export function Sidebar() {
                   type="text"
                   value={newTabName}
                   onChange={(e) => setNewTabName(e.target.value)}
-                  placeholder="Tab name (e.g. My Research)"
+                  placeholder="Workspace name (e.g. My Research)"
                   className="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs"
-                  onKeyDown={(e) => { if (e.key === "Enter") addCustomTab(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && selectedModules.length > 0) addCustomTab(); }}
                 />
-                <select
-                  value={newTabHref}
-                  onChange={(e) => setNewTabHref(e.target.value)}
-                  className="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs"
-                >
+                <p className="text-[10px] text-[var(--text-tertiary)]">Select modules to include:</p>
+                <div className="flex flex-wrap gap-1">
                   {AVAILABLE_MODULES.map((m) => (
-                    <option key={m.id} value={m.href}>{m.label}</option>
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleModule(m.id)}
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors",
+                        selectedModules.includes(m.id)
+                          ? "bg-[var(--accent)] text-white"
+                          : "bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                      )}
+                    >
+                      {m.label}
+                    </button>
                   ))}
-                </select>
+                </div>
                 <div className="flex gap-1">
-                  <button type="button" onClick={addCustomTab} className="flex-1 rounded bg-[var(--accent)] px-2 py-1 text-xs text-white">Add</button>
-                  <button type="button" onClick={() => setShowCreateForm(false)} className="flex-1 rounded border border-[var(--border-subtle)] px-2 py-1 text-xs">Cancel</button>
+                  <button
+                    type="button"
+                    onClick={addCustomTab}
+                    disabled={selectedModules.length === 0 || !newTabName.trim()}
+                    className="flex-1 rounded bg-[var(--accent)] px-2 py-1 text-xs text-white disabled:opacity-50"
+                  >
+                    Add ({selectedModules.length})
+                  </button>
+                  <button type="button" onClick={() => { setShowCreateForm(false); setSelectedModules([]); setNewTabName(""); }} className="flex-1 rounded border border-[var(--border-subtle)] px-2 py-1 text-xs">Cancel</button>
                 </div>
               </div>
             )}

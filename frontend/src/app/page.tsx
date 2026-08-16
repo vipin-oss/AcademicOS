@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
+import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { api } from "@/lib/api/client";
@@ -17,21 +17,34 @@ interface PendingConfirmation {
   tier: string;
 }
 
+interface MissingItem {
+  record_id: string;
+  record_type: string;
+  record_title: string;
+  missing_field: string;
+  predicate_id: string;
+  why_it_matters: string;
+  source_document_id: string | null;
+}
+
 export default function HomePage() {
   const [recentDocs, setRecentDocs] = useState<DocumentResponse[]>([]);
   const [totalObjects, setTotalObjects] = useState(0);
   const [pendingItems, setPendingItems] = useState<PendingConfirmation[]>([]);
+  const [missingItems, setMissingItems] = useState<MissingItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       api.get<ListDocumentsResponse>("/documents", { query: { page_size: 5 } }),
       api.get<{ total_count: number }>("/objects", { query: { page_size: 1 } }),
-      api.get<{ items: PendingConfirmation[] }>("/confirmations/pending", { query: { page_size: 5 } }).catch(() => ({ items: [] })),
-    ]).then(([docs, objects, pending]) => {
+      api.get<PendingConfirmation[]>("/confirmations/pending", { query: { page_size: 5 } }).catch(() => []),
+      api.get<MissingItem[]>("/missing-info", { query: { limit: 5 } }).catch(() => []),
+    ]).then(([docs, objects, pending, missing]) => {
       setRecentDocs(docs.items ?? []);
       setTotalObjects(objects.total_count ?? 0);
-      setPendingItems(pending.items ?? []);
+      setPendingItems(Array.isArray(pending) ? pending : []);
+      setMissingItems(Array.isArray(missing) ? missing : []);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -104,24 +117,47 @@ export default function HomePage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void handleApprove(item.claim_id)}
-                            className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200"
-                            aria-label="Approve"
-                          >
+                          <button type="button" onClick={() => void handleApprove(item.claim_id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Approve">
                             <CheckCircle2 className="h-4 w-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleReject(item.claim_id)}
-                            className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200"
-                            aria-label="Reject"
-                          >
+                          <button type="button" onClick={() => void handleReject(item.claim_id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Reject">
                             <XCircle className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Missing Information */}
+              {missingItems.length > 0 && (
+                <div className="rounded-xl border border-orange-200 bg-orange-50">
+                  <div className="flex items-center justify-between border-b border-orange-200 px-5 py-4">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-orange-600" />
+                      <h2 className="text-sm font-semibold text-orange-900">Incomplete Records</h2>
+                    </div>
+                    <span className="rounded-full bg-orange-200 px-2 py-0.5 text-xs font-medium text-orange-800">{missingItems.length} items</span>
+                  </div>
+                  <div className="divide-y divide-orange-200">
+                    {missingItems.slice(0, 5).map((item, i) => (
+                      <Link
+                        key={`${item.record_id}-${item.predicate_id}-${i}`}
+                        href={`/documents/${item.source_document_id ?? item.record_id}`}
+                        className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-orange-100"
+                      >
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-orange-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-orange-900">
+                            {item.missing_field.replace(/_/g, " ")} missing
+                          </p>
+                          <p className="text-xs text-orange-700">
+                            {item.record_title} · {item.why_it_matters}
+                          </p>
+                        </div>
+                        <ArrowRight className="h-3.5 w-3.5 text-orange-400" />
+                      </Link>
                     ))}
                   </div>
                 </div>
@@ -157,6 +193,9 @@ export default function HomePage() {
                   <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Recent Uploads</span><span className="text-sm font-semibold text-[var(--text-primary)]">{recentDocs.length}</span></div>
                   {pendingItems.length > 0 && (
                     <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Pending Review</span><span className="text-sm font-semibold text-amber-600">{pendingItems.length}</span></div>
+                  )}
+                  {missingItems.length > 0 && (
+                    <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Incomplete Records</span><span className="text-sm font-semibold text-orange-600">{missingItems.length}</span></div>
                   )}
                 </div>
               </div>

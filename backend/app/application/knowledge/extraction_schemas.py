@@ -139,12 +139,23 @@ INVOICE_FIELDS = (
     _f("date", "issue_date", "date", False, ()),
 )
 
+ACCEPTANCE_FIELDS = (
+    _f("paper_title", "publication_title", "label", True,
+       ("title", "paper title", "article title", "manuscript title", "manuscript entitled")),
+    _f("authors", "authors", "label", False, ("authors", "author", "dear dr", "dear prof")),
+    _f("journal", "journal_name", "label", False, ("journal", "journal name")),
+    _f("manuscript_id", "manuscript_id", "label", False, ("manuscript id", "manuscript number", "paper id", "reference")),
+    _f("editor", "editor_name", "label", False, ("editor", "editor-in-chief")),
+    _f("acceptance_date", "acceptance_date", "date", False, ()),
+)
+
 #: type_id -> field specs (data; additive).
 EXTRACTION_SCHEMAS: dict[str, tuple[FieldSpec, ...]] = {
     "conference": CONFERENCE_FIELDS,
     "conference_certificate": CONFERENCE_FIELDS,
     "conference_participation": CONFERENCE_FIELDS,
     "conference_presentation": CONFERENCE_FIELDS,
+    "acceptance_letter": ACCEPTANCE_FIELDS,
     "publication": PUBLICATION_FIELDS,
     "journal_article": PUBLICATION_FIELDS,
     "book_chapter": PUBLICATION_FIELDS,

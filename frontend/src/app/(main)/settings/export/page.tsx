@@ -2,15 +2,15 @@
 
 /**
  * Export / Data Portability page.
- * Allows the user to export their academic data as CSV/JSON.
+ * Allows the user to export their academic data as CSV using the
+ * authenticated API client.
  */
 import { useState } from "react";
 import { Download, FileText, BookOpen, FlaskConical, UsersRound, Calendar, Award, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
-import { API_BASE_URL } from "@/config/env";
-import { getAccessToken } from "@/lib/auth/token";
+import { api } from "@/lib/api/client";
 
 interface ExportOption {
   id: string;
@@ -29,6 +29,32 @@ const EXPORT_OPTIONS: ExportOption[] = [
   { id: "objects", label: "All Objects", description: "Export all academic objects (comprehensive)", icon: Award, endpoint: "/objects" },
 ];
 
+function downloadCsv(data: Record<string, unknown>[], filename: string) {
+  if (data.length === 0) return;
+  const headers = Object.keys(data[0]);
+  const csvRows = [
+    headers.join(","),
+    ...data.map((item) =>
+      headers.map((h) => {
+        const val = item[h];
+        if (val === null || val === undefined) return "";
+        const str = String(val);
+        return str.includes(",") || str.includes('"') || str.includes("\n")
+          ? `"${str.replace(/"/g, '""')}"` : str;
+      }).join(",")
+    ),
+  ];
+  const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function ExportPage() {
   const [exporting, setExporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,43 +63,15 @@ export default function ExportPage() {
     setExporting(option.id);
     setError(null);
     try {
-      const token = getAccessToken();
-      const response = await fetch(`${API_BASE_URL}${option.endpoint}?page_size=500`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      const data = await api.get<{ items?: Record<string, unknown>[] }>(option.endpoint, {
+        query: { page_size: 500 },
       });
-      if (!response.ok) throw new Error(`Export failed: ${response.status}`);
-      const data = await response.json();
-      const items = data.items ?? data ?? [];
-
-      // Convert to CSV
+      const items = data.items ?? [];
       if (items.length === 0) {
         setError(`No ${option.label.toLowerCase()} found to export.`);
         return;
       }
-
-      const headers = Object.keys(items[0]);
-      const csvRows = [
-        headers.join(","),
-        ...items.map((item: Record<string, unknown>) =>
-          headers.map((h) => {
-            const val = item[h];
-            if (val === null || val === undefined) return "";
-            const str = String(val);
-            return str.includes(",") || str.includes('"') || str.includes("\n")
-              ? `"${str.replace(/"/g, '""')}"` : str;
-          }).join(",")
-        ),
-      ];
-
-      const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `academicos_${option.id}_export.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadCsv(items, `academicos_${option.id}_export.csv`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export failed");
     } finally {
