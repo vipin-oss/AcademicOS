@@ -41,14 +41,9 @@ SAFE_FIELDS: set[str] = {
     "conference_acronym",
     "certificate_number",
     "manuscript_id",
-    "sanction_order_number",
-    "order_number",
-    "invoice_number",
-    "reference_number",
     # People (deterministic label extraction)
     "recipient",
     "principal_investigator",
-    "co_investigator",
     "editor_name",
     "scholar_name",
     "supervisor_name",
@@ -62,15 +57,6 @@ SAFE_FIELDS: set[str] = {
     "award_date",
     "order_date",
     "joining_date",
-    # Numeric (deterministic with validation)
-    "sanctioned_amount",
-    "project_duration_months",
-    "invoice_amount",
-    # Structured identifiers
-    "doi",
-    "issn",
-    "isbn",
-    "event_url",
 }
 
 

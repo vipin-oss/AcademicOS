@@ -103,7 +103,12 @@ def _enrich_document_background(document_id: str, user_id: str) -> None:
     Runs asynchronously after the upload response is sent to the user.
     Uses a new database session (background tasks run after the request session closes).
     Errors are logged but never propagate — the upload already succeeded.
+
+    Revision #6: Persists enrichment results as metadata on the document.
     """
+    import json
+    import datetime as dt
+
     try:
         from app.infrastructure.db.session import SessionLocal
         from app.api.dependencies.ai import get_ai_core
@@ -112,7 +117,8 @@ def _enrich_document_background(document_id: str, user_id: str) -> None:
         from app.application.services.document_annotation_service import DocumentAnnotationService
         from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
         from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
-        from app.domain.value_objects.enums import ObjectType, ObjectStatus
+        from app.domain.value_objects.enums import ObjectType, ObjectStatus, MetadataLayer, Provenance
+        from app.domain.value_objects.metadata import MetadataEntry
         from app.domain.value_objects.object_id import ObjectId
 
         db = SessionLocal()
@@ -122,9 +128,11 @@ def _enrich_document_background(document_id: str, user_id: str) -> None:
                 core = get_ai_core()
             except Exception:
                 _log.debug("Background enrichment skipped: AI Core not available.")
+                _persist_enrichment_status(repo, document_id, "skipped", "ai_not_available")
                 return
 
             if not core.config.enabled or not core.config.feature_flags.get("enrichment", False):
+                _persist_enrichment_status(repo, document_id, "skipped", "enrichment_disabled")
                 return
 
             annotation_service = DocumentAnnotationService(
@@ -140,22 +148,131 @@ def _enrich_document_background(document_id: str, user_id: str) -> None:
                 object_id=ObjectId(user_id) if user_id.startswith("obj:") else ObjectId(f"obj:user:{user_id}"),
             )
 
+            # Mark enrichment as running
+            _persist_enrichment_status(repo, document_id, "running")
+
             use_case = EnrichDocumentUseCase(repo, annotation_service, evaluator, core)
             try:
                 result = use_case.execute(document_id, user_obj, None)
                 if result.available:
+                    # Persist enrichment results as metadata
+                    _persist_enrichment_result(repo, document_id, result)
                     _log.info(
                         "Background enrichment completed for %s: title=%r, tags=%s",
                         document_id, result.title, result.tags,
                     )
                 else:
+                    _persist_enrichment_status(repo, document_id, "completed", "no_results")
                     _log.debug("Background enrichment for %s: AI returned no results.", document_id)
             except Exception as exc:
+                _persist_enrichment_status(repo, document_id, "failed", str(exc)[:200])
                 _log.debug("Background enrichment failed for %s: %s", document_id, exc)
         finally:
             db.close()
     except Exception as exc:  # noqa: BLE001 — never crash the background task
         _log.debug("Background enrichment error for %s: %s", document_id, exc)
+
+
+def _persist_enrichment_status(
+    repo: SQLAlchemyObjectRepository,
+    document_id: str,
+    status: str,
+    detail: str = "",
+) -> None:
+    """Persist enrichment status as metadata on the document."""
+    import datetime as dt
+    try:
+        doc = repo.get_by_id(ObjectId(document_id))
+        if doc is None:
+            return
+        from app.domain.value_objects.enums import MetadataLayer, Provenance
+        from app.domain.value_objects.metadata import MetadataEntry
+
+        doc.set_metadata(
+            MetadataEntry("ai_enrichment_status", status, MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+            actor="system",
+        )
+        if detail:
+            doc.set_metadata(
+                MetadataEntry("ai_enrichment_detail", detail, MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+                actor="system",
+            )
+        doc.set_metadata(
+            MetadataEntry("ai_enrichment_timestamp", dt.datetime.now(dt.UTC).isoformat(), MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+            actor="system",
+        )
+        repo.save(doc)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _persist_enrichment_result(
+    repo: SQLAlchemyObjectRepository,
+    document_id: str,
+    result,
+) -> None:
+    """Persist AI enrichment results as metadata on the document."""
+    import json
+    import datetime as dt
+    try:
+        doc = repo.get_by_id(ObjectId(document_id))
+        if doc is None:
+            return
+        from app.domain.value_objects.enums import MetadataLayer, Provenance
+        from app.domain.value_objects.metadata import MetadataEntry
+
+        # Persist enrichment status
+        doc.set_metadata(
+            MetadataEntry("ai_enrichment_status", "completed", MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+            actor="system",
+        )
+        doc.set_metadata(
+            MetadataEntry("ai_enrichment_timestamp", dt.datetime.now(dt.UTC).isoformat(), MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+            actor="system",
+        )
+
+        # Persist extracted fields
+        if result.title:
+            doc.set_metadata(
+                MetadataEntry("ai_title", result.title, MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+                actor="system",
+            )
+        if result.summary:
+            doc.set_metadata(
+                MetadataEntry("ai_summary", result.summary[:500], MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+                actor="system",
+            )
+        if result.tags:
+            doc.set_metadata(
+                MetadataEntry("ai_tags", json.dumps(list(result.tags)), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+                actor="system",
+            )
+        if result.categories:
+            doc.set_metadata(
+                MetadataEntry("ai_categories", json.dumps(list(result.categories)), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+                actor="system",
+            )
+        if result.keywords:
+            doc.set_metadata(
+                MetadataEntry("ai_keywords", json.dumps(list(result.keywords)), MetadataLayer.L5_INFERRED, Provenance.INFERRED),
+                actor="system",
+            )
+
+        # Persist provider/model provenance
+        if result.provider_id:
+            doc.set_metadata(
+                MetadataEntry("ai_provider", result.provider_id, MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+                actor="system",
+            )
+        if result.model:
+            doc.set_metadata(
+                MetadataEntry("ai_model", result.model, MetadataLayer.L5_INFERRED, Provenance.SYSTEM),
+                actor="system",
+            )
+
+        repo.save(doc)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])

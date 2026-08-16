@@ -54,6 +54,17 @@ from app.infrastructure.storage.local import LocalFileStorage
 router = APIRouter(prefix="/documents", tags=["document-intake"])
 
 
+class FieldConfidenceOut(BaseModel):
+    """Per-field confidence information."""
+    field_name: str
+    predicate_id: str
+    value: str
+    confidence: float
+    source: str  # "label" | "regex" | "prose" | "ai" | "agreement"
+    risk: str    # "low" | "medium" | "high"
+    status: str  # "auto_applied" | "proposed" | "review_required" | "conflict"
+
+
 class AnalysisOut(BaseModel):
     document_id: str
     document_type_id: str | None
@@ -63,12 +74,15 @@ class AnalysisOut(BaseModel):
     status: str
     review_required: bool
     fields: list[dict]
+    field_confidence: list[FieldConfidenceOut] = []
     records: list[dict]
     duplicates: list[dict]
     conflicts: list[dict]
     routing: list[dict] = []
     extraction_mode: str = "deterministic"
     ai_rejected: int = 0
+    enrichment_status: str = "not_started"
+    enrichment_timestamp: str | None = None
 
 
 def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None) -> AnalysisOut:
@@ -77,6 +91,19 @@ def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None
         {"module": r.module, "kind": r.kind, "object_id": r.object_id,
          "existing_id": r.existing_id, "reason": r.reason}
         for r in (routing or [])
+    ]
+    # Add field confidence from reconciled fields
+    d["field_confidence"] = [
+        FieldConfidenceOut(
+            field_name=f.field_name,
+            predicate_id=f.predicate_id,
+            value=str(f.value),
+            confidence=f.confidence,
+            source=f.extractor,
+            risk="medium",  # Default, will be enriched from field_candidate
+            status="proposed" if f.extractor == "ai" else "auto_applied",
+        )
+        for f in a.fields
     ]
     return AnalysisOut(**d)
 
@@ -201,7 +228,15 @@ def analyze_document(
     )
     routing = _route_records(repo, analysis, str(user.id), document_id)
     db.commit()
-    return _analysis_out(analysis, routing)
+
+    # Get enrichment status from persisted metadata
+    enrichment_status = doc.metadata.get_value("ai_enrichment_status") or "not_started"
+    enrichment_timestamp = doc.metadata.get_value("ai_enrichment_timestamp")
+
+    result = _analysis_out(analysis, routing)
+    result.enrichment_status = enrichment_status
+    result.enrichment_timestamp = enrichment_timestamp
+    return result
 
 
 def _load(db: Session, repo: SQLAlchemyObjectRepository, document_id: str) -> UniversalObject:

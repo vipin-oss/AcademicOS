@@ -137,13 +137,25 @@ def test_measurement_records_precision_into_policy(session) -> None:
 
 
 def test_unmeasured_predicate_never_auto_suggests(session) -> None:
+    """Revision #6: SAFE_FIELDS can auto-suggest without measurement.
+    Non-safe fields remain blocked (fail-safe).
+    """
+    from app.application.services.suggestion_policy import SAFE_FIELDS
     policy = SuggestionPolicy()  # nothing measured
     result = _extract(
         session, "grant_sanction_letter_1.txt",
         GOLDEN_DOCUMENTS[0][2], policy=policy,
     )
     assert result.classification.document_type_id == "grant_sanction_letter"
-    assert result.proposed and not result.suggested  # fail-safe: no suggestions
+    # SAFE_FIELDS can auto-suggest; non-safe fields are proposed
+    suggested_preds = {c.predicate_id for c in result.suggested}
+    proposed_preds = {c.predicate_id for c in result.proposed}
+    for pred in suggested_preds:
+        assert pred in SAFE_FIELDS, f"{pred} suggested but not in SAFE_FIELDS"
+    # Non-safe fields must be proposed, not suggested
+    for pred in proposed_preds:
+        if pred not in SAFE_FIELDS:
+            assert all(c.status is ClaimStatus.PROPOSED for c in result.proposed if c.predicate_id == pred)
 
 
 def test_below_gate_predicate_stays_proposed(session) -> None:
