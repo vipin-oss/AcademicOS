@@ -17,8 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.application.knowledge.extraction_schemas import EXTRACTION_SCHEMAS, FieldSpec
-from app.domain.entities.object import UniversalObject
-from app.domain.value_objects.enums import ObjectType
+from app.domain.value_objects.claim import ClaimStatus
 from app.infrastructure.persistence.claim_store import SQLClaimStore
 
 
@@ -77,7 +76,7 @@ def analyze_missing_fields(
 ) -> list[MissingItem]:
     """Analyze all confirmed claims for the user and find missing fields."""
     # Get all confirmed claims grouped by source document
-    confirmed = claims_store.list_confirmed(page=1, page_size=10000)
+    confirmed = claims_store.by_status(ClaimStatus.CONFIRMED)
 
     # Group claims by source document
     doc_claims: dict[str, dict] = {}  # doc_id -> {predicates: set, type: str, title: str}
