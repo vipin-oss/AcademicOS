@@ -297,6 +297,92 @@ if (-not $py) {
 }
 
 # ---------------------------------------------------------------------------
+# 16. Redirect-following: the real Windows failure mode (GET / -> 307 -> /login)
+# ---------------------------------------------------------------------------
+Write-Host "[16] Redirect-following (307 -> /login -> 200 + __next)" -ForegroundColor Cyan
+$redirectServerSource = @'
+#!/usr/bin/env python3
+import sys, http.server, socketserver
+# Mimics the Next.js auth middleware: GET / -> 307 -> /login ; /login -> 200 + __next.
+port = 3000
+args = sys.argv[1:]
+if "--port" in args:
+    port = int(args[args.index("--port") + 1])
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/":
+            body = b"http://localhost:%d/login" % port
+            self.send_response(307)
+            self.send_header("Location", "/login")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/login":
+            body = b'<!DOCTYPE html><html><head><title>AcademicOS</title></head><body><div id="__next">login</div></body></html>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *a):
+        pass
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(("127.0.0.1", port), Handler).serve_forever()
+'@
+$py = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
+if (-not $py) {
+    Write-Host "  SKIP  python3 not available" -ForegroundColor Yellow
+} else {
+    $tmpR = Join-Path ([System.IO.Path]::GetTempPath()) ("academicos-redir-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tmpR | Out-Null
+    $srv = Join-Path $tmpR "redir_next.py"
+    Set-Content -LiteralPath $srv -Value $redirectServerSource -Encoding utf8
+    & chmod +x $srv 2>$null
+    $rport = 32011
+    $proc = Start-Process -FilePath $py -ArgumentList @($srv, "--port", [string]$rport) -PassThru
+    try {
+        Start-Sleep -Milliseconds 700
+        # A single GET / returns 307; the probe must FOLLOW it to /login.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $ok = Test-FrontendHttp -Hostname "127.0.0.1" -Port $rport -Marker "__next"
+        $sw.Stop()
+        Assert-True ($ok -is [bool]) "returns exactly [bool]"
+        Assert-Equal $true $ok "follows 307 -> /login and finds __next (the real-Windows bug)"
+        Assert-True ($sw.Elapsed.TotalSeconds -lt 3) "detects quickly (no 120s stall)"
+
+        # Wait-FrontendReady also detects the redirecting frontend.
+        $ready = Wait-FrontendReady -StartPort $rport -PortSpan 0 -Marker "__next" -Attempts 3 -SleepSeconds 1 -Hostname "127.0.0.1"
+        Assert-Equal $rport $ready "Wait-FrontendReady returns the redirecting port"
+    } finally {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tmpR -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 17. netstat -ano PID parsing (frontend.pid ownership fallback)
+# ---------------------------------------------------------------------------
+Write-Host "[17] netstat -ano PID parsing (Get-NetstatListenerPid)" -ForegroundColor Cyan
+$netstatLines = @(
+    "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1234",
+    "  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       29160",
+    "  TCP    127.0.0.1:8000         0.0.0.0:0              LISTENING       5512",
+    "  TCP    [::1]:3000             [::]:0                 LISTENING       29160",
+    "  TCP    127.0.0.1:30000        0.0.0.0:0              LISTENING       9999",
+    "  TCP    127.0.0.1:5330         10.0.0.5:443           ESTABLISHED     7777"
+)
+Assert-Equal 29160 (Get-NetstatListenerPid -Port 3000 -NetstatLines $netstatLines) "finds the node listener PID on 3000"
+Assert-Equal 5512 (Get-NetstatListenerPid -Port 8000 -NetstatLines $netstatLines) "finds the backend PID on 8000"
+Assert-Equal 1234 (Get-NetstatListenerPid -Port 135 -NetstatLines $netstatLines) "finds PID on 135"
+Assert-Equal 0 (Get-NetstatListenerPid -Port 9999 -NetstatLines $netstatLines) "no listener -> 0"
+Assert-Equal 0 (Get-NetstatListenerPid -Port 300 -NetstatLines $netstatLines) "port 300 does not false-match 30000"
+Assert-Equal 0 (Get-NetstatListenerPid -Port 5330 -NetstatLines $netstatLines) "ESTABLISHED is not a listener"
+
+# ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host ("RESULT: {0} passed, {1} failed" -f $script:Pass, $script:Fail) -ForegroundColor Cyan
 if ($script:Fail -gt 0) { exit 1 } else { exit 0 }
