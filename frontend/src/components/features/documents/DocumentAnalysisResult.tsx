@@ -6,6 +6,7 @@
  */
 import { Loader2, CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles } from "lucide-react";
 
+import { ConflictResolution } from "./ConflictResolution";
 import type {
   DocumentAnalysisField,
   DocumentAnalysisResponse,
@@ -16,7 +17,9 @@ export interface DocumentAnalysisResultProps {
   analysis: DocumentAnalysisResponse | null;
   analyzing: boolean;
   fileName?: string;
+  documentId?: string;
   onRetryEnrichment?: () => void;
+  onConflictResolved?: () => void;
 }
 
 const MODULE_LABELS: Record<string, string> = {
@@ -163,7 +166,9 @@ export function DocumentAnalysisResult({
   analysis,
   analyzing,
   fileName,
+  documentId,
   onRetryEnrichment,
+  onConflictResolved,
 }: DocumentAnalysisResultProps) {
   if (analyzing) {
     return (
@@ -280,12 +285,21 @@ export function DocumentAnalysisResult({
         </div>
       )}
 
-      {/* Conflicts */}
-      {analysis.conflicts && analysis.conflicts.length > 0 && (
-        <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-xs">
-          <div className="font-medium text-red-800 mb-1">Conflicting information found:</div>
+      {/* Conflicts — interactive resolution */}
+      {analysis.conflicts && analysis.conflicts.length > 0 && documentId && (
+        <ConflictResolution
+          conflicts={analysis.conflicts}
+          documentId={documentId}
+          onResolved={onConflictResolved}
+        />
+      )}
+
+      {/* Conflicts — fallback display if no documentId */}
+      {analysis.conflicts && analysis.conflicts.length > 0 && !documentId && (
+        <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs">
+          <div className="font-medium text-amber-800 mb-1">Conflicting information found:</div>
           {analysis.conflicts.map((c, i) => (
-            <div key={i} className="text-red-700">
+            <div key={i} className="text-amber-700">
               {friendlyFieldName(c.predicate_id)}: existing &quot;{String(c.existing_value)}&quot; vs new &quot;{String(c.extracted_value)}&quot;
             </div>
           ))}

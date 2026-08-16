@@ -159,6 +159,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
             analysis={analysis}
             analyzing={analyzing}
             fileName={result?.file_name}
+            documentId={result?.id}
             onRetryEnrichment={handleRetry}
           />
           {result && analysis && (

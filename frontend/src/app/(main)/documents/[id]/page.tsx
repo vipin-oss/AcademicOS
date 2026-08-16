@@ -275,6 +275,7 @@ export default function DocumentDetailsPage() {
                       analysis={analysis}
                       analyzing={enrichmentStatus === "running"}
                       fileName={document.file_name}
+                      documentId={document.id}
                       onRetryEnrichment={retryEnrichment}
                     />
                     {!analysis && enrichmentStatus === "not_started" && (
