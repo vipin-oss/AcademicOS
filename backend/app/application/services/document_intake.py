@@ -424,7 +424,10 @@ class DocumentIntakeService:
                     return (v, line.strip(), kind)
             return (None, "", kind)
         if kind == "number":
-            lines = _label_lines(text, spec.synonyms) or text.splitlines()
+            lines = _label_lines(text, spec.synonyms)
+            # Only scan all lines if no synonyms specified (unstructured extraction)
+            if not lines and not spec.synonyms:
+                lines = text.splitlines()
             for line in lines:
                 v = normalize_number(line)
                 if v is not None:
@@ -476,6 +479,9 @@ _STOP_VALUES: set[str] = {
     "report", "minutes", "agenda", "schedule", "timetable", "syllabus",
 }
 
+# Values starting with these words are likely heading fragments, not entity values
+_HEADING_PREFIXES = {"of", "the", "and", "for", "in", "on", "at", "to", "from", "by"}
+
 def _extract_label_value(text: str, synonyms: tuple[str, ...]) -> str | None:
     """Find "Label: value" or "Label value" where label matches a synonym."""
     syn = {s.casefold() for s in synonyms}
@@ -497,6 +503,10 @@ def _extract_label_value(text: str, synonyms: tuple[str, ...]) -> str | None:
             val = rest.strip()
             # Reject generic document headings as entity values
             if val.casefold() in _STOP_VALUES:
+                continue
+            # Reject values starting with common prepositions (heading fragments like "OF DELHI")
+            first_word = val.split()[0].lower() if val.split() else ""
+            if first_word in _HEADING_PREFIXES:
                 continue
             return val
     return None
