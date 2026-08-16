@@ -7,6 +7,7 @@
  * database backup — no module records are touched.
  */
 import { useRef, useState } from "react";
+import Link from "next/link";
 
 import { toErrorMessage } from "@/lib/api/client";
 import { exportSettings, importSettings, resetSettings } from "@/lib/api/settings";
@@ -169,6 +170,11 @@ export function BackupSection({
         Import expects a file produced by “Export settings” (a JSON document with a sections map).
         Reset restores factory defaults for every section.
       </p>
+      <div className="mt-3">
+        <Link href="/settings/export" className="text-sm font-medium text-[var(--accent)] hover:underline">
+          Export your academic data (documents, publications, projects...) →
+        </Link>
+      </div>
       <span
         role="status"
         aria-live="polite"
