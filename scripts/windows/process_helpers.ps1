@@ -113,23 +113,106 @@ function Start-FrontendDevServer {
 }
 
 # ---------------------------------------------------------------------------
-# True when http://<host>:<port>/ answers HTTP 200 AND the body contains the
-# marker (Next.js always renders its app inside <div id="__next">, so
-# "__next" is a reliable "the dev server is actually serving" signal).
+# One raw-socket HTTP GET. Returns the full raw response text (headers + body),
+# or $null on connect/read failure. Deterministic on PS 5.1 and PS 7: no
+# Invoke-WebRequest (no proxy, no progress bar, no unreliable -TimeoutSec), an
+# explicit connect timeout (BeginConnect + WaitOne) and read timeout, and
+# `Connection: close` so a compliant server closes after responding (the read
+# loop then terminates on EOF).
+# ---------------------------------------------------------------------------
+function _Send-HttpRequest {
+    param(
+        [string]$Hostname,
+        [int]$Port,
+        [string]$Path,
+        [int]$TimeoutSec
+    )
+    $timeoutMs = [Math]::Max(250, [int]($TimeoutSec * 1000))
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect($Hostname, $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne($timeoutMs, $false)) { return $null }
+        $client.EndConnect($async)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = $timeoutMs
+        $req = "GET $Path HTTP/1.1`r`nHost: ${Hostname}:${Port}`r`nUser-Agent: AcademicOS-startup`r`nAccept: */*`r`nConnection: close`r`n`r`n"
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($req)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $buffer = New-Object "System.Byte[]" 8192
+        $ms = New-Object System.IO.MemoryStream
+        while ($true) {
+            $n = $stream.Read($buffer, 0, $buffer.Length)
+            if ($n -le 0) { break }
+            $ms.Write($buffer, 0, $n)
+            if ($ms.Length -ge 262144) { break }   # 256 KiB cap
+        }
+        return [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+    } catch {
+        return $null
+    } finally {
+        $client.Close()
+    }
+}
+
+# Parse the HTTP status code from a raw response (e.g. "HTTP/1.1 307 ...").
+# Returns the integer status, or -1 when the status line is malformed.
+function _Get-HttpStatus([string]$Raw) {
+    $end = $Raw.IndexOf("`r`n")
+    if ($end -lt 0) { $end = $Raw.IndexOf("`n") }
+    $line = if ($end -ge 0) { $Raw.Substring(0, $end) } else { $Raw }
+    $parts = $line -split " "
+    if ($parts.Count -lt 2) { return -1 }
+    try { return [int]$parts[1] } catch { return -1 }
+}
+
+# Extract the Location header (case-insensitive) from a raw response.
+# Returns "" when absent.
+function _Get-HttpLocation([string]$Raw) {
+    $headEnd = $Raw.IndexOf("`r`n`r`n")
+    $head = if ($headEnd -ge 0) { $Raw.Substring(0, $headEnd) } else { $Raw }
+    foreach ($line in ($head -split "`r`n")) {
+        $colon = $line.IndexOf(":")
+        if ($colon -gt 0) {
+            $name = $line.Substring(0, $colon).Trim()
+            if ($name -ieq "location") { return $line.Substring($colon + 1).Trim() }
+        }
+    }
+    return ""
+}
+
+# Turn a Location header into a request path on the SAME host:port we are
+# probing (e.g. "http://localhost:3000/login" -> "/login"; "/login" ->
+# "/login"; "login" -> "/login"). Ignores the Location's host so a
+# "localhost" vs "127.0.0.1" mismatch never breaks the probe.
+function _Resolve-RedirectPath([string]$Location) {
+    $loc = $Location.Trim()
+    if ($loc -eq "") { return $null }
+    if ($loc -match "^https?://") {
+        $withoutScheme = $loc -replace "^https?://", ""
+        $slash = $withoutScheme.IndexOf("/")
+        if ($slash -lt 0) { return "/" }
+        return $withoutScheme.Substring($slash)
+    }
+    if ($loc.StartsWith("/")) { return $loc }
+    return "/" + $loc
+}
+
+# ---------------------------------------------------------------------------
+# True when http://<host>:<port>/ serves the AcademicOS frontend: the request
+# chain must end in an HTTP 2xx whose body contains the Next.js marker
+# (Next.js always renders inside <div id="__next">).
 #
-# WHY RAW SOCKETS (not Invoke-WebRequest):
-#   Windows PowerShell 5.1's Invoke-WebRequest renders a progress bar and goes
-#   through the system proxy, and its -TimeoutSec does NOT reliably bound a
-#   request whose server has accepted the connection but is not yet responding
-#   (Next.js dev blocks the first GET / for 5-30s while it compiles). A raw
-#   TcpClient probe with an explicit connect timeout (BeginConnect + WaitOne)
-#   and read timeout (NetworkStream.ReadTimeout) is deterministic, fast, and
-#   behaves identically on Windows PowerShell 5.1 and PowerShell 7.
+# FOLLOWS REDIRECTS: the Next.js auth middleware answers "GET /" with
+# "307 -> /login"; a single GET / (or accepting only 200) therefore returns a
+# FALSE negative even though the frontend is healthy. This follows the 3xx
+# Location (up to MaxRedirects hops) and checks the FINAL 2xx response body —
+# the same end-to-end result the user's Invoke-WebRequest sees, but on a
+# deterministic raw socket with no proxy/progress-bar/timeout surprises.
 #
 # Guarantees:
 #   - returns EXACTLY ONE [bool] (never null / array / extra output);
 #   - never throws (every failure path returns [bool]$false);
-#   - only accepts a real HTTP 200 whose body contains the marker, so an
+#   - only accepts a final 2xx whose body contains the marker, so an
 #     unrelated service that returns 200 is NOT mistaken for the frontend.
 # ---------------------------------------------------------------------------
 function Test-FrontendHttp {
@@ -137,42 +220,29 @@ function Test-FrontendHttp {
         [string]$Hostname = "127.0.0.1",
         [int]$Port = 3000,
         [string]$Marker = "__next",
-        [int]$TimeoutSec = 2
+        [int]$TimeoutSec = 2,
+        [int]$MaxRedirects = 3
     )
     if ([string]::IsNullOrWhiteSpace($Hostname) -or $Port -le 0) { return [bool]$false }
-    $timeoutMs = [Math]::Max(250, [int]($TimeoutSec * 1000))
-    $client = New-Object System.Net.Sockets.TcpClient
-    try {
-        $async = $client.BeginConnect($Hostname, $Port, $null, $null)
-        if (-not $async.AsyncWaitHandle.WaitOne($timeoutMs, $false)) { return [bool]$false }
-        $client.EndConnect($async)
-        $stream = $client.GetStream()
-        $stream.ReadTimeout = $timeoutMs
-        # HTTP/1.1 with Connection: close so the server closes after the
-        # response (the read loop below then terminates on EOF). No
-        # Accept-Encoding is sent, so the server must NOT gzip the body.
-        $req = "GET / HTTP/1.1`r`nHost: ${Hostname}:${Port}`r`nUser-Agent: AcademicOS-startup`r`nAccept: */*`r`nConnection: close`r`n`r`n"
-        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes($req)
-        $stream.Write($reqBytes, 0, $reqBytes.Length)
-        $buffer = New-Object -TypeName 'System.Byte[]' -ArgumentList 8192
-        $ms = New-Object System.IO.MemoryStream
-        while ($true) {
-            $n = $stream.Read($buffer, 0, $buffer.Length)
-            if ($n -le 0) { break }
-            $ms.Write($buffer, 0, $n)
-            if ($ms.Length -ge 131072) { break }   # 128 KiB cap
+    $path = "/"
+    for ($hop = 0; $hop -le $MaxRedirects; $hop++) {
+        $raw = _Send-HttpRequest -Hostname $Hostname -Port $Port -Path $path -TimeoutSec $TimeoutSec
+        if ($null -eq $raw) { return [bool]$false }
+        $status = _Get-HttpStatus $raw
+        if ($status -lt 0) { return [bool]$false }
+        if ($status -ge 300 -and $status -lt 400) {
+            $loc = _Get-HttpLocation $raw
+            if ([string]::IsNullOrWhiteSpace($loc)) { return [bool]$false }
+            $path = _Resolve-RedirectPath $loc
+            if ($null -eq $path) { return [bool]$false }
+            continue
         }
-        $text = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
-    } catch {
+        if ($status -lt 200 -or $status -ge 300) { return [bool]$false }
+        # Final 2xx: require the Next.js marker in the response.
+        if ($raw.IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return [bool]$true }
         return [bool]$false
-    } finally {
-        $client.Close()
     }
-    # Status line must be an HTTP 200 (rejects 404/500/redirects).
-    if (-not ($text.StartsWith("HTTP/1.0 200") -or $text.StartsWith("HTTP/1.1 200"))) { return [bool]$false }
-    # Body must contain the Next.js marker (rejects unrelated HTTP services).
-    if ($text.IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return [bool]$false }
-    return [bool]$true
+    return [bool]$false   # too many redirects
 }
 
 # ---------------------------------------------------------------------------
@@ -196,6 +266,31 @@ function Wait-FrontendReady {
             }
         }
         Start-Sleep -Seconds $SleepSeconds
+    }
+    return [int]0
+}
+
+# ---------------------------------------------------------------------------
+# Parse `netstat -ano` output for the PID of the process LISTENING on $Port.
+# Returns the PID, or 0 when the port is not listening. This is the reliable
+# fallback for PID discovery when Get-NetTCPConnection comes back empty in a
+# non-elevated session (the real-Windows frontend.pid failure). Pure function
+# (takes the netstat lines as input) so it is unit-testable.
+#
+#   TCP    127.0.0.1:3000    0.0.0.0:0    LISTENING    29160
+#   TCP    [::1]:3000        [::]:0       LISTENING    29160
+# ---------------------------------------------------------------------------
+function Get-NetstatListenerPid {
+    param(
+        [int]$Port,
+        [string[]]$NetstatLines
+    )
+    foreach ($line in $NetstatLines) {
+        if ($line -match "^\s*TCP\s+(\S+)\s+\S+\s+LISTENING\s+(\d+)\s*$") {
+            if ($Matches[1].EndsWith(":$Port")) {
+                return [int]$Matches[2]
+            }
+        }
     }
     return [int]0
 }

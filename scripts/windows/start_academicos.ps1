@@ -82,9 +82,20 @@ function Wait-HttpOk([string]$Uri, [int]$Attempts, [int]$SleepSec, [string]$Mark
 }
 
 function Get-ListenerPid([int]$Port) {
+    # 1. Get-NetTCPConnection (preferred).
     try {
         $c = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($c) { return $c.OwningProcess }
+        if ($c -and $c.OwningProcess) { return [int]$c.OwningProcess }
+    } catch { }
+    # 2. netstat -ano fallback. Get-NetTCPConnection can come back empty in a
+    # non-elevated session (or miss certain listeners) even when the port is
+    # genuinely serving — netstat reads the connection table through the older,
+    # more permissive API and reliably reports the owning PID. This is what
+    # makes frontend.pid get the actual node.exe listener PID.
+    try {
+        $out = netstat -ano 2>$null
+        $pid2 = Get-NetstatListenerPid -Port $Port -NetstatLines $out
+        if ($pid2 -gt 0) { return [int]$pid2 }
     } catch { }
     return 0
 }
