@@ -35,12 +35,12 @@ export interface DocumentFilters {
 }
 
 export interface CreateDocumentPayload {
-  title: string;
+  title?: string;
   object_id?: string | null;
-  document_type: DocumentTypeValue;
+  document_type?: DocumentTypeValue;
   description?: string;
   tags?: string[];
-  uploaded_by: string;
+  uploaded_by?: string;
   /** The selected file (sent as multipart/form-data). */
   file: File;
 }
@@ -116,12 +116,12 @@ export function uploadDocument(
   } = {},
 ): Promise<DocumentResponse> {
   const formData = new FormData();
-  formData.append("title", payload.title);
+  if (payload.title) formData.append("title", payload.title);
   if (payload.object_id) formData.append("object_id", payload.object_id);
-  formData.append("document_type", payload.document_type);
+  if (payload.document_type) formData.append("document_type", payload.document_type);
   if (payload.description) formData.append("description", payload.description);
-  formData.append("tags", JSON.stringify(payload.tags ?? []));
-  formData.append("uploaded_by", payload.uploaded_by);
+  if (payload.tags) formData.append("tags", JSON.stringify(payload.tags));
+  if (payload.uploaded_by) formData.append("uploaded_by", payload.uploaded_by);
   formData.append("file", payload.file, payload.file.name);
 
   return new Promise<DocumentResponse>((resolve, reject) => {

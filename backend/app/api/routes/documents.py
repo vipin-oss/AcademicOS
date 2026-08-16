@@ -20,6 +20,7 @@ import mimetypes
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -64,6 +65,98 @@ from app.infrastructure.storage.local import LocalFileStorage
 import logging
 
 _log = logging.getLogger(__name__)
+
+
+def _infer_doc_type(file_name: str, mime_type: str) -> str:
+    """Infer document type from filename extension and MIME type."""
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    ext_map = {
+        "pdf": "pdf", "doc": "docx", "docx": "docx",
+        "xls": "xlsx", "xlsx": "xlsx",
+        "ppt": "pptx", "pptx": "pptx",
+        "txt": "txt", "md": "txt", "csv": "txt",
+        "zip": "zip", "7z": "zip", "rar": "zip",
+        "png": "image", "jpg": "image", "jpeg": "image",
+        "gif": "image", "webp": "image", "svg": "image", "bmp": "image",
+        "mp4": "video", "mov": "video", "webm": "video",
+    }
+    if ext in ext_map:
+        return ext_map[ext]
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type.startswith("video/"):
+        return "video"
+    if mime_type == "application/pdf":
+        return "pdf"
+    if "spreadsheet" in mime_type or "excel" in mime_type:
+        return "xlsx"
+    if "presentation" in mime_type or "powerpoint" in mime_type:
+        return "pptx"
+    if "word" in mime_type:
+        return "docx"
+    return "unknown"
+
+
+def _enrich_document_background(document_id: str, user_id: str) -> None:
+    """Background task: enrich a document with AI after upload.
+
+    Runs asynchronously after the upload response is sent to the user.
+    Uses a new database session (background tasks run after the request session closes).
+    Errors are logged but never propagate — the upload already succeeded.
+    """
+    try:
+        from app.infrastructure.db.session import SessionLocal
+        from app.api.dependencies.ai import get_ai_core
+        from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+        from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+        from app.application.services.document_annotation_service import DocumentAnnotationService
+        from app.application.use_cases.ai.enrich_document import EnrichDocumentUseCase
+        from app.infrastructure.permissions.object_acl import ObjectPermissionEvaluator
+        from app.domain.value_objects.enums import ObjectType, ObjectStatus
+        from app.domain.value_objects.object_id import ObjectId
+
+        db = SessionLocal()
+        try:
+            repo = SQLAlchemyObjectRepository(db)
+            try:
+                core = get_ai_core()
+            except Exception:
+                _log.debug("Background enrichment skipped: AI Core not available.")
+                return
+
+            if not core.config.enabled or not core.config.feature_flags.get("enrichment", False):
+                return
+
+            annotation_service = DocumentAnnotationService(
+                repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db)
+            )
+            evaluator = ObjectPermissionEvaluator()
+
+            user_obj = UniversalObject.create(
+                object_type=ObjectType.USER,
+                title="background",
+                created_by="system",
+                status=ObjectStatus.ACTIVE,
+                object_id=ObjectId(user_id) if user_id.startswith("obj:") else ObjectId(f"obj:user:{user_id}"),
+            )
+
+            use_case = EnrichDocumentUseCase(repo, annotation_service, evaluator, core)
+            try:
+                result = use_case.execute(document_id, user_obj, None)
+                if result.available:
+                    _log.info(
+                        "Background enrichment completed for %s: title=%r, tags=%s",
+                        document_id, result.title, result.tags,
+                    )
+                else:
+                    _log.debug("Background enrichment for %s: AI returned no results.", document_id)
+            except Exception as exc:
+                _log.debug("Background enrichment failed for %s: %s", document_id, exc)
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001 — never crash the background task
+        _log.debug("Background enrichment error for %s: %s", document_id, exc)
+
 
 router = APIRouter(prefix="/documents", tags=["documents"], dependencies=[Depends(get_current_user), Depends(require_object_acl())])
 
@@ -263,10 +356,11 @@ def create_document(
     storage: LocalFileStorage = Depends(get_storage),
     db: Session = Depends(get_db),
     *,
-    title: str = Form(...),
-    document_type: str = Form(...),
-    uploaded_by: str = Form(...),
+    bg_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    title: str | None = Form(None),
+    document_type: str | None = Form(None),
+    uploaded_by: str | None = Form(None),
     object_id: str | None = Form(None),
     description: str | None = Form(None),
     tags: str = Form("[]"),
@@ -280,6 +374,10 @@ def create_document(
         or mimetypes.guess_type(file_name)[0]
         or "application/octet-stream"
     )
+    # Auto-derive fields when not provided by the user.
+    auto_title = title if title and title.strip() else file_name.rsplit(".", 1)[0] if "." in file_name else file_name
+    auto_doc_type = document_type if document_type and document_type.strip() else _infer_doc_type(file_name, mime_type)
+    auto_uploaded_by = str(user.id)
     # V3 M11 (ADR-058): the canonical sync pipeline — hash + quarantine
     # decision run identically for every entry point.
     from app.application.services.document_pipeline import DocumentPipeline
@@ -289,9 +387,9 @@ def create_document(
         out = CreateDocumentUseCase(repo, storage).execute(
             CreateDocumentCommand(
                 input=to_create_input(
-                    title=title,
-                    document_type=document_type,
-                    uploaded_by=str(user.id),
+                    title=auto_title,
+                    document_type=auto_doc_type,
+                    uploaded_by=auto_uploaded_by,
                     file_name=file_name,
                     content=content,
                     mime_type=mime_type,
@@ -356,6 +454,16 @@ def create_document(
             file_name,
             exc_info=True,
         )
+    # Schedule background AI enrichment (non-blocking).
+    if decision.quarantine == "clean" and settings.ai_enabled:
+        try:
+            bg_tasks.add_task(
+                _enrich_document_background,
+                document_id=str(out.id),
+                user_id=str(user.id),
+            )
+        except Exception:  # noqa: BLE001 — enrichment scheduling must never fail the upload
+            _log.debug("Background enrichment scheduling skipped (not available).")
     return DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
 
 

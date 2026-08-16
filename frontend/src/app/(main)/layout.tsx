@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth/session";
+import { CommandPalette } from "@/components/features/search/CommandPalette";
 
 export default function MainLayout({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -27,5 +28,10 @@ export default function MainLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <CommandPalette />
+      {children}
+    </>
+  );
 }

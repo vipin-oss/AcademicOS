@@ -167,13 +167,14 @@ def test_upload_validation_errors(client):
     # invalid tags payload -> 422
     resp = _upload(client, data={"tags": "not-json"})
     assert resp.status_code == 422
-    # missing title -> 422 (FastAPI form validation)
+    # missing title -> now auto-derived from filename (201)
     resp = client.post(
         "/api/v1/documents",
-        data={"document_type": "pdf", "uploaded_by": "faculty:1"},
+        data={"document_type": "pdf"},
         files={"file": ("a.pdf", b"x", "application/pdf")},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    assert resp.json()["title"] == "a"  # auto-derived: filename without extension
     # link to a non-existent object -> 422
     resp = _upload(client, data={"object_id": "obj:course:NOPE"})
     assert resp.status_code == 422

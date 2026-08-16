@@ -1,6 +1,11 @@
-import { AiWorkspace } from "@/components/features/ai/AiWorkspace";
+"use client";
 
-/** Legacy deep link — consolidated into the unified AI workspace (M26). */
-export default function ChatPage() {
-  return <AiWorkspace initialMode="general" />;
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+/** Redirect /chat → /ai (unified assistant surface). */
+export default function ChatRedirect() {
+  const router = useRouter();
+  useEffect(() => { router.replace("/ai"); }, [router]);
+  return null;
 }
