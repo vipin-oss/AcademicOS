@@ -12,6 +12,10 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  Sparkles,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
@@ -22,6 +26,7 @@ import { CitationPanel } from "@/components/features/documents/CitationPanel";
 import { KgLinks } from "@/components/features/documents/KgLinks";
 import { DocumentPreview } from "@/components/features/documents/DocumentPreview";
 import { DocumentViewer } from "@/components/features/documents/DocumentViewer";
+import { DocumentAnalysisResult } from "@/components/features/documents/DocumentAnalysisResult";
 import { EmptyState } from "@/components/features/objects/EmptyState";
 import { DetailSkeleton } from "@/components/features/objects/LoadingSkeleton";
 import {
@@ -34,6 +39,7 @@ import { Spinner } from "@/components/features/objects/Spinner";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useDocument } from "@/hooks/useDocument";
 import { useDocumentDownload } from "@/hooks/useDocumentDownload";
+import { useAnalysisPolling } from "@/hooks/useAnalysisPolling";
 import { deleteDocument } from "@/lib/api/documents";
 import { toErrorMessage } from "@/lib/api/client";
 import { setFlash } from "@/lib/objects/flash";
@@ -64,8 +70,14 @@ export default function DocumentDetailsPage() {
   const { toast, show, dismiss } = useToast();
   const { download, downloadingId, error: downloadError } = useDocumentDownload();
 
-  // Surface download failures through the page toast (row/card surfaces
-  // render the error inline; here the actions bar stays compact).
+  // AI enrichment polling — polls while enrichment is running
+  const {
+    analysis,
+    enrichmentStatus,
+    retry: retryEnrichment,
+  } = useAnalysisPolling({ documentId, enabled: !!document });
+
+  // Surface download failures through the page toast
   useEffect(() => {
     if (downloadError) show("error", downloadError);
   }, [downloadError, show]);
@@ -255,6 +267,21 @@ export default function DocumentDetailsPage() {
 
                   <Section title="Metadata" className="lg:col-span-2">
                     <DocumentMetadata document={document} />
+                  </Section>
+
+                  {/* AI Enrichment Status — polls while processing */}
+                  <Section title="AI Analysis" className="lg:col-span-2">
+                    <DocumentAnalysisResult
+                      analysis={analysis}
+                      analyzing={enrichmentStatus === "running"}
+                      fileName={document.file_name}
+                      onRetryEnrichment={retryEnrichment}
+                    />
+                    {!analysis && enrichmentStatus === "not_started" && (
+                      <p className="mt-2 text-sm text-[var(--text-tertiary)]">
+                        AI analysis has not run yet. It will start automatically in the background.
+                      </p>
+                    )}
                   </Section>
 
                   <Section title="Linked Object">
