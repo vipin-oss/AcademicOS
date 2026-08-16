@@ -4,6 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import { Upload, CheckCircle2, Loader2 } from "lucide-react";
 import { toErrorMessage } from "@/lib/api/client";
 import { uploadDocument, type UploadProgress } from "@/lib/api/documents";
+import { analyzeDocument, type DocumentAnalysisResponse } from "@/lib/api/documentIntake";
+import { DocumentAnalysisResult } from "./DocumentAnalysisResult";
 import { cn } from "@/lib/utils";
 
 interface UploadResult {
@@ -14,14 +16,17 @@ interface UploadResult {
 }
 
 /**
- * Simple drag-and-drop upload component.
- * Only requires a file — all metadata is auto-derived.
+ * Simple drag-and-drop upload component with automatic document analysis.
+ * Uploads file, then runs intelligence analysis showing confidence, extracted
+ * fields, detected records, and any conflicts requiring review.
  */
 export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResult) => void }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [analysis, setAnalysis] = useState<DocumentAnalysisResponse | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,6 +38,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
       setUploading(true);
       setError(null);
       setResult(null);
+      setAnalysis(null);
       setProgress(0);
 
       try {
@@ -48,6 +54,18 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         };
         setResult(uploadResult);
         onUploaded?.(uploadResult);
+
+        // Trigger document intelligence analysis (async, non-blocking)
+        setAnalyzing(true);
+        try {
+          const analysisResult = await analyzeDocument(saved.id);
+          setAnalysis(analysisResult);
+        } catch {
+          // Analysis failure does not fail the upload
+          setAnalysis(null);
+        } finally {
+          setAnalyzing(false);
+        }
       } catch (err) {
         setError(toErrorMessage(err, "Upload failed. Please try again."));
       } finally {
@@ -107,7 +125,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         </div>
       )}
 
-      {result && (
+      {result && !analysis && !analyzing && (
         <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
           <div className="min-w-0 flex-1">
@@ -115,6 +133,11 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
             <p className="text-xs text-emerald-700">{result.document_type.toUpperCase()} · {result.file_name}</p>
           </div>
         </div>
+      )}
+
+      {/* Show document intelligence analysis with confidence */}
+      {(analysis || analyzing) && (
+        <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} />
       )}
 
       {error && (

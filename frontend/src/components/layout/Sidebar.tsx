@@ -2,23 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw } from "lucide-react";
+import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
-interface NavItem { id: string; label: string; icon: typeof Home; href: string; visible: boolean; }
+interface NavItem { id: string; label: string; icon: typeof Home; href: string; visible: boolean; custom?: boolean; }
+
+const AVAILABLE_MODULES = [
+  { id: "publications", label: "Publications", icon: BookOpen, href: "/publications" },
+  { id: "research", label: "Research", icon: Sparkles, href: "/research" },
+  { id: "teaching", label: "Teaching", icon: GraduationCap, href: "/teaching" },
+  { id: "committees", label: "Committees", icon: GraduationCap, href: "/committees" },
+  { id: "events", label: "Events", icon: GraduationCap, href: "/events" },
+  { id: "students", label: "Students", icon: GraduationCap, href: "/students" },
+  { id: "finance", label: "Finance", icon: GraduationCap, href: "/finance" },
+  { id: "faculty", label: "Faculty", icon: GraduationCap, href: "/faculty" },
+];
 
 const DEFAULT_NAV: NavItem[] = [
   { id: "home", label: "Home", icon: Home, href: "/", visible: true },
   { id: "docs", label: "Docs", icon: FileText, href: "/documents", visible: true },
   { id: "records", label: "Records", icon: BookOpen, href: "/records", visible: true },
   { id: "ai", label: "AI", icon: Sparkles, href: "/ai", visible: true },
-  { id: "publications", label: "Publications", icon: BookOpen, href: "/publications", visible: false },
-  { id: "research", label: "Research", icon: Sparkles, href: "/research", visible: false },
-  { id: "teaching", label: "Teaching", icon: GraduationCap, href: "/teaching", visible: false },
-  { id: "committees", label: "Committees", icon: GraduationCap, href: "/committees", visible: false },
-  { id: "events", label: "Events", icon: GraduationCap, href: "/events", visible: false },
-  { id: "students", label: "Students", icon: GraduationCap, href: "/students", visible: false },
 ];
 
 const STORAGE_KEY = "academicos-nav-config";
@@ -28,8 +33,18 @@ function loadNavConfig(): NavItem[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return DEFAULT_NAV;
-    const parsed = JSON.parse(stored) as { id: string; visible: boolean; order: number }[];
-    const merged = DEFAULT_NAV.map((item) => { const saved = parsed.find((s) => s.id === item.id); return saved ? { ...item, visible: saved.visible } : item; });
+    const parsed = JSON.parse(stored) as { id: string; label?: string; icon?: string; href?: string; visible: boolean; order: number; custom?: boolean }[];
+    // Merge with defaults + available modules
+    const allDefaults = [...DEFAULT_NAV, ...AVAILABLE_MODULES.map((m) => ({ ...m, visible: false }))];
+    const merged = allDefaults.map((item) => {
+      const saved = parsed.find((s) => s.id === item.id);
+      return saved ? { ...item, visible: saved.visible, custom: saved.custom } : item;
+    });
+    // Add custom items that don't match defaults
+    const customItems = parsed.filter((s) => s.custom && !allDefaults.find((d) => d.id === s.id));
+    for (const c of customItems) {
+      merged.push({ id: c.id, label: c.label ?? c.id, icon: FileText, href: c.href ?? "/", visible: c.visible, custom: true });
+    }
     const orderMap = new Map(parsed.map((s, i) => [s.id, s.order]));
     merged.sort((a, b) => (orderMap.get(a.id) ?? 99) - (orderMap.get(b.id) ?? 99));
     return merged;
@@ -38,7 +53,7 @@ function loadNavConfig(): NavItem[] {
 
 function saveNavConfig(items: NavItem[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.map((item, i) => ({ id: item.id, visible: item.visible, order: i }))));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.map((item, i) => ({ id: item.id, label: item.label, href: item.href, visible: item.visible, order: i, custom: item.custom }))));
 }
 
 export function Sidebar() {
@@ -48,6 +63,9 @@ export function Sidebar() {
   const [navItems, setNavItems] = useState<NavItem[]>(DEFAULT_NAV);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTabName, setNewTabName] = useState("");
+  const [newTabHref, setNewTabHref] = useState("/documents");
 
   useEffect(() => { setNavItems(loadNavConfig()); setMounted(true); }, []);
 
@@ -58,6 +76,22 @@ export function Sidebar() {
   }, []);
 
   const resetConfig = useCallback(() => { setNavItems(DEFAULT_NAV); saveNavConfig(DEFAULT_NAV); }, []);
+
+  const addCustomTab = useCallback(() => {
+    if (!newTabName.trim()) return;
+    const id = `custom-${Date.now()}`;
+    setNavItems((prev) => {
+      const next = [...prev, { id, label: newTabName.trim(), icon: FileText, href: newTabHref, visible: true, custom: true }];
+      saveNavConfig(next);
+      return next;
+    });
+    setNewTabName("");
+    setShowCreateForm(false);
+  }, [newTabName, newTabHref]);
+
+  const removeCustomTab = useCallback((id: string) => {
+    setNavItems((prev) => { const next = prev.filter((item) => item.id !== id); saveNavConfig(next); return next; });
+  }, []);
 
   const onDragStart = useCallback((index: number) => setDragIndex(index), []);
   const onDragOver = useCallback((e: React.DragEvent, index: number) => {
@@ -76,6 +110,11 @@ export function Sidebar() {
       return (
         <div key={item.id} draggable onDragStart={() => onDragStart(index)} onDragOver={(e) => onDragOver(e, index)} onDragEnd={onDragEnd} className={cn("flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors", !item.visible ? "opacity-40" : "", dragIndex === index ? "bg-[var(--accent-subtle)]" : "hover:bg-[var(--bg-hover)]")}>
           <GripVertical className="h-3.5 w-3.5 cursor-grab text-[var(--text-tertiary)]" /><Icon className="h-4 w-4 text-[var(--text-secondary)]" /><span className="flex-1 text-[var(--text-primary)]">{item.label}</span>
+          {item.custom && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); removeCustomTab(item.id); }} aria-label={`Remove ${item.label}`} className="rounded p-0.5 hover:bg-red-100 text-red-500">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button type="button" onClick={(e) => { e.stopPropagation(); toggleVisibility(item.id); }} aria-label={item.visible ? `Hide ${item.label}` : `Show ${item.label}`} className="rounded p-0.5 hover:bg-[var(--bg-hover)]">
             {item.visible ? <Eye className="h-3.5 w-3.5 text-[var(--text-tertiary)]" /> : <EyeOff className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />}
           </button>
@@ -108,7 +147,40 @@ export function Sidebar() {
       <aside className={cn("flex w-56 shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-5 transition-transform", "fixed inset-y-0 left-0 z-40 md:static md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
         <div className="mb-6 flex items-center gap-2 px-2"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent)] text-white"><GraduationCap className="h-5 w-5" /></div><span className="text-lg font-semibold text-[var(--text-primary)]">AcademicOS</span></div>
         <nav className="flex flex-1 flex-col gap-1">{visibleItems.map((item, i) => navLink(item, i))}</nav>
-        {customizing && <div className="border-t border-[var(--border-subtle)] pt-2"><button type="button" onClick={resetConfig} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]"><RotateCcw className="h-3 w-3" /> Reset to defaults</button></div>}
+        {customizing && (
+          <div className="border-t border-[var(--border-subtle)] pt-2 space-y-1">
+            {!showCreateForm ? (
+              <button type="button" onClick={() => setShowCreateForm(true)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--accent)] hover:bg-[var(--bg-hover)]">
+                <Plus className="h-3 w-3" /> Create custom tab
+              </button>
+            ) : (
+              <div className="space-y-2 px-3 py-2">
+                <input
+                  type="text"
+                  value={newTabName}
+                  onChange={(e) => setNewTabName(e.target.value)}
+                  placeholder="Tab name (e.g. My Research)"
+                  className="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs"
+                  onKeyDown={(e) => { if (e.key === "Enter") addCustomTab(); }}
+                />
+                <select
+                  value={newTabHref}
+                  onChange={(e) => setNewTabHref(e.target.value)}
+                  className="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs"
+                >
+                  {AVAILABLE_MODULES.map((m) => (
+                    <option key={m.id} value={m.href}>{m.label}</option>
+                  ))}
+                </select>
+                <div className="flex gap-1">
+                  <button type="button" onClick={addCustomTab} className="flex-1 rounded bg-[var(--accent)] px-2 py-1 text-xs text-white">Add</button>
+                  <button type="button" onClick={() => setShowCreateForm(false)} className="flex-1 rounded border border-[var(--border-subtle)] px-2 py-1 text-xs">Cancel</button>
+                </div>
+              </div>
+            )}
+            <button type="button" onClick={resetConfig} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]"><RotateCcw className="h-3 w-3" /> Reset to defaults</button>
+          </div>
+        )}
         <div className="mt-auto flex flex-col gap-1 border-t border-[var(--border-subtle)] pt-3">
           <button type="button" onClick={() => setCustomizing(!customizing)} className={cn("flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", customizing ? "bg-[var(--accent-subtle)] text-[var(--accent)]" : "text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]")}>{customizing ? "Done" : "Customize"}</button>
           <Link href="/settings" onClick={() => setMobileOpen(false)} className={cn("flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", isActive("/settings") ? "bg-[var(--accent-subtle)] text-[var(--accent)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]")}><Settings className="h-4 w-4" />Settings</Link>
