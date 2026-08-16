@@ -506,34 +506,29 @@ if (-not $frontendOk) {
     $logErr = Join-Path $tempRoot "academicos_frontend.err.log"
     # Windows-safe launch: resolve npm.cmd and run it via cmd.exe (never
     # `Start-Process -FilePath "npm"`, which fails with "%1 is not a valid
-    # Win32 application"). Start-FrontendDevServer guarantees the caller's
-    # working directory is restored even on failure.
+    # Win32 application"). Start-FrontendDevServer restores the caller's
+    # working directory even on failure.
     $npmCmd = Resolve-NpmCmd
+    $launchAttempted = $false
     if (-not $npmCmd) {
         Write-Fail "npm.cmd not found (npm is required to run the frontend). Install Node 18+ LTS and retry."
     } else {
         $null = Start-FrontendDevServer -NpmCmd $npmCmd -FrontendDir $frontendDir -Port $configuredPort -Hostname "127.0.0.1" -LogOut $logOut -LogErr $logErr
+        $launchAttempted = $true
     }
     # Wait for a Next.js server to come up; detect the actual port (next may
     # auto-increment if the requested one is taken).
-    for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        Start-Sleep -Seconds 2
-        for ($p = $FrontendDefaultPort; $p -le ($FrontendDefaultPort + 10); $p++) {
-            $r = Test-Http ("http://127.0.0.1:{0}" -f $p) 2
-            if ($r -and $r.Content -match "__next") {
-                $frontendPort = $p
-                $frontendOk = $true
-                break
-            }
+    if ($launchAttempted) {
+        $readyPort = Wait-FrontendReady -StartPort $configuredPort -PortSpan 10 -Marker "__next" -Attempts 60 -SleepSeconds 2 -Hostname "127.0.0.1"
+        if ($readyPort -gt 0) {
+            $frontendPort = $readyPort
+            $frontendOk = $true
+            $frontendPid = Get-ListenerPid $frontendPort
+            if ($frontendPid -gt 0) { $frontendOwned = $true }
+            Write-OK ("Frontend running on {0} (PID {1})" -f $frontendPort, $frontendPid)
+        } else {
+            Write-Fail ("Frontend failed to become reachable (see {0})" -f $logErr)
         }
-        if ($frontendOk) { break }
-    }
-    if ($frontendOk) {
-        $frontendPid = Get-ListenerPid $frontendPort
-        if ($frontendPid -gt 0) { $frontendOwned = $true }
-        Write-OK ("Frontend running on {0} (PID {1})" -f $frontendPort, $frontendPid)
-    } else {
-        Write-Fail ("Frontend failed to become reachable (see {0})" -f $logErr)
     }
 }
 if ($frontendOwned -and $frontendPid -gt 0) {

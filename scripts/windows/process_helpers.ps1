@@ -30,10 +30,17 @@ function Resolve-NpmCmd {
 # side effects). Returns a hashtable @{ FilePath; ArgumentList } or $null when
 # no npm command was supplied.
 #
-# - Windows (.cmd/.bat): FilePath = "cmd.exe", ArgumentList = a single quoted
-#   string  `/d /s /c "<npm.cmd>" run dev -- --hostname <h> --port <p>`  so the
-#   batch file runs regardless of Start-Process's UseShellExecute default and
-#   paths containing spaces are quoted correctly.
+# - Windows (.cmd/.bat): FilePath = "cmd.exe", ArgumentList = a command line of
+#   the form  `/d /s /c ""<npm.cmd>" run dev -- --hostname <h> --port <p>".
+#
+#   WHY THE OUTER QUOTES: with `cmd.exe /s /c`, the /s switch strips the FIRST
+#   and LAST quote on the line. A single pair around only the npm.cmd path
+#   (e.g.  /d /s /c "C:\Program Files\nodejs\npm.cmd" run dev ...)  gets BOTH
+#   quotes stripped by /s, so a path containing a space ("Program Files") then
+#   breaks and cmd.exe silently fails to run npm at all. Wrapping the WHOLE
+#   command in an outer quote pair makes /s strip the OUTER pair and PRESERVE
+#   the inner pair around the spaced path — exactly how a user's manual
+#   `npm run dev` resolves it.
 # - Non-Windows: FilePath = the npm binary, ArgumentList = `run dev -- ...`.
 # ---------------------------------------------------------------------------
 function Get-FrontendLaunchCommand {
@@ -47,7 +54,7 @@ function Get-FrontendLaunchCommand {
     if ($NpmCmd -match '\.(cmd|bat)$') {
         return @{
             FilePath     = "cmd.exe"
-            ArgumentList = "/d /s /c `"$NpmCmd`" $runArgs"
+            ArgumentList = '/d /s /c ""{0}" {1}"' -f $NpmCmd, $runArgs
         }
     }
     return @{
@@ -103,4 +110,51 @@ function Start-FrontendDevServer {
     } finally {
         Pop-Location
     }
+}
+
+# ---------------------------------------------------------------------------
+# True when http://<host>:<port>/ answers HTTP 200 and the body contains the
+# marker (Next.js always renders its app inside <div id="__next">, so
+# "__next" is a reliable "the dev server is actually serving" signal).
+# Never throws; a timeout / connection refusal / non-200 returns $false.
+# ---------------------------------------------------------------------------
+function Test-FrontendHttp {
+    param(
+        [string]$Hostname = "127.0.0.1",
+        [int]$Port = 3000,
+        [string]$Marker = "__next",
+        [int]$TimeoutSec = 2
+    )
+    try {
+        $r = Invoke-WebRequest -Uri ("http://{0}:{1}" -f $Hostname, $Port) -UseBasicParsing -TimeoutSec $TimeoutSec
+        if ($r.StatusCode -eq 200 -and ($r.Content -match $Marker)) { return $true }
+    } catch {
+        # connection refused / timeout / non-200 -> not ready yet
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
+# Poll a port range until the frontend dev server answers with the marker.
+# Returns the ready port, or 0 on timeout. Next.js dev may auto-increment the
+# port if the requested one is taken, hence the span.
+# ---------------------------------------------------------------------------
+function Wait-FrontendReady {
+    param(
+        [int]$StartPort = 3000,
+        [int]$PortSpan = 10,
+        [string]$Marker = "__next",
+        [int]$Attempts = 60,
+        [int]$SleepSeconds = 2,
+        [string]$Hostname = "127.0.0.1"
+    )
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        for ($p = $StartPort; $p -le ($StartPort + $PortSpan); $p++) {
+            if (Test-FrontendHttp -Hostname $Hostname -Port $p -Marker $Marker) {
+                return $p
+            }
+        }
+        Start-Sleep -Seconds $SleepSeconds
+    }
+    return 0
 }
