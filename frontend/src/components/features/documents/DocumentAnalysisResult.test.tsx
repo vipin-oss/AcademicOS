@@ -41,11 +41,11 @@ describe("DocumentAnalysisResult", () => {
 
   it("renders a detected conference with created record", () => {
     render(<DocumentAnalysisResult analysis={analysis()} analyzing={false} fileName="conference.pdf" />);
-    expect(screen.getByText(/Document analyzed/i)).toBeTruthy();
+    expect(screen.getByText(/What AcademicOS understood/i)).toBeTruthy();
     expect(screen.getAllByText(/conference/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/International Conference on Quantum Materials/)).toBeTruthy();
-    expect(screen.getByText(/Records detected/)).toBeTruthy();
-    expect(screen.getByText(/Source: conference\.pdf/)).toBeTruthy();
+    expect(screen.getByText(/Records created/i)).toBeTruthy();
+    expect(screen.getByText(/conference\.pdf/)).toBeTruthy();
   });
 
   it("shows review-required for conflicts", () => {
@@ -61,7 +61,7 @@ describe("DocumentAnalysisResult", () => {
         analyzing={false}
       />,
     );
-    expect(screen.getAllByText(/Review required/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Conflicting information found/i).length).toBeGreaterThan(0);
   });
 
   it("renders nothing when there is no analysis and not analyzing", () => {
@@ -96,13 +96,13 @@ describe("DocumentAnalysisResult", () => {
         analyzing={false}
       />,
     );
-    expect(screen.getByText(/AI-assisted/)).toBeTruthy();
+    expect(screen.getByText(/Yes/)).toBeTruthy();
     expect(screen.getByText(/New Delhi/)).toBeTruthy();
     expect(screen.getByText("AI")).toBeTruthy();
   });
 
-  it("shows deterministic extraction mode by default", () => {
+  it("shows AI assistance: No by default", () => {
     render(<DocumentAnalysisResult analysis={analysis()} analyzing={false} />);
-    expect(screen.getByText(/Deterministic/)).toBeTruthy();
+    expect(screen.getByText(/No/)).toBeTruthy();
   });
 });

@@ -8,29 +8,49 @@ import { TopHeader } from "@/components/layout/TopHeader";
 import { api } from "@/lib/api/client";
 import type { ListDocumentsResponse, DocumentResponse } from "@/types";
 
-interface PendingConfirmation {
-  claim_id: string;
-  predicate_id: string;
-  value_schema: string;
-  source_document_id: string;
-  fact_confidence: number | null;
-  tier: string;
+interface PendingItem {
+  id: string;
+  label: string;
+  sourceDocumentId: string;
+  confidence: number | null;
 }
 
 interface MissingItem {
-  record_id: string;
-  record_type: string;
-  record_title: string;
-  missing_field: string;
-  predicate_id: string;
-  why_it_matters: string;
-  source_document_id: string | null;
+  id: string;
+  recordTitle: string;
+  missingField: string;
+  whyItMatters: string;
+  documentId: string | null;
+}
+
+/** Convert predicate_id to human-readable label */
+function friendlyFieldName(predicateId: string): string {
+  const map: Record<string, string> = {
+    publication_title: "Title",
+    publication_year: "Year",
+    journal_name: "Journal",
+    authors: "Authors",
+    doi: "DOI",
+    conference_name: "Conference",
+    venue: "Venue",
+    funding_agency: "Funding Agency",
+    principal_investigator: "Principal Investigator",
+    sanctioned_amount: "Amount",
+    project_title: "Project Title",
+    recipient: "Recipient",
+    certificate_number: "Certificate Number",
+    manuscript_id: "Manuscript ID",
+    acceptance_date: "Acceptance Date",
+    issuing_authority: "Issuing Authority",
+    event_title: "Title",
+  };
+  return map[predicateId] ?? predicateId.replace(/_/g, " ");
 }
 
 export default function HomePage() {
   const [recentDocs, setRecentDocs] = useState<DocumentResponse[]>([]);
   const [totalObjects, setTotalObjects] = useState(0);
-  const [pendingItems, setPendingItems] = useState<PendingConfirmation[]>([]);
+  const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [missingItems, setMissingItems] = useState<MissingItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,27 +58,42 @@ export default function HomePage() {
     Promise.all([
       api.get<ListDocumentsResponse>("/documents", { query: { page_size: 5 } }),
       api.get<{ total_count: number }>("/objects", { query: { page_size: 1 } }),
-      api.get<PendingConfirmation[]>("/confirmations/pending", { query: { page_size: 5 } }).catch(() => []),
-      api.get<MissingItem[]>("/missing-info", { query: { limit: 5 } }).catch(() => []),
+      api.get<any[]>("/confirmations/pending", { query: { page_size: 5 } }).catch(() => []),
+      api.get<any[]>("/missing-info", { query: { limit: 5 } }).catch(() => []),
     ]).then(([docs, objects, pending, missing]) => {
       setRecentDocs(docs.items ?? []);
       setTotalObjects(objects.total_count ?? 0);
-      setPendingItems(Array.isArray(pending) ? pending : []);
-      setMissingItems(Array.isArray(missing) ? missing : []);
+      setPendingItems(
+        (Array.isArray(pending) ? pending : []).map((item: any) => ({
+          id: item.claim_id,
+          label: `${friendlyFieldName(item.predicate_id)}: ${String(item.value_schema)}`,
+          sourceDocumentId: item.source_document_id,
+          confidence: item.fact_confidence,
+        }))
+      );
+      setMissingItems(
+        (Array.isArray(missing) ? missing : []).map((item: any) => ({
+          id: `${item.record_id}-${item.predicate_id}`,
+          recordTitle: item.record_title,
+          missingField: friendlyFieldName(item.predicate_id),
+          whyItMatters: item.why_it_matters,
+          documentId: item.source_document_id,
+        }))
+      );
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const handleApprove = async (claimId: string) => {
     try {
       await api.post(`/confirmations/${claimId}/approve`, {});
-      setPendingItems((prev) => prev.filter((item) => item.claim_id !== claimId));
+      setPendingItems((prev) => prev.filter((item) => item.id !== claimId));
     } catch { /* ignore */ }
   };
 
   const handleReject = async (claimId: string) => {
     try {
       await api.post(`/confirmations/${claimId}/reject`, {});
-      setPendingItems((prev) => prev.filter((item) => item.claim_id !== claimId));
+      setPendingItems((prev) => prev.filter((item) => item.id !== claimId));
     } catch { /* ignore */ }
   };
 
@@ -95,7 +130,7 @@ export default function HomePage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-6">
-              {/* Review Queue — attention signals */}
+              {/* Needs Your Attention */}
               {pendingItems.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50">
                   <div className="flex items-center justify-between border-b border-amber-200 px-5 py-4">
@@ -107,20 +142,18 @@ export default function HomePage() {
                   </div>
                   <div className="divide-y divide-amber-200">
                     {pendingItems.slice(0, 5).map((item) => (
-                      <div key={item.claim_id} className="flex items-center gap-3 px-5 py-3">
+                      <div key={item.id} className="flex items-center gap-3 px-5 py-3">
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-amber-900">
-                            {item.predicate_id.replace(/_/g, " ")}: {String(item.value_schema)}
-                          </p>
+                          <p className="truncate text-sm font-medium text-amber-900">{item.label}</p>
                           <p className="text-xs text-amber-700">
-                            Confidence: {item.fact_confidence != null ? `${Math.round(item.fact_confidence * 100)}%` : "unknown"} · Tier: {item.tier}
+                            {item.confidence != null ? `Confidence: ${Math.round(item.confidence * 100)}%` : ""}
                           </p>
                         </div>
                         <div className="flex items-center gap-1">
-                          <button type="button" onClick={() => void handleApprove(item.claim_id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Approve">
+                          <button type="button" onClick={() => void handleApprove(item.id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Approve">
                             <CheckCircle2 className="h-4 w-4" />
                           </button>
-                          <button type="button" onClick={() => void handleReject(item.claim_id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Reject">
+                          <button type="button" onClick={() => void handleReject(item.id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Reject">
                             <XCircle className="h-4 w-4" />
                           </button>
                         </div>
@@ -130,7 +163,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* Missing Information */}
+              {/* Incomplete Records */}
               {missingItems.length > 0 && (
                 <div className="rounded-xl border border-orange-200 bg-orange-50">
                   <div className="flex items-center justify-between border-b border-orange-200 px-5 py-4">
@@ -141,19 +174,19 @@ export default function HomePage() {
                     <span className="rounded-full bg-orange-200 px-2 py-0.5 text-xs font-medium text-orange-800">{missingItems.length} items</span>
                   </div>
                   <div className="divide-y divide-orange-200">
-                    {missingItems.slice(0, 5).map((item, i) => (
+                    {missingItems.slice(0, 5).map((item) => (
                       <Link
-                        key={`${item.record_id}-${item.predicate_id}-${i}`}
-                        href={`/documents/${item.source_document_id ?? item.record_id}`}
+                        key={item.id}
+                        href={`/documents/${item.documentId ?? ""}`}
                         className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-orange-100"
                       >
                         <AlertTriangle className="h-4 w-4 shrink-0 text-orange-500" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-orange-900">
-                            {item.missing_field.replace(/_/g, " ")} missing
+                            {item.missingField} missing
                           </p>
                           <p className="text-xs text-orange-700">
-                            {item.record_title} · {item.why_it_matters}
+                            {item.recordTitle} · {item.whyItMatters}
                           </p>
                         </div>
                         <ArrowRight className="h-3.5 w-3.5 text-orange-400" />

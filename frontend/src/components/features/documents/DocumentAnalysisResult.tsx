@@ -1,12 +1,8 @@
 "use client";
 
 /**
- * Document-intelligence result panel (ADR-068, enhanced Revision #7).
- *
- * Renders the compact post-upload analysis the user sees after uploading a
- * document: detected type + confidence, extracted fields with source and
- * confidence, enrichment status, and which actual domain records were created.
- * Reuses the app design tokens.
+ * Document-intelligence result panel.
+ * Shows what AcademicOS understood about a document in professor-friendly language.
  */
 import { Loader2, CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles } from "lucide-react";
 
@@ -35,13 +31,36 @@ const MODULE_LABELS: Record<string, string> = {
   general_document: "Documents",
 };
 
+/** Convert predicate_id to professor-friendly label */
+function friendlyFieldName(predicateId: string): string {
+  const map: Record<string, string> = {
+    publication_title: "Title",
+    publication_year: "Year",
+    journal_name: "Journal",
+    authors: "Authors",
+    doi: "DOI",
+    conference_name: "Conference",
+    venue: "Venue",
+    funding_agency: "Funding Agency",
+    principal_investigator: "Principal Investigator",
+    sanctioned_amount: "Amount",
+    project_title: "Project Title",
+    recipient: "Recipient",
+    certificate_number: "Certificate Number",
+    manuscript_id: "Manuscript ID",
+    acceptance_date: "Acceptance Date",
+    issuing_authority: "Issuing Authority",
+    event_title: "Title",
+    co_investigator: "Co-Investigator",
+    project_duration_months: "Duration",
+    sanction_order_number: "Sanction Number",
+  };
+  return map[predicateId] ?? predicateId.replace(/_/g, " ");
+}
+
 function typeLabel(typeId: string | null): string {
   if (!typeId) return "Unknown";
   return typeId.replace(/_/g, " ");
-}
-
-function fieldLabel(field: DocumentAnalysisField): string {
-  return field.predicate_id.replace(/_/g, " ");
 }
 
 function confidenceLabel(confidence: number): string {
@@ -58,10 +77,10 @@ function confidenceColor(confidence: number): string {
 
 function sourceLabel(source: string): string {
   switch (source) {
-    case "label": return "Extracted";
-    case "regex": return "Extracted";
-    case "prose": return "Extracted";
-    case "ai": return "AI";
+    case "label": return "From document";
+    case "regex": return "From document";
+    case "prose": return "From document";
+    case "ai": return "AI suggestion";
     case "agreement": return "Confirmed";
     default: return source;
   }
@@ -80,10 +99,10 @@ function EnrichmentStatus({ status, timestamp, onRetry }: {
 }) {
   const statusConfig: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
     not_started: { icon: <Clock className="h-4 w-4" />, label: "AI analysis pending", color: "text-[var(--text-tertiary)]" },
-    running: { icon: <Loader2 className="h-4 w-4 animate-spin" />, label: "AI is analyzing…", color: "text-[var(--accent)]" },
+    running: { icon: <Loader2 className="h-4 w-4 animate-spin" />, label: "AI is analyzing this document…", color: "text-[var(--accent)]" },
     completed: { icon: <CheckCircle2 className="h-4 w-4" />, label: "AI analysis complete", color: "text-emerald-600" },
-    failed: { icon: <AlertCircle className="h-4 w-4" />, label: "AI analysis failed", color: "text-[var(--danger)]" },
-    skipped: { icon: <Clock className="h-4 w-4" />, label: "AI analysis skipped", color: "text-[var(--text-tertiary)]" },
+    failed: { icon: <AlertCircle className="h-4 w-4" />, label: "AI analysis failed — your document is still safe", color: "text-[var(--danger)]" },
+    skipped: { icon: <Clock className="h-4 w-4" />, label: "AI analysis not available", color: "text-[var(--text-tertiary)]" },
   };
 
   const config = statusConfig[status] ?? statusConfig.not_started;
@@ -122,7 +141,7 @@ function FieldConfidenceRow({ field }: { field: FieldConfidence }) {
       <div className="flex items-center gap-2 min-w-0">
         {sourceIcon(field.source)}
         <span className="truncate text-xs text-[var(--text-primary)]">
-          {field.field_name.replace(/_/g, " ")}
+          {friendlyFieldName(field.predicate_id)}
         </span>
         <span className="text-xs text-[var(--text-tertiary)]">
           {sourceLabel(field.source)}
@@ -159,42 +178,37 @@ export function DocumentAnalysisResult({
 
   const created = analysis.routing.filter((r) => r.kind === "created");
   const duplicates = analysis.routing.filter((r) => r.kind === "duplicate");
-  const status = analysis.review_required ? "Review required" : "Ready";
   const aiAssisted = analysis.extraction_mode === "ai_assisted";
   const targetLabel = MODULE_LABELS[analysis.target_module] ?? analysis.target_module;
 
   return (
     <div className="space-y-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-sm">
       <div className="flex items-center justify-between">
-        <span className="font-medium text-[var(--text-primary)]">Document analyzed</span>
+        <span className="font-medium text-[var(--text-primary)]">What AcademicOS understood</span>
         {fileName ? (
-          <span className="text-xs text-[var(--text-tertiary)]">Source: {fileName}</span>
+          <span className="text-xs text-[var(--text-tertiary)]">{fileName}</span>
         ) : null}
       </div>
 
       {/* Document type and confidence */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[var(--text-secondary)]">
         <div>
-          <span className="text-[var(--text-tertiary)]">Type: </span>
+          <span className="text-[var(--text-tertiary)]">Document type: </span>
           <span className="capitalize">{typeLabel(analysis.document_type_id)}</span>
         </div>
         <div>
           <span className="text-[var(--text-tertiary)]">Confidence: </span>
           <span className={confidenceColor(analysis.confidence)}>
-            {Math.round(analysis.confidence * 100)}%
+            {confidenceLabel(analysis.confidence)}
           </span>
         </div>
         <div>
-          <span className="text-[var(--text-tertiary)]">Extraction: </span>
-          <span>{aiAssisted ? "AI-assisted" : "Deterministic"}</span>
+          <span className="text-[var(--text-tertiary)]">Category: </span>
+          <span>{targetLabel}</span>
         </div>
         <div>
-          <span className="text-[var(--text-tertiary)]">Status: </span>
-          <span>{status}</span>
-        </div>
-        <div className="col-span-2">
-          <span className="text-[var(--text-tertiary)]">Target: </span>
-          <span>{targetLabel}</span>
+          <span className="text-[var(--text-tertiary)]">AI assistance: </span>
+          <span>{aiAssisted ? "Yes" : "No"}</span>
         </div>
       </div>
 
@@ -211,7 +225,7 @@ export function DocumentAnalysisResult({
       {analysis.field_confidence && analysis.field_confidence.length > 0 && (
         <div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] mb-1">
-            Extracted information:
+            Detected information:
           </div>
           <div className="divide-y divide-[var(--border-subtle)]">
             {analysis.field_confidence.slice(0, 8).map((f) => (
@@ -226,7 +240,7 @@ export function DocumentAnalysisResult({
         </div>
       )}
 
-      {/* Fallback: show fields without confidence if field_confidence not available */}
+      {/* Fallback: show fields without confidence */}
       {(!analysis.field_confidence || analysis.field_confidence.length === 0) && analysis.fields.length > 0 && (
         <div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] mb-1">
@@ -235,18 +249,14 @@ export function DocumentAnalysisResult({
           <ul className="space-y-0.5 text-[var(--text-secondary)]">
             {analysis.fields.slice(0, 8).map((f) => (
               <li key={f.predicate_id} className="truncate">
-                <span className="capitalize">{fieldLabel(f)}</span>: {String(f.value)}
+                <span className="capitalize">{friendlyFieldName(f.predicate_id)}</span>: {String(f.value)}
                 {f.extractor === "ai" ? (
-                  <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] text-purple-700">
-                    AI
-                  </span>
+                  <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] text-purple-700">AI</span>
                 ) : null}
               </li>
             ))}
             {analysis.fields.length > 8 && (
-              <li className="text-[var(--text-tertiary)]">
-                +{analysis.fields.length - 8} more
-              </li>
+              <li className="text-[var(--text-tertiary)]">+{analysis.fields.length - 8} more</li>
             )}
           </ul>
         </div>
@@ -255,7 +265,7 @@ export function DocumentAnalysisResult({
       {/* Records created */}
       {created.length > 0 && (
         <div className="text-[var(--text-secondary)]">
-          <span className="text-[var(--text-tertiary)]">Records detected: </span>
+          <span className="text-[var(--text-tertiary)]">Records created: </span>
           {created.length}
           <span className="ml-1 text-[var(--text-tertiary)]">
             ({created.map((r) => MODULE_LABELS[r.module] ?? r.module).join(", ")})
@@ -265,18 +275,18 @@ export function DocumentAnalysisResult({
 
       {/* Duplicates */}
       {duplicates.length > 0 && (
-        <div className="text-[var(--text-secondary)]">
-          Existing record matched — no duplicate created.
+        <div className="text-emerald-700 bg-emerald-50 rounded px-2 py-1 text-xs">
+          ✓ Matched existing record — no duplicate created.
         </div>
       )}
 
       {/* Conflicts */}
       {analysis.conflicts && analysis.conflicts.length > 0 && (
         <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-xs">
-          <div className="font-medium text-red-800 mb-1">Conflicts detected:</div>
+          <div className="font-medium text-red-800 mb-1">Conflicting information found:</div>
           {analysis.conflicts.map((c, i) => (
             <div key={i} className="text-red-700">
-              {c.predicate_id.replace(/_/g, " ")}: existing "{String(c.existing_value)}" vs extracted "{String(c.extracted_value)}"
+              {friendlyFieldName(c.predicate_id)}: existing &quot;{String(c.existing_value)}&quot; vs new &quot;{String(c.extracted_value)}&quot;
             </div>
           ))}
         </div>
@@ -285,7 +295,7 @@ export function DocumentAnalysisResult({
       {/* Review required */}
       {analysis.review_required && analysis.conflicts?.length === 0 && created.length === 0 && (
         <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-800">
-          Review required before saving structured data.
+          Some information needs your review before it can be saved.
         </div>
       )}
     </div>
