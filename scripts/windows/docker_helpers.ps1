@@ -55,8 +55,11 @@ function Test-DockerDesktopRunning {
 # Discover the Docker Desktop executable WITHOUT hardcoding a single path.
 # Discovery order (most authoritative first):
 #   1. the running "Docker Desktop" process's own executable path;
-#   2. the registry install location (HKLM then HKCU: ExePath / InstallDir);
-#   3. well-known install folders (Program Files, Program Files (x86), LocalAppData);
+#   2. the registry install location (HKLM then HKCU: ExePath / InstallDir /
+#      InstallLocation / AppPath) — InstallLocation is the value Docker Desktop
+#      writes for per-user installs (e.g. %LOCALAPPDATA%\Programs\DockerDesktop);
+#   3. well-known install folders (Program Files, Program Files (x86), and the
+#      per-user %LOCALAPPDATA%\Programs\DockerDesktop + legacy LocalAppData);
 #   4. "Docker Desktop.exe" on PATH.
 # Returns the path, or $null when Docker Desktop is not installed.
 # ---------------------------------------------------------------------------
@@ -65,18 +68,24 @@ function Get-DockerDesktopPath {
     $proc = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($proc -and $proc.Path) { return $proc.Path }
 
-    # 2. Registry (Docker Desktop records its install dir here).
+    # 2. Registry. Docker Desktop records its install dir here; per-user
+    # installs write InstallLocation under HKCU (and some builds use the
+    # "Docker\Docker Desktop" key without the "Inc.").
     $regKeys = @(
         "HKLM:\SOFTWARE\Docker Inc.\Docker Desktop",
-        "HKCU:\SOFTWARE\Docker Inc.\Docker Desktop"
+        "HKCU:\SOFTWARE\Docker Inc.\Docker Desktop",
+        "HKLM:\SOFTWARE\Docker\Docker Desktop",
+        "HKCU:\SOFTWARE\Docker\Docker Desktop"
     )
     foreach ($key in $regKeys) {
         if (Test-Path -LiteralPath $key) {
             $props = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
-            foreach ($valueName in @("ExePath", "InstallDir", "AppPath")) {
+            foreach ($valueName in @("ExePath", "InstallDir", "InstallLocation", "AppPath")) {
                 $raw = $props.PSObject.Properties[$valueName]
                 if ($raw -and $raw.Value) {
                     $candidate = [string]$raw.Value
+                    # InstallLocation is a DIRECTORY (e.g. %LOCALAPPDATA%\Programs\DockerDesktop);
+                    # derive the executable name when necessary.
                     if ($candidate -notmatch "Docker Desktop\.exe$") {
                         $candidate = Join-Path $candidate "Docker Desktop.exe"
                     }
@@ -95,6 +104,9 @@ function Get-DockerDesktopPath {
         $candidates += (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
     }
     if ($env:LOCALAPPDATA) {
+        # Per-user install (most common for non-admin setups):
+        $candidates += (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe")
+        # Legacy per-user location:
         $candidates += (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe")
     }
     foreach ($c in $candidates) {

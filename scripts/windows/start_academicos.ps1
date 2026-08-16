@@ -153,6 +153,13 @@ if (Test-Path -LiteralPath $dockerHelpers) {
     Write-Warn "docker_helpers.ps1 not found - Docker handling will be degraded (Qdrant may be skipped)."
 }
 
+$processHelpers = Join-Path $ProjectRoot "scripts\windows\process_helpers.ps1"
+if (Test-Path -LiteralPath $processHelpers) {
+    . $processHelpers
+} else {
+    Write-Warn "process_helpers.ps1 not found - frontend launch will fall back to a naive 'npm' launch."
+}
+
 # ---------------------------------------------------------------------------
 # 0. Repository / environment checks
 # ---------------------------------------------------------------------------
@@ -495,11 +502,18 @@ for ($p = $FrontendDefaultPort; $p -le ($FrontendDefaultPort + 10); $p++) {
 }
 
 if (-not $frontendOk) {
-    Push-Location $frontendDir
     $logOut = Join-Path $tempRoot "academicos_frontend.out.log"
     $logErr = Join-Path $tempRoot "academicos_frontend.err.log"
-    Start-Process -FilePath "npm" -ArgumentList "run","dev","--","--hostname","127.0.0.1","--port","$configuredPort" -WorkingDirectory $frontendDir -WindowStyle Hidden -RedirectStandardOutput $logOut -RedirectStandardError $logErr
-    Pop-Location
+    # Windows-safe launch: resolve npm.cmd and run it via cmd.exe (never
+    # `Start-Process -FilePath "npm"`, which fails with "%1 is not a valid
+    # Win32 application"). Start-FrontendDevServer guarantees the caller's
+    # working directory is restored even on failure.
+    $npmCmd = Resolve-NpmCmd
+    if (-not $npmCmd) {
+        Write-Fail "npm.cmd not found (npm is required to run the frontend). Install Node 18+ LTS and retry."
+    } else {
+        $null = Start-FrontendDevServer -NpmCmd $npmCmd -FrontendDir $frontendDir -Port $configuredPort -Hostname "127.0.0.1" -LogOut $logOut -LogErr $logErr
+    }
     # Wait for a Next.js server to come up; detect the actual port (next may
     # auto-increment if the requested one is taken).
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
