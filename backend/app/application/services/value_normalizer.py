@@ -111,7 +111,19 @@ def normalize_number(text: str | None) -> float | None:
     if isinstance(text, int | float) and not isinstance(text, bool):
         return float(text)
     m = _NUMBER_RE.search(str(text).replace(",", ""))
-    return float(m.group(1)) if m else None
+    if not m:
+        return None
+    val = float(m.group(1))
+    # Reject values that look like calendar years (1900-2100) when they appear
+    # in a context where a year doesn't make sense (e.g., duration in months).
+    # This prevents "Year: 2025" from being extracted as duration_months=2025.
+    if 1900 <= val <= 2100 and val == int(val):
+        # Check if the text contains "year" or "month" context
+        text_lower = str(text).lower()
+        if "month" in text_lower or "duration" in text_lower or "period" in text_lower:
+            # Context suggests duration, but value looks like a year — reject
+            return None
+    return val
 
 
 def normalize_identifier(text: str | None) -> str | None:

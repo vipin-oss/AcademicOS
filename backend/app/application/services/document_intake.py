@@ -442,6 +442,13 @@ def _has_currency(line: str) -> bool:
     return "₹" in low or "rs" in low or "inr" in low
 
 
+#: Generic document headings that must NOT be treated as entity values.
+_STOP_VALUES: set[str] = {
+    "notice", "circular", "notification", "order", "letter", "memorandum",
+    "certificate", "award", "grant", "sanction", "invoice", "bill",
+    "report", "minutes", "agenda", "schedule", "timetable", "syllabus",
+}
+
 def _extract_label_value(text: str, synonyms: tuple[str, ...]) -> str | None:
     """Find "Label: value" or "Label value" where label matches a synonym."""
     syn = {s.casefold() for s in synonyms}
@@ -452,11 +459,19 @@ def _extract_label_value(text: str, synonyms: tuple[str, ...]) -> str | None:
         if ":" in stripped:
             label, _, value = stripped.partition(":")
             if label.strip().casefold() in syn and value.strip():
-                return value.strip()
+                val = value.strip()
+                # Reject generic document headings as entity values
+                if val.casefold() in _STOP_VALUES:
+                    continue
+                return val
         # "Label value" form: leading known word then value
         first, _, rest = stripped.partition(" ")
         if first.casefold() in syn and rest.strip():
-            return rest.strip()
+            val = rest.strip()
+            # Reject generic document headings as entity values
+            if val.casefold() in _STOP_VALUES:
+                continue
+            return val
     return None
 
 

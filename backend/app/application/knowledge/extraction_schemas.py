@@ -87,7 +87,7 @@ PROJECT_FIELDS = (
     _f("sanction_number", "sanction_order_number", "label", False, ("sanction number", "sanction order number", "sanction no")),
     _f("sanction_date", "issue_date", "date", False, ()),
     _f("amount", "sanctioned_amount", "amount", False, ()),
-    _f("duration", "project_duration_months", "number", False, ()),
+    _f("duration", "project_duration_months", "number", False, ("duration", "project duration", "period")),
     _f("start_date", "start_date", "date", False, ("start date", "project start date")),
     _f("end_date", "end_date", "date", False, ("end date", "project end date")),
     _f("status", "project_status", "label", False, ("status", "project status")),
