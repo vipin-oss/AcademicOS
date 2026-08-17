@@ -27,7 +27,9 @@ class SQLDocumentIdentityStore(DocumentIdentityStore):
     def sync_document(self, *, content_hash: str, object_id: str) -> None:
         row = self._session.get(DocumentIdentityModel, content_hash)
         if row is None:
-            self._session.add(
+            # Use merge() instead of add() to handle duplicate content_hash
+            # within the same uncommitted batch (idempotent upsert).
+            self._session.merge(
                 DocumentIdentityModel(
                     content_hash=content_hash,
                     canonical_document_id=object_id,
@@ -79,11 +81,15 @@ class SQLDocumentIdentityStore(DocumentIdentityStore):
             if not h:
                 continue
             by_hash.setdefault(h, []).append(oid)
+        # Execute DELETE and flush to clear ORM identity map before re-inserting
         self._session.execute(delete(DocumentIdentityModel))
+        self._session.flush()
         now = _utcnow_iso()
         for h, ids in by_hash.items():
             ids = sorted(ids)
-            self._session.add(
+            # Use merge() for idempotent upsert (handles duplicate hashes
+            # within the same batch).
+            self._session.merge(
                 DocumentIdentityModel(
                     content_hash=h,
                     canonical_document_id=ids[0],

@@ -352,10 +352,10 @@ class SearchIndexApplier:
 
     def _safe_identity(self, operation) -> None:
         """Run an identity-registry write without breaking the drain
-        (missing 0011 table degrades silently)."""
+        (missing 0011 table or integrity errors degrade silently)."""
         try:
             operation()
-        except _OperationalError:
+        except Exception:  # noqa: BLE001 — identity must never break indexing
             pass
 
     def _safe_vector(self, operation) -> None:
