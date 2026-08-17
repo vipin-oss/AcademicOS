@@ -51,8 +51,8 @@ def test_l9_reuses_existing_eval_framework():
 def test_l9_no_new_migration():
     migrations = REPO / "backend" / "alembic" / "versions"
     names = [p.name for p in migrations.glob("*.py")]
-    # Migration head is 0026 (notifications, Rev13). L9 itself adds none.
-    assert not any("0027" in n for n in names), names
+    # Migration head is 0027 (entity_matches, Rev19). L9 itself adds none.
+    assert not any("0028" in n for n in names), names
 
 
 def test_l9_does_not_touch_frozen_production():

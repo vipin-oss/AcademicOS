@@ -44,6 +44,8 @@ from app.application.services.notification_service import (
     notify_document_analyzed,
 )
 from app.infrastructure.persistence.notification_store import SQLNotificationStore
+from app.application.ports.entity_match_store import MatchDecision
+from app.infrastructure.persistence.entity_match_store import SQLEntityMatchStore
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.use_cases.object_acl import object_acl_scope
 from app.domain.entities.object import UniversalObject
@@ -428,6 +430,7 @@ def confirm_entity_match(
 
     This is the professor-friendly endpoint for confirming that two
     documents refer to the same academic entity.
+    Idempotent — repeated confirmation does not create duplicate relationships.
     """
     repo = SQLAlchemyObjectRepository(db)
     doc = _load(db, repo, document_id)
@@ -437,6 +440,17 @@ def confirm_entity_match(
     target = repo.get_by_id(ObjectId(target_doc_id))
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Target document not found")
+
+    # Persist the confirmation decision
+    match_store = SQLEntityMatchStore(db)
+    match_store.put(
+        source_doc_id=document_id,
+        target_doc_id=target_doc_id,
+        confidence=1.0,
+        evidence="Confirmed by user",
+        decision=MatchDecision.CONFIRMED,
+        decided_by=str(user.id),
+    )
 
     # Create the link
     linking_service = EntityLinkingService(repo)
@@ -477,4 +491,89 @@ def get_related_documents(
     return RelatedDocsResponse(
         document_id=document_id,
         related=related,
+    )
+
+
+@router.post("/{document_id}/reject-match/{target_doc_id}", response_model=LinkResponse)
+def reject_entity_match(
+    document_id: str,
+    target_doc_id: str,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> LinkResponse:
+    """Reject an entity match — professor says these documents are NOT the same entity.
+
+    Persists the rejection so it doesn't reappear after re-analysis.
+    Does NOT create a relationship.
+    Idempotent — repeated rejection does not create duplicates.
+    """
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    # Verify target exists and user has access
+    target = repo.get_by_id(ObjectId(target_doc_id))
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Target document not found")
+
+    # Persist the rejection
+    match_store = SQLEntityMatchStore(db)
+    match_store.put(
+        source_doc_id=document_id,
+        target_doc_id=target_doc_id,
+        confidence=0.0,
+        evidence="Rejected by user",
+        decision=MatchDecision.REJECTED,
+        decided_by=str(user.id),
+    )
+    db.commit()
+
+    return LinkResponse(
+        success=True,
+        source_doc_id=document_id,
+        target_doc_id=target_doc_id,
+        already_linked=False,
+        error=None,
+    )
+
+
+class PendingMatchesResponse(BaseModel):
+    """Response for pending entity matches."""
+    document_id: str
+    pending_matches: list[dict]
+
+
+@router.get("/{document_id}/pending-matches", response_model=PendingMatchesResponse)
+def get_pending_matches(
+    document_id: str,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> PendingMatchesResponse:
+    """Get all pending entity matches for a document.
+
+    Returns matches that haven't been confirmed or rejected yet.
+    """
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    match_store = SQLEntityMatchStore(db)
+    all_matches = match_store.by_source(document_id)
+
+    # Filter to only pending or conflict (not confirmed/rejected)
+    pending = [
+        {
+            "target_doc_id": m.target_doc_id,
+            "confidence": m.confidence,
+            "evidence": m.evidence,
+            "decision": m.decision.value,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in all_matches
+        if m.decision in (MatchDecision.PENDING, MatchDecision.CONFLICT)
+    ]
+
+    return PendingMatchesResponse(
+        document_id=document_id,
+        pending_matches=pending,
     )

@@ -27,6 +27,8 @@ import { KgLinks } from "@/components/features/documents/KgLinks";
 import { DocumentPreview } from "@/components/features/documents/DocumentPreview";
 import { DocumentViewer } from "@/components/features/documents/DocumentViewer";
 import { DocumentAnalysisResult } from "@/components/features/documents/DocumentAnalysisResult";
+import { EntityMatchReview } from "@/components/features/documents/EntityMatchReview";
+import { RelatedDocuments } from "@/components/features/documents/RelatedDocuments";
 import { EmptyState } from "@/components/features/objects/EmptyState";
 import { DetailSkeleton } from "@/components/features/objects/LoadingSkeleton";
 import {
@@ -283,6 +285,20 @@ export default function DocumentDetailsPage() {
                         AI analysis has not run yet. It will start automatically in the background.
                       </p>
                     )}
+                  </Section>
+
+                  {/* Entity Match Review — possible related documents */}
+                  <Section title="Possible Matches" className="lg:col-span-2">
+                    <EntityMatchReview
+                      documentId={document.id}
+                      documentTitle={document.title}
+                      onMatchResolved={refresh}
+                    />
+                  </Section>
+
+                  {/* Confirmed Related Documents */}
+                  <Section title="Related Documents" className="lg:col-span-2">
+                    <RelatedDocuments documentId={document.id} />
                   </Section>
 
                   <Section title="Linked Object">

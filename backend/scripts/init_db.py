@@ -90,9 +90,10 @@ from app.infrastructure.db.models.spend_ledger_model import (  # noqa: F401
     SpendLedgerModel,
 )
 from app.infrastructure.db.models.notification_model import NotificationModel  # noqa: F401
+from app.infrastructure.db.models.entity_match_model import EntityMatchModel  # noqa: F401
 
 
-CURRENT_MIGRATION = "0026_notifications"
+CURRENT_MIGRATION = "0027_entity_matches"
 
 
 def main() -> None:
