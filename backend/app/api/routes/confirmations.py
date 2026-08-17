@@ -163,6 +163,7 @@ def approve_claim(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
     return _to_decision(record)
 
 
@@ -179,6 +180,7 @@ def reject_claim(
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    db.commit()
     return _to_decision(record)
 
 
@@ -196,6 +198,7 @@ def correct_claim(
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    db.commit()
     return _to_decision(record)
 
 

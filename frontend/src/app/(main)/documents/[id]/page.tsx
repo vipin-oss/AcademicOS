@@ -43,6 +43,8 @@ import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useDocument } from "@/hooks/useDocument";
 import { useDocumentDownload } from "@/hooks/useDocumentDownload";
 import { useAnalysisPolling } from "@/hooks/useAnalysisPolling";
+import { usePendingReview } from "@/hooks/usePendingReview";
+import { PendingReviewSection } from "@/components/features/documents/PendingReviewSection";
 import { deleteDocument } from "@/lib/api/documents";
 import { toErrorMessage } from "@/lib/api/client";
 import { setFlash } from "@/lib/objects/flash";
@@ -72,6 +74,14 @@ export default function DocumentDetailsPage() {
   const { document, loading, refreshing, error, notFound, refresh } = useDocument(documentId);
   const { toast, show, dismiss } = useToast();
   const { download, downloadingId, error: downloadError } = useDocumentDownload();
+
+  // Pending review — fetches real pending claims for this document
+  const {
+    items: pendingReviewItems,
+    totalPending,
+    loading: pendingReviewLoading,
+    refresh: refreshPendingReview,
+  } = usePendingReview(documentId);
 
   // AI enrichment polling — polls while enrichment is running
   const {
@@ -238,6 +248,20 @@ export default function DocumentDetailsPage() {
             ) : document ? (
               <div className="space-y-4">
                 <DocumentHeader document={document} actions={actions} />
+
+                {/* PENDING REVIEW — shown prominently at the top */}
+                {(totalPending > 0 || pendingReviewLoading) && (
+                  <PendingReviewSection
+                    documentId={document.id}
+                    documentTitle={document.title}
+                    items={pendingReviewItems}
+                    loading={pendingReviewLoading}
+                    onItemResolved={() => {
+                      refreshPendingReview();
+                      refresh();
+                    }}
+                  />
+                )}
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Section title="Overview">

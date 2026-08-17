@@ -151,3 +151,29 @@ export function analyzeDocument(
 ): Promise<DocumentAnalysisResponse> {
   return api.post<DocumentAnalysisResponse>(`/documents/${documentId}/analyze`, undefined, options);
 }
+
+/** Pending review items for a specific document. */
+export interface PendingReviewItemResponse {
+  claim_id: string;
+  predicate_id: string;
+  display_value: string;
+  confidence: number | null;
+  source: string;
+  status: string;
+  source_text: string;
+}
+
+export interface PendingReviewResponse {
+  document_id: string;
+  document_title: string;
+  items: PendingReviewItemResponse[];
+  total_pending: number;
+}
+
+/** Fetch pending review fields for a specific document. */
+export function fetchDocumentPendingReview(
+  documentId: string,
+  options?: RequestOptions,
+): Promise<PendingReviewResponse> {
+  return api.get<PendingReviewResponse>(`/documents/${documentId}/pending-review`, options);
+}

@@ -587,6 +587,85 @@ class PendingMatchesResponse(BaseModel):
     pending_matches: list[dict]
 
 
+class PendingReviewItem(BaseModel):
+    """One pending review field for a document."""
+    claim_id: str
+    predicate_id: str
+    display_value: str
+    confidence: float | None
+    source: str  # "label" | "regex" | "prose" | "ai"
+    status: str  # "proposed" | "auto_suggested"
+    source_text: str = ""
+
+
+class PendingReviewResponse(BaseModel):
+    """Pending review fields for a specific document."""
+    document_id: str
+    document_title: str
+    items: list[PendingReviewItem]
+    total_pending: int
+
+
+@router.get("/{document_id}/pending-review", response_model=PendingReviewResponse)
+def get_pending_review(
+    document_id: str,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> PendingReviewResponse:
+    """Get all pending review fields for a specific document.
+
+    Returns claims in PROPOSED or AUTO_SUGGESTED status that belong to
+    this document and need professor attention. This is the primary endpoint
+    for the document-centric review experience.
+    """
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    store = SQLClaimStore(db)
+    from app.domain.value_objects.claim import ClaimStatus
+    from app.application.services.confirmation_queue import _claim_display_value
+
+    # Get all claims for this source document
+    all_claims = store.by_source(document_id)
+
+    # Deduplicate by predicate_id + normalized value (keep first)
+    seen_keys: set[tuple[str, str]] = set()
+    unique_claims = []
+    for c in all_claims:
+        if c.status in (ClaimStatus.PROPOSED, ClaimStatus.AUTO_SUGGESTED):
+            from app.application.services.document_intake import _norm
+            from app.application.services.extraction_health import claim_value_key
+            val_key = str(_norm(claim_value_key(c)))
+            dedup_key = (c.predicate_id, val_key)
+            if dedup_key not in seen_keys:
+                seen_keys.add(dedup_key)
+                unique_claims.append(c)
+
+    items = []
+    for c in unique_claims:
+        display_val = _claim_display_value(c)
+        # Determine source from claim's value kind
+        value_kind = c.value.get("kind", "") if isinstance(c.value, dict) else ""
+        source = "label" if value_kind in ("text", "date") else "regex"
+        items.append(PendingReviewItem(
+            claim_id=c.claim_id,
+            predicate_id=c.predicate_id,
+            display_value=display_val,
+            confidence=c.fact_confidence,
+            source=source,
+            status=c.status.value if hasattr(c.status, "value") else str(c.status),
+            source_text=str(c.value.get("text", "")) if isinstance(c.value, dict) else "",
+        ))
+
+    return PendingReviewResponse(
+        document_id=document_id,
+        document_title=doc.title or document_id,
+        items=items,
+        total_pending=len(items),
+    )
+
+
 @router.get("/{document_id}/pending-matches", response_model=PendingMatchesResponse)
 def get_pending_matches(
     document_id: str,

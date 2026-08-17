@@ -198,7 +198,11 @@ export default function HomePage() {
                           {group.items.slice(0, 4).map((item) => {
                             const conf = confidenceBadge(item.confidence);
                             return (
-                              <div key={item.id} className="flex items-center gap-3">
+                              <Link
+                                key={item.id}
+                                href={`/documents/${encodeURIComponent(group.documentId)}`}
+                                className="flex items-center gap-3 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-amber-100"
+                              >
                                 <div className="min-w-0 flex-1">
                                   <p className="text-xs text-amber-800">
                                     <span className="font-medium">{item.label}</span>
@@ -218,15 +222,15 @@ export default function HomePage() {
                                     )}
                                   </p>
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  <button type="button" onClick={() => void handleApprove(item.id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Confirm">
+                                <div className="flex items-center gap-1" onClick={(e) => e.preventDefault()}>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); void handleApprove(item.id); }} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Confirm">
                                     <CheckCircle2 className="h-3.5 w-3.5" />
                                   </button>
-                                  <button type="button" onClick={() => void handleReject(item.id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Dismiss">
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); void handleReject(item.id); }} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Dismiss">
                                     <XCircle className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
-                              </div>
+                              </Link>
                             );
                           })}
                           {group.items.length > 4 && (

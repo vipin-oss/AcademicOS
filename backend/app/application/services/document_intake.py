@@ -293,6 +293,8 @@ class DocumentIntakeService:
         )
 
         # Phase 4: De-duplicate and write records
+        # Check BOTH confirmed claims AND existing claims from this document
+        # to prevent duplicate claims on re-analysis
         seen: dict[tuple[str, object], ExtractedField] = {}
         for f in fields:
             key = (f.predicate_id, _norm(f.value))
@@ -300,10 +302,34 @@ class DocumentIntakeService:
                 seen[key] = f
         unique_fields = list(seen.values())
 
+        # Pre-load existing claims for this document (any status) to avoid
+        # creating duplicates on re-analysis
+        existing_doc_claims = self._store.by_source(document_id)
+        existing_doc_by_pred: dict[str, list] = {}
+        for c in existing_doc_claims:
+            existing_doc_by_pred.setdefault(c.predicate_id, []).append(c)
+
         duplicates: list[DuplicateHit] = []
         conflicts: list[ConflictHit] = []
         records: list[RecordOutcome] = []
         for f in unique_fields:
+            # First check: has this exact field already been claimed for this document?
+            doc_claim_match = None
+            for ec in existing_doc_by_pred.get(f.predicate_id, []):
+                if _norm(claim_value_key(ec)) == _norm(f.value):
+                    doc_claim_match = ec
+                    break
+            if doc_claim_match is not None:
+                # Already extracted and stored for this document — reuse, don't duplicate
+                records.append(RecordOutcome(
+                    f.predicate_id, f.value,
+                    doc_claim_match.status.value if hasattr(doc_claim_match.status, 'value') else str(doc_claim_match.status),
+                    claim_id=doc_claim_match.claim_id,
+                    reason="existing",
+                ))
+                continue
+
+            # Second check: duplicate against CONFIRMED claims from other documents
             existing = self._store.confirmed_by_predicate(f.predicate_id)
             dup = next(
                 (c for c, _s in existing if _norm(claim_value_key(c)) == _norm(f.value)),
