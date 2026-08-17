@@ -23,6 +23,11 @@ skips creation and reports the existing record. Conflicts (same identity,
 different value) are treated as duplicates for safety: never silently
 overwritten, never silently duplicated. Provenance is a ``RELATED_TO`` edge
 from the record back to the source document, plus the claims' source binding.
+
+Revision #15: Added entity resolution for cross-document intelligence.
+When a document is processed, the system checks if it might refer to the
+same academic entity as an existing domain record. Matches are proposed
+(requiring review) rather than auto-applied.
 """
 
 from __future__ import annotations
@@ -38,6 +43,12 @@ from app.application.dtos.events import CreateEventInput
 from app.application.dtos.publication import CreatePublicationInput
 from app.application.dtos.research import CreateProjectInput
 from app.application.exceptions import ObjectAlreadyExistsError, ValidationError
+from app.application.services.entity_resolution import (
+    HIGH_THRESHOLD,
+    MEDIUM_THRESHOLD,
+    MatchResult,
+    match_entities,
+)
 from app.application.use_cases.committees.create_committee import (
     CreateCommitteeUseCase,
     find_committee_duplicates,
@@ -58,6 +69,7 @@ from app.application.use_cases.research.create_project import (
 )
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import (
+    ObjectType,
     Provenance,
     RelationshipKind,
 )
@@ -256,6 +268,140 @@ class DomainRecordRouter:
             self._repository.save(record)
         except Exception:  # noqa: BLE001 - provenance link is best-effort
             pass
+
+    # ------------------------------------------------ entity resolution
+    def find_entity_matches(
+        self,
+        *,
+        source_document_id: str,
+        fields: dict[str, object],
+        type_ids: tuple[str, ...],
+        owner_id: str,
+    ) -> list[MatchResult]:
+        """Find existing domain records that might be the same entity.
+
+        Returns matches sorted by confidence (highest first).
+        Only matches records owned by the same user.
+
+        This is the cross-document intelligence layer: when a new document
+        is processed, we check if it might refer to the same publication,
+        project, event, or committee as an existing record.
+        """
+        primary = type_ids[0] if type_ids else ""
+        module = ROUTABLE.get(primary)
+        if module is None:
+            return []
+
+        matches: list[MatchResult] = []
+
+        # Search for existing records of the same module type
+        try:
+            if module == "publication":
+                matches = self._match_publications(source_document_id, fields, owner_id)
+            elif module == "project":
+                matches = self._match_projects(source_document_id, fields, owner_id)
+            elif module == "event":
+                matches = self._match_events(source_document_id, fields, owner_id)
+            elif module == "committee":
+                matches = self._match_committees(source_document_id, fields, owner_id)
+        except Exception:
+            # Entity resolution is best-effort — never break the pipeline
+            pass
+
+        # Sort by confidence descending
+        matches.sort(key=lambda m: m.confidence, reverse=True)
+        return matches
+
+    def _match_publications(
+        self, doc_id: str, fields: dict[str, object], owner_id: str
+    ) -> list[MatchResult]:
+        """Find publications that might match this document."""
+        matches = []
+        # Get all publications from the repository
+        # We search by DOI first (fast), then by title (slower)
+        doi = _f(fields, "doi")
+        title = _f(fields, "publication_title")
+
+        # Search for publications with matching DOI or similar title
+        for obj in self._repository.list_by_type(ObjectType.PUBLICATION):
+            if str(obj.metadata.get_value("uploaded_by", "")) != owner_id:
+                continue
+
+            pub_fields = {
+                "publication_title": obj.title or "",
+                "doi": obj.metadata.get_value("doi") or "",
+                "authors": obj.metadata.get_value("authors") or "",
+                "journal_name": obj.metadata.get_value("journal") or "",
+                "publication_year": str(obj.metadata.get_value("year") or ""),
+            }
+
+            result = match_entities(fields, pub_fields, doc_id, str(obj.id))
+            if result.confidence >= MEDIUM_THRESHOLD:
+                matches.append(result)
+
+        return matches
+
+    def _match_projects(
+        self, doc_id: str, fields: dict[str, object], owner_id: str
+    ) -> list[MatchResult]:
+        """Find research projects that might match this document."""
+        matches = []
+        title = _f(fields, "project_title")
+
+        for obj in self._repository.list_by_type(ObjectType.PROJECT):
+            if str(obj.metadata.get_value("uploaded_by", "")) != owner_id:
+                continue
+
+            proj_fields = {
+                "project_title": obj.title or "",
+                "sanctioned_amount": obj.metadata.get_value("budget_approved") or "",
+                "project_duration_months": obj.metadata.get_value("duration") or "",
+            }
+
+            # Use title similarity for projects
+            result = match_entities(fields, proj_fields, doc_id, str(obj.id))
+            if result.confidence >= MEDIUM_THRESHOLD:
+                matches.append(result)
+
+        return matches
+
+    def _match_events(
+        self, doc_id: str, fields: dict[str, object], owner_id: str
+    ) -> list[MatchResult]:
+        """Find events that might match this document."""
+        matches = []
+        title = _f(fields, "conference_name") or _f(fields, "event_title")
+
+        for obj in self._repository.list_by_type(ObjectType.EVENT):
+            event_fields = {
+                "conference_name": obj.title or "",
+                "start_date": obj.metadata.get_value("start_date") or "",
+                "venue": obj.metadata.get_value("venue") or "",
+            }
+
+            result = match_entities(fields, event_fields, doc_id, str(obj.id))
+            if result.confidence >= MEDIUM_THRESHOLD:
+                matches.append(result)
+
+        return matches
+
+    def _match_committees(
+        self, doc_id: str, fields: dict[str, object], owner_id: str
+    ) -> list[MatchResult]:
+        """Find committees that might match this document."""
+        matches = []
+        name = _f(fields, "committee_name")
+
+        for obj in self._repository.list_by_type(ObjectType.COMMITTEE):
+            comm_fields = {
+                "committee_name": obj.title or "",
+            }
+
+            result = match_entities(fields, comm_fields, doc_id, str(obj.id))
+            if result.confidence >= MEDIUM_THRESHOLD:
+                matches.append(result)
+
+        return matches
 
 
 __all__ = ["ROUTABLE", "DomainRecordRouter", "RouteOutcome"]

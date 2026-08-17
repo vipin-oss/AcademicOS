@@ -65,6 +65,14 @@ class FieldConfidenceOut(BaseModel):
     status: str  # "auto_applied" | "proposed" | "review_required" | "conflict"
 
 
+class EntityMatchOut(BaseModel):
+    """Cross-document entity match."""
+    target_doc_id: str
+    confidence: float
+    outcome: str  # "high", "medium", "low", "conflict"
+    signals: list[dict]  # List of {signal_type, confidence, evidence}
+
+
 class AnalysisOut(BaseModel):
     document_id: str
     document_type_id: str | None
@@ -79,13 +87,18 @@ class AnalysisOut(BaseModel):
     duplicates: list[dict]
     conflicts: list[dict]
     routing: list[dict] = []
+    entity_matches: list[EntityMatchOut] = []
     extraction_mode: str = "deterministic"
     ai_rejected: int = 0
     enrichment_status: str = "not_started"
     enrichment_timestamp: str | None = None
 
 
-def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None) -> AnalysisOut:
+def _analysis_out(
+    a: DocumentAnalysis,
+    routing: list[RouteOutcome] | None = None,
+    entity_matches: list | None = None,
+) -> AnalysisOut:
     d = a.to_dict()
     d["routing"] = [
         {"module": r.module, "kind": r.kind, "object_id": r.object_id,
@@ -104,6 +117,19 @@ def _analysis_out(a: DocumentAnalysis, routing: list[RouteOutcome] | None = None
             status="proposed" if f.extractor == "ai" else "auto_applied",
         )
         for f in a.fields
+    ]
+    # Add entity matches (cross-document intelligence)
+    d["entity_matches"] = [
+        EntityMatchOut(
+            target_doc_id=m.target_doc_id,
+            confidence=m.confidence,
+            outcome=m.outcome,
+            signals=[
+                {"signal_type": s.signal_type, "confidence": s.confidence, "evidence": s.evidence}
+                for s in m.signals
+            ],
+        )
+        for m in (entity_matches or [])
     ]
     return AnalysisOut(**d)
 
@@ -227,13 +253,29 @@ def analyze_document(
         acl_scope=object_acl_scope(doc),
     )
     routing = _route_records(repo, analysis, str(user.id), document_id)
+
+    # Entity resolution: find existing records that might be the same entity
+    entity_matches = []
+    if analysis.document_type_id and analysis.fields:
+        try:
+            fields = _fields_dict(analysis)
+            router = DomainRecordRouter(repo)
+            entity_matches = router.find_entity_matches(
+                source_document_id=document_id,
+                fields=fields,
+                type_ids=analysis.all_types(),
+                owner_id=str(user.id),
+            )
+        except Exception:  # noqa: BLE001 - entity resolution is best-effort
+            pass
+
     db.commit()
 
     # Get enrichment status from persisted metadata
     enrichment_status = doc.metadata.get_value("ai_enrichment_status") or "not_started"
     enrichment_timestamp = doc.metadata.get_value("ai_enrichment_timestamp")
 
-    result = _analysis_out(analysis, routing)
+    result = _analysis_out(analysis, routing, entity_matches)
     result.enrichment_status = enrichment_status
     result.enrichment_timestamp = enrichment_timestamp
     return result
