@@ -62,9 +62,9 @@ def test_l8_reuses_existing_services_no_duplicate_subsystem():
 def test_l8_no_new_migration():
     migrations = REPO / "backend" / "alembic" / "versions"
     names = [p.name for p in migrations.glob("*.py")]
-    # Migration head is 0025 (accreditation, V3 M18). L8 itself adds none;
-    # forbid any migration beyond 0025 and any "cross"-named migration.
-    assert not any("cross" in n.lower() or "0026" in n for n in names), names
+    # Migration head is 0026 (notifications, Rev13). L8 itself adds none;
+    # forbid any migration beyond 0026 and any "cross"-named migration.
+    assert not any("cross" in n.lower() or "0027" in n for n in names), names
 
 
 def test_l8_bounded_multi_hop():

@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.application.knowledge.extraction_schemas import EXTRACTION_SCHEMAS, FieldSpec
+from app.application.ports.claim_store import ClaimStore
 from app.domain.value_objects.claim import ClaimStatus
-from app.infrastructure.persistence.claim_store import SQLClaimStore
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ def _important_fields(type_id: str) -> list[FieldSpec]:
 
 
 def analyze_missing_fields(
-    claims_store: SQLClaimStore,
+    claims_store: ClaimStore,
     user_id: str,
 ) -> list[MissingItem]:
     """Analyze all confirmed claims for the user and find missing fields."""

@@ -43,6 +43,7 @@ from app.api.routes.students import router as students_router
 from app.api.routes.teaching import router as teaching_router
 from app.api.routes.tools import router as tools_router
 from app.api.routes.missing_info import router as missing_info_router
+from app.api.routes.notifications import router as notifications_router
 from app.application.use_cases.auth.helpers import bootstrap_admin
 from app.core.config import settings
 from app.core.exceptions import AcademicosError
@@ -177,6 +178,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix=settings.api_v1_prefix)
     # Missing information engine — identifies incomplete academic records.
     app.include_router(missing_info_router, prefix=settings.api_v1_prefix)
+    # Notifications — user-facing alerts for document events.
+    app.include_router(notifications_router, prefix=settings.api_v1_prefix)
     return app
 
 

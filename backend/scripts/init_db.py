@@ -89,8 +89,10 @@ from app.infrastructure.db.models.saved_view_model import (  # noqa: F401
 from app.infrastructure.db.models.spend_ledger_model import (  # noqa: F401
     SpendLedgerModel,
 )
+from app.infrastructure.db.models.notification_model import NotificationModel  # noqa: F401
 
-CURRENT_MIGRATION = "0025_accreditation"
+
+CURRENT_MIGRATION = "0026_notifications"
 
 
 def main() -> None:

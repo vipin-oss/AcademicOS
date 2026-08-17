@@ -144,7 +144,7 @@ ACCEPTANCE_FIELDS = (
        ("title", "paper title", "article title", "manuscript title", "manuscript entitled")),
     _f("authors", "authors", "label", False, ("authors", "author", "dear dr", "dear prof")),
     _f("journal", "journal_name", "label", False, ("journal", "journal name")),
-    _f("manuscript_id", "manuscript_id", "label", False, ("manuscript id", "manuscript number", "paper id", "reference")),
+    _f("manuscript_id", "manuscript_id", "label", False, ("manuscript id", "manuscript number", "paper id", "reference number", "reference id")),
     _f("editor", "editor_name", "label", False, ("editor", "editor-in-chief")),
     _f("acceptance_date", "acceptance_date", "date", False, ()),
 )

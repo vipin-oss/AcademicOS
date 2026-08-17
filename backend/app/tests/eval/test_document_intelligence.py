@@ -316,7 +316,7 @@ GOLDEN_CASES = [
         name="acceptance_v2",
         text=ACCEPTANCE_V2,
         filename="acceptance_2.txt",
-        expected_type="publication",  # Classifier sees "paper" keyword, classifies as publication
+        expected_type="acceptance_letter",  # "has been accepted for publication" matches acceptance_letter heading
         expected_min_confidence=0.9,
         required_fields={
             "manuscript_id": "NM-2025-7890",

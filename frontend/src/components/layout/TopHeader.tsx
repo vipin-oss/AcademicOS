@@ -5,6 +5,7 @@ import { Bell, LogOut, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth/session";
+import NotificationBell from "@/components/features/notifications/NotificationBell";
 
 export function TopHeader() {
   const { user, logout } = useAuth();
@@ -37,13 +38,7 @@ export function TopHeader() {
           className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-app)] py-2 pl-9 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none"
         />
       </div>
-      <button
-        type="button"
-        aria-label="Notifications"
-        className="relative rounded-lg p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-      >
-        <Bell className="h-5 w-5" />
-      </button>
+      <NotificationBell />
       <div className="hidden items-center gap-2 sm:flex">
         <span className="max-w-[10rem] truncate text-sm text-[var(--text-secondary)]">
           {user?.username ?? ""}

@@ -62,9 +62,16 @@ def test_classifier_is_deterministic_only() -> None:
 
 
 def test_suggestion_is_failsafe_when_unmeasured() -> None:
+    from app.application.services.suggestion_policy import SAFE_FIELDS
+
     policy = SuggestionPolicy()
     for spec in CATALOGUE:
-        assert policy.allows_auto_suggest(spec.predicate_id) is False
+        if spec.predicate_id in SAFE_FIELDS:
+            # Safe fields are always allowed (deterministic extraction)
+            assert policy.allows_auto_suggest(spec.predicate_id) is True
+        else:
+            # Non-safe unmeasured fields are blocked (fail-safe)
+            assert policy.allows_auto_suggest(spec.predicate_id) is False
 
 
 def test_golden_corpus_has_three_docs_per_type() -> None:

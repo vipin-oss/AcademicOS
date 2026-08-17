@@ -146,6 +146,10 @@ CATALOGUE: tuple[PredicateSpec, ...] = (
     _p("research_topic", SCHEMA_TEXT, "Research topic."),
     _p("reporting_period", SCHEMA_TEXT, "Reporting period."),
     _p("phd_status", SCHEMA_TEXT, "PhD progress status / approval."),
+    # ---- acceptance letters -------------------------------------------------
+    _p("manuscript_id", SCHEMA_TEXT, "Manuscript / submission ID.", risk_class=RISK_HIGH),
+    _p("editor_name", SCHEMA_TEXT, "Editor name."),
+    _p("acceptance_date", SCHEMA_DATE, "Date of acceptance."),
 )
 
 _BY_ID: dict[str, PredicateSpec] = {spec.predicate_id: spec for spec in CATALOGUE}
