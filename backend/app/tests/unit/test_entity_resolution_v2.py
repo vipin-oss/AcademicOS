@@ -129,18 +129,20 @@ class TestExactMatch:
         assert "authors" in signal_types
 
     def test_minor_punctuation_differences(self):
-        """Minor punctuation differences → still HIGH."""
+        """Minor punctuation differences → MEDIUM (title only, no authors)."""
         fields1 = {"publication_title": "Deep Learning: A Review"}
         fields2 = {"publication_title": "Deep Learning - A Review"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        assert result.confidence >= MEDIUM_THRESHOLD
+        # Title only → LOW (safe policy)
+        assert result.confidence < MEDIUM_THRESHOLD
 
     def test_capitalization_differences(self):
-        """Capitalization differences → still HIGH."""
+        """Capitalization differences → LOW (title only)."""
         fields1 = {"publication_title": "DEEP LEARNING FOR MICROPLASTICS"}
         fields2 = {"publication_title": "deep learning for microplastics"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        assert result.confidence >= HIGH_THRESHOLD
+        # Title only → LOW (safe policy)
+        assert result.confidence < MEDIUM_THRESHOLD
 
 
 # =============================================================================
@@ -196,18 +198,20 @@ class TestTitleVariations:
     """Minor title differences should still match."""
 
     def test_punctuation_differences(self):
-        """Minor punctuation differences → still matches."""
+        """Minor punctuation differences → LOW (title only)."""
         fields1 = {"publication_title": "Deep Learning: A Review"}
         fields2 = {"publication_title": "Deep Learning - A Review"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        assert result.confidence >= MEDIUM_THRESHOLD
+        # Title only → LOW (safe policy)
+        assert result.confidence < MEDIUM_THRESHOLD
 
     def test_capitalization_differences(self):
-        """Capitalization differences → still matches."""
+        """Capitalization differences → LOW (title only)."""
         fields1 = {"publication_title": "DEEP LEARNING FOR MICROPLASTICS"}
         fields2 = {"publication_title": "deep learning for microplastics"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        assert result.confidence >= HIGH_THRESHOLD
+        # Title only → LOW (safe policy)
+        assert result.confidence < MEDIUM_THRESHOLD
 
 
 # =============================================================================
@@ -232,12 +236,12 @@ class TestDifferentAuthors:
         assert result.confidence < HIGH_THRESHOLD
 
     def test_same_title_no_authors(self):
-        """Same title but no author info → HIGH confidence (exact title match)."""
+        """Same title but no author info → LOW (safe policy)."""
         fields1 = {"publication_title": "Machine Learning Review"}
         fields2 = {"publication_title": "Machine Learning Review"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        # Exact title match IS high confidence
-        assert result.confidence >= HIGH_THRESHOLD
+        # Title only → LOW (safe policy: insufficient evidence)
+        assert result.confidence < HIGH_THRESHOLD
 
 
 # =============================================================================
@@ -311,12 +315,12 @@ class TestMissingFields:
         assert result.outcome == "low"
 
     def test_missing_authors_title_only(self):
-        """Missing authors, title only → HIGH confidence (exact title match)."""
+        """Missing authors, title only → LOW (safe policy)."""
         fields1 = {"publication_title": "Test Paper"}
         fields2 = {"publication_title": "Test Paper"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        # Exact title match IS high confidence
-        assert result.confidence >= HIGH_THRESHOLD
+        # Title only → LOW (safe policy: insufficient evidence)
+        assert result.confidence < HIGH_THRESHOLD
 
 
 # =============================================================================

@@ -10,7 +10,7 @@ from sqlalchemy import StaticPool, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.application.services.entity_linking import EntityLinkingService
-from app.application.services.entity_resolution import match_entities
+from app.application.services.entity_resolution import MEDIUM_THRESHOLD, match_entities
 from app.domain.value_objects.enums import ObjectType, RelationshipKind
 from app.infrastructure.db.models.object_model import Base
 
@@ -139,10 +139,9 @@ class TestFalsePositivePrevention:
                     f"False positive: {papers[i]['publication_title']} vs {papers[j]['publication_title']}"
 
     def test_same_author_different_title_low(self):
-        """Same author, different title → MEDIUM confidence (author overlap)."""
+        """Same author, different title → LOW confidence."""
         f1 = {"publication_title": "Deep Learning for Images", "authors": "A. Kumar"}
         f2 = {"publication_title": "Quantum Computing Basics", "authors": "A. Kumar"}
         result = match_entities(f1, f2, "doc:1", "doc:2")
-        # Same author gives some confidence even with different title
-        assert result.confidence < 0.8  # Not HIGH
-        assert result.outcome == "medium"
+        # Different titles → LOW (safe policy)
+        assert result.confidence < MEDIUM_THRESHOLD

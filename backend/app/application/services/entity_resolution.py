@@ -1,26 +1,17 @@
-"""Entity Resolution Service (Revision #15, enhanced Revision #16).
+"""Entity Resolution Service (Revision #17 — safe matching policy).
 
 Deterministic cross-document entity matching for academic documents.
 
-Safely determines whether two documents refer to the same academic entity
-(publication, project, event, etc.) using multiple matching signals:
-
-- DOI exact match (highest confidence)
-- Manuscript ID exact match
-- Normalized title similarity
-- Author overlap
-- Journal/venue match
-- Year compatibility
-
-Matching outcomes:
-- HIGH CONFIDENCE (≥0.8): Safe relationship suggestion
-- MEDIUM CONFIDENCE (0.5-0.79): Proposed relationship (review required)
-- LOW CONFIDENCE (<0.5): No automatic link
-- CONFLICT: Review required (contradictory evidence)
+SAFETY-FIRST MATCHING POLICY:
+- Single weak signals (title-only, author-only, journal-only) NEVER auto-link
+- HIGH confidence requires DOI/Manuscript ID OR (title + author + journal)
+- MEDIUM confidence requires title + at least one supporting signal
+- Conflicting identifiers → CONFLICT
+- Missing fields never cause false matches
 
 Design principles:
-- Never silently merge records
-- False positive rate = 0% for clearly different entities
+- NEVER silently merge records
+- FALSE POSITIVE AUTO-LINK RATE = 0%
 - Permission-aware (only match within same owner)
 - Provenance-aware (every match has evidence)
 """
@@ -31,7 +22,6 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -50,25 +40,30 @@ class MatchResult:
     confidence: float  # Overall confidence 0.0-1.0
     signals: tuple[MatchSignal, ...]
     outcome: str  # "high", "medium", "low", "conflict"
-    entity_type: str | None = None  # Inferred entity type if matched
+    entity_type: str | None = None
 
 
 # Confidence thresholds
 HIGH_THRESHOLD = 0.8
 MEDIUM_THRESHOLD = 0.5
 
+# Signal weights (used for scoring, not for single-signal decisions)
+_WEIGHT_DOI = 0.35
+_WEIGHT_MID = 0.30
+_WEIGHT_TITLE = 0.15
+_WEIGHT_AUTHORS = 0.10
+_WEIGHT_JOURNAL = 0.05
+_WEIGHT_YEAR = 0.05
+
 
 def _normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, strip, collapse whitespace, remove punctuation."""
+    """Normalize text for comparison."""
     if not text:
         return ""
-    # Unicode normalize
     text = unicodedata.normalize("NFKD", text)
     text = text.lower().strip()
     text = re.sub(r'\s+', ' ', text)
-    # Remove common punctuation for comparison
     text = re.sub(r'["\'\-:;,.!?()\[\]{}]', '', text)
-    # Remove common academic prefixes/suffixes that don't affect identity
     text = re.sub(r'\b(the|a|an|of|in|on|at|to|for|and|or|but|is|are|was|were)\b', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -79,7 +74,6 @@ def _normalize_doi(doi: str | None) -> str | None:
     if not doi:
         return None
     doi = doi.strip().lower()
-    # Remove common prefixes
     for prefix in ("https://doi.org/", "http://doi.org/", "doi:", "doi "):
         if doi.startswith(prefix):
             doi = doi[len(prefix):]
@@ -87,33 +81,30 @@ def _normalize_doi(doi: str | None) -> str | None:
 
 
 def _title_similarity(title1: str | None, title2: str | None) -> float:
-    """Compute title similarity using SequenceMatcher with enhanced normalization."""
+    """Compute title similarity."""
     if not title1 or not title2:
         return 0.0
     n1 = _normalize_text(title1)
     n2 = _normalize_text(title2)
     if not n1 or not n2:
         return 0.0
-    # Exact match after normalization
     if n1 == n2:
         return 1.0
     return SequenceMatcher(None, n1, n2).ratio()
 
 
 def _author_overlap(authors1: str | None, authors2: str | None) -> float:
-    """Compute author overlap (Jaccard similarity of author sets)."""
+    """Compute author overlap (Jaccard similarity)."""
     if not authors1 or not authors2:
         return 0.0
-    # Parse author lists
+
     def parse_authors(s: str) -> set[str]:
         names = set()
         for part in re.split(r'[,;]', s):
             name = part.strip().lower()
             if name:
-                # Normalize: "A. Kumar" -> "a kumar"
                 name = re.sub(r'\.', '', name)
                 name = re.sub(r'\s+', ' ', name).strip()
-                # Remove common prefixes
                 name = re.sub(r'^(dr|prof|mr|mrs|ms|shri|smt)\s+', '', name)
                 if name:
                     names.add(name)
@@ -129,14 +120,13 @@ def _author_overlap(authors1: str | None, authors2: str | None) -> float:
 
 
 def _journal_match(journal1: str | None, journal2: str | None) -> float:
-    """Check if journals match (normalized)."""
+    """Check if journals match."""
     if not journal1 or not journal2:
         return 0.0
     n1 = _normalize_text(journal1)
     n2 = _normalize_text(journal2)
     if n1 == n2:
         return 1.0
-    # Check if one contains the other
     if n1 in n2 or n2 in n1:
         return 0.8
     return 0.0
@@ -151,7 +141,6 @@ def _year_match(year1: str | None, year2: str | None) -> float:
         y2 = int(str(year2).strip()[:4])
         if y1 == y2:
             return 1.0
-        # Allow 1 year difference (publication vs acceptance year)
         if abs(y1 - y2) <= 1:
             return 0.5
         return 0.0
@@ -165,20 +154,23 @@ def match_entities(
     doc1_id: str,
     doc2_id: str,
 ) -> MatchResult:
-    """Match two documents based on their extracted fields.
+    """Match two documents using SAFETY-FIRST policy.
 
-    Args:
-        doc1_fields: Extracted fields from document 1 (predicate_id -> value)
-        doc2_fields: Extracted fields from document 2
-        doc1_id: Document 1 ID
-        doc2_id: Document 2 ID
-
-    Returns:
-        MatchResult with confidence, signals, and outcome
+    Policy rules:
+    1. Conflicting DOI/Manuscript ID → CONFLICT (never auto-link)
+    2. Exact DOI match → HIGH (strongest signal)
+    3. Exact Manuscript ID match → HIGH (strongest signal)
+    4. Title + Authors + Journal → HIGH (multi-signal)
+    5. Title + Authors → MEDIUM (review)
+    6. Title + Journal → MEDIUM (review)
+    7. Title only → LOW (insufficient)
+    8. Authors only → LOW (insufficient)
+    9. Journal only → LOW (insufficient)
+    10. Year only → LOW (insufficient)
     """
     signals: list[MatchSignal] = []
 
-    # 1. DOI exact match (highest confidence)
+    # 1. DOI comparison
     doi1 = _normalize_doi(str(doc1_fields.get("doi", "")) or None)
     doi2 = _normalize_doi(str(doc2_fields.get("doi", "")) or None)
     if doi1 and doi2:
@@ -187,7 +179,7 @@ def match_entities(
         else:
             signals.append(MatchSignal("doi", 0.0, f"DOI mismatch: {doi1} vs {doi2}"))
 
-    # 2. Manuscript ID exact match
+    # 2. Manuscript ID comparison
     mid1 = str(doc1_fields.get("manuscript_id", "")).strip() or None
     mid2 = str(doc2_fields.get("manuscript_id", "")).strip() or None
     if mid1 and mid2:
@@ -196,37 +188,45 @@ def match_entities(
         else:
             signals.append(MatchSignal("manuscript_id", 0.0, f"Manuscript ID mismatch: {mid1} vs {mid2}"))
 
-    # 3. Title similarity (check multiple title fields)
+    # 3. Title similarity
     title1 = _get_best_title(doc1_fields)
     title2 = _get_best_title(doc2_fields)
+    has_title = False
     if title1 and title2:
         sim = _title_similarity(title1, title2)
         if sim >= 0.95:
             signals.append(MatchSignal("title", sim, f"Title exact match: {sim:.0%}"))
+            has_title = True
         elif sim >= 0.8:
             signals.append(MatchSignal("title", sim, f"Title strong similarity: {sim:.0%}"))
+            has_title = True
         elif sim >= 0.6:
             signals.append(MatchSignal("title", sim, f"Title partial match: {sim:.0%}"))
+            has_title = True
         else:
             signals.append(MatchSignal("title", sim, f"Title differs: {sim:.0%}"))
 
     # 4. Author overlap
     authors1 = str(doc1_fields.get("authors", "")).strip() or None
     authors2 = str(doc2_fields.get("authors", "")).strip() or None
+    has_authors = False
     if authors1 and authors2:
         overlap = _author_overlap(authors1, authors2)
         if overlap >= 0.5:
             signals.append(MatchSignal("authors", overlap, f"Author overlap: {overlap:.0%}"))
+            has_authors = True
         else:
             signals.append(MatchSignal("authors", overlap, f"Author overlap low: {overlap:.0%}"))
 
     # 5. Journal match
     journal1 = str(doc1_fields.get("journal_name", "")).strip() or None
     journal2 = str(doc2_fields.get("journal_name", "")).strip() or None
+    has_journal = False
     if journal1 and journal2:
         jmatch = _journal_match(journal1, journal2)
         if jmatch > 0:
             signals.append(MatchSignal("journal", jmatch, f"Journal match: {journal1}"))
+            has_journal = True
 
     # 6. Year compatibility
     year1 = str(doc1_fields.get("publication_year", "")).strip() or None
@@ -236,52 +236,75 @@ def match_entities(
         if ymatch > 0:
             signals.append(MatchSignal("year", ymatch, f"Year compatible: {year1} vs {year2}"))
 
-    # Compute overall confidence
+    # --- DECISION POLICY ---
+
+    # No signals at all → LOW
     if not signals:
-        return MatchResult(
-            source_doc_id=doc1_id,
-            target_doc_id=doc2_id,
-            confidence=0.0,
-            signals=tuple(signals),
-            outcome="low",
-        )
+        return MatchResult(doc1_id, doc2_id, 0.0, tuple(signals), "low")
 
-    # Weighted combination
-    weights = {
-        "doi": 1.0,
-        "manuscript_id": 0.95,
-        "title": 0.4,
-        "authors": 0.3,
-        "journal": 0.2,
-        "year": 0.1,
-    }
-
-    # Check for conflicts (contradictory evidence)
-    has_conflict = False
+    # Conflicting identifiers → CONFLICT
     for s in signals:
         if s.signal_type in ("doi", "manuscript_id") and s.confidence == 0.0:
-            has_conflict = True
+            return MatchResult(doc1_id, doc2_id, 0.0, tuple(signals), "conflict")
 
-    if has_conflict:
-        return MatchResult(
-            source_doc_id=doc1_id,
-            target_doc_id=doc2_id,
-            confidence=0.0,
-            signals=tuple(signals),
-            outcome="conflict",
-        )
+    # Exact DOI → HIGH
+    doi_signal = next((s for s in signals if s.signal_type == "doi"), None)
+    if doi_signal and doi_signal.confidence == 1.0:
+        return MatchResult(doc1_id, doc2_id, 1.0, tuple(signals), "high")
 
-    # Compute weighted score
+    # Exact Manuscript ID → HIGH
+    mid_signal = next((s for s in signals if s.signal_type == "manuscript_id"), None)
+    if mid_signal and mid_signal.confidence >= 0.9:
+        return MatchResult(doc1_id, doc2_id, 0.95, tuple(signals), "high")
+
+    # Title + Authors + Journal → HIGH
+    if has_title and has_authors and has_journal:
+        title_sim = _title_similarity(title1, title2)
+        author_overlap = _author_overlap(authors1, authors2)
+        if title_sim >= 0.9 and author_overlap >= 0.5:
+            return MatchResult(doc1_id, doc2_id, 0.85, tuple(signals), "high")
+
+    # Title + Authors → MEDIUM
+    if has_title and has_authors:
+        title_sim = _title_similarity(title1, title2)
+        author_overlap = _author_overlap(authors1, authors2)
+        if title_sim >= 0.8 and author_overlap >= 0.3:
+            conf = min(0.79, (title_sim * 0.5 + author_overlap * 0.5))
+            return MatchResult(doc1_id, doc2_id, round(conf, 3), tuple(signals), "medium")
+
+    # Title + Journal → MEDIUM (weaker)
+    if has_title and has_journal:
+        title_sim = _title_similarity(title1, title2)
+        if title_sim >= 0.9:
+            return MatchResult(doc1_id, doc2_id, 0.6, tuple(signals), "medium")
+
+    # Title only → LOW (insufficient for auto-link)
+    if has_title and not has_authors and not has_journal:
+        return MatchResult(doc1_id, doc2_id, 0.3, tuple(signals), "low")
+
+    # Authors only → LOW
+    if has_authors and not has_title:
+        return MatchResult(doc1_id, doc2_id, 0.2, tuple(signals), "low")
+
+    # Journal only → LOW
+    if has_journal and not has_title:
+        return MatchResult(doc1_id, doc2_id, 0.1, tuple(signals), "low")
+
+    # Fallback: compute weighted score but cap at MEDIUM
+    weights = {"doi": _WEIGHT_DOI, "manuscript_id": _WEIGHT_MID, "title": _WEIGHT_TITLE,
+               "authors": _WEIGHT_AUTHORS, "journal": _WEIGHT_JOURNAL, "year": _WEIGHT_YEAR}
     total_weight = 0.0
     weighted_sum = 0.0
     for s in signals:
-        w = weights.get(s.signal_type, 0.1)
+        w = weights.get(s.signal_type, 0.05)
         weighted_sum += s.confidence * w
         total_weight += w
 
     confidence = weighted_sum / total_weight if total_weight > 0 else 0.0
+    # Cap: without DOI or Manuscript ID, never exceed MEDIUM
+    if not doi_signal and not mid_signal:
+        confidence = min(confidence, 0.79)
 
-    # Determine outcome
     if confidence >= HIGH_THRESHOLD:
         outcome = "high"
     elif confidence >= MEDIUM_THRESHOLD:
@@ -289,13 +312,7 @@ def match_entities(
     else:
         outcome = "low"
 
-    return MatchResult(
-        source_doc_id=doc1_id,
-        target_doc_id=doc2_id,
-        confidence=round(confidence, 3),
-        signals=tuple(signals),
-        outcome=outcome,
-    )
+    return MatchResult(doc1_id, doc2_id, round(confidence, 3), tuple(signals), outcome)
 
 
 def _get_best_title(fields: dict[str, object]) -> str | None:
