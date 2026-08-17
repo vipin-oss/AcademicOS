@@ -377,8 +377,8 @@ def _improve_document_title(
     is_generic = (
         not current_title
         or current_title.endswith((".txt", ".pdf", ".docx", ".doc", ".xlsx", ".pptx"))
-        or current_title.replace("_", "").replace("-", "").replace(" ", "").isalnum()
-        and "_" in current_title or "-" in current_title
+        or len(current_title) < 20  # Very short titles are likely abbreviations
+        or ("_" in current_title or "-" in current_title)
     )
     if not is_generic:
         return
