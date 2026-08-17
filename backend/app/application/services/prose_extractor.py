@@ -83,6 +83,27 @@ _DATE_IN_PROSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Date range patterns: "on 10-12 March 2025" or "on 10 to 12 March 2025"
+_DATE_RANGE_RE = re.compile(
+    r"(?i:on\s+)"
+    r"(\d{1,2}(?:st|nd|rd|th)?(?:\s*[-–]\s*\d{1,2}(?:st|nd|rd|th)?)?\s+[A-Za-z]+(?:,?\s+\d{4})?)",
+    re.IGNORECASE,
+)
+
+# "participated in the X" for certificate event titles
+_PARTICIPATED_IN_RE = re.compile(
+    r"(?i:participated\s+in\s+the\s+)"
+    r"(.+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
+    re.IGNORECASE,
+)
+
+# "attended the X" for certificate event titles
+_ATTENDED_RE = re.compile(
+    r"(?i:attended\s+the\s+)"
+    r"(.+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
+    re.IGNORECASE,
+)
+
 # "Best regards, Editor" or "Sincerely, Editor-in-Chief"
 _EDITOR_RE = re.compile(
     r"(?i:(?:best\s+regards|sincerely|regards|yours\s+(?:sincerely|faithfully)),?\s+)"
@@ -176,6 +197,28 @@ def prose_fields(text: str) -> dict[str, tuple[str, str]]:
         normalized = normalize_date(date_str)
         if normalized:
             out.setdefault("acceptance_date", (normalized, date_str))
+
+    # --- Certificate event title extraction ---
+
+    # "participated in the International Conference on AI..."
+    participated = _PARTICIPATED_IN_RE.search(text)
+    if participated:
+        event_name = " ".join(participated.group(1).split())
+        out.setdefault("conference_name", (event_name, participated.group(0).strip()))
+
+    # "attended the X"
+    attended = _ATTENDED_RE.search(text)
+    if attended:
+        event_name = " ".join(attended.group(1).split())
+        out.setdefault("conference_name", (event_name, attended.group(0).strip()))
+
+    # Date range extraction: "on 10-12 March 2025"
+    date_range = _DATE_RANGE_RE.search(text)
+    if date_range:
+        date_str = date_range.group(1).strip()
+        normalized = normalize_date(date_str)
+        if normalized:
+            out.setdefault("start_date", (normalized, date_str))
 
     return out
 

@@ -161,8 +161,20 @@ def _route_records(
     created_by: str,
     source_document_id: str,
 ) -> list[RouteOutcome]:
-    """Create actual domain records when high-confidence and conflict-free."""
-    if analysis.review_required or not analysis.document_type_id:
+    """Create actual domain records from extracted fields.
+
+    Routing proceeds when:
+    - A document type is identified
+    - No unresolved conflicts exist
+
+    The router itself handles missing fields gracefully (returns 'skipped'
+    when required fields like title are absent). This allows prose-extracted
+    fields (which have lower confidence) to still participate in routing.
+    """
+    if not analysis.document_type_id:
+        return []
+    # Skip routing only when there are actual unresolved conflicts
+    if analysis.conflicts:
         return []
     fields = _fields_dict(analysis)
     fields["__types__"] = analysis.all_types()
