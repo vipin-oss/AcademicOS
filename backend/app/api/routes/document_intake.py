@@ -340,6 +340,14 @@ def analyze_document(
 
     db.commit()
 
+    # Auto-index for immediate search after analysis
+    try:
+        from app.infrastructure.search.index_applier import SearchIndexApplier
+        SearchIndexApplier(db).apply_pending()
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
     # Generate notifications for meaningful events (Revision #18)
     _maybe_notify(db, str(user.id), document_id, doc.title or document_id,
                   analysis, entity_matches)

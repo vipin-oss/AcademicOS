@@ -341,6 +341,21 @@ def _download_url(out, storage: LocalFileStorage) -> str | None:
     )
 
 
+def _auto_index_after_upload(db: Session) -> None:
+    """Drain search index outbox after content is written.
+
+    Called after document content is indexed to ensure the search index
+    is immediately up-to-date. Best-effort — never breaks the upload.
+    """
+    try:
+        from app.infrastructure.search.index_applier import SearchIndexApplier
+        SearchIndexApplier(db).apply_pending()
+        db.commit()
+    except Exception:  # noqa: BLE001 — indexing must never fail the upload
+        db.rollback()
+        _log.debug("Auto-indexing after upload skipped (non-fatal).", exc_info=True)
+
+
 def _index_direct_upload_content(
     db: Session,
     *,
@@ -580,6 +595,8 @@ def create_document(
                 file_name=file_name,
                 content=content,
             )
+            # Auto-index for immediate search
+            _auto_index_after_upload(db)
         else:
             _log.warning(
                 "Quarantined upload %r: %s (stored, not indexed).",
