@@ -1,4 +1,4 @@
-"""Entity Resolution Service (Revision #15).
+"""Entity Resolution Service (Revision #15, enhanced Revision #16).
 
 Deterministic cross-document entity matching for academic documents.
 
@@ -28,6 +28,7 @@ Design principles:
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
@@ -58,13 +59,18 @@ MEDIUM_THRESHOLD = 0.5
 
 
 def _normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, strip, collapse whitespace."""
+    """Normalize text for comparison: lowercase, strip, collapse whitespace, remove punctuation."""
     if not text:
         return ""
+    # Unicode normalize
+    text = unicodedata.normalize("NFKD", text)
     text = text.lower().strip()
     text = re.sub(r'\s+', ' ', text)
     # Remove common punctuation for comparison
-    text = re.sub(r'["\'\-:;,.]', '', text)
+    text = re.sub(r'["\'\-:;,.!?()\[\]{}]', '', text)
+    # Remove common academic prefixes/suffixes that don't affect identity
+    text = re.sub(r'\b(the|a|an|of|in|on|at|to|for|and|or|but|is|are|was|were)\b', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 
@@ -74,20 +80,23 @@ def _normalize_doi(doi: str | None) -> str | None:
         return None
     doi = doi.strip().lower()
     # Remove common prefixes
-    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:", "doi "):
         if doi.startswith(prefix):
             doi = doi[len(prefix):]
-    return doi if doi else None
+    return doi.strip() if doi.strip() else None
 
 
 def _title_similarity(title1: str | None, title2: str | None) -> float:
-    """Compute title similarity using SequenceMatcher."""
+    """Compute title similarity using SequenceMatcher with enhanced normalization."""
     if not title1 or not title2:
         return 0.0
     n1 = _normalize_text(title1)
     n2 = _normalize_text(title2)
     if not n1 or not n2:
         return 0.0
+    # Exact match after normalization
+    if n1 == n2:
+        return 1.0
     return SequenceMatcher(None, n1, n2).ratio()
 
 
@@ -104,7 +113,10 @@ def _author_overlap(authors1: str | None, authors2: str | None) -> float:
                 # Normalize: "A. Kumar" -> "a kumar"
                 name = re.sub(r'\.', '', name)
                 name = re.sub(r'\s+', ' ', name).strip()
-                names.add(name)
+                # Remove common prefixes
+                name = re.sub(r'^(dr|prof|mr|mrs|ms|shri|smt)\s+', '', name)
+                if name:
+                    names.add(name)
         return names
 
     set1 = parse_authors(authors1)
@@ -184,18 +196,16 @@ def match_entities(
         else:
             signals.append(MatchSignal("manuscript_id", 0.0, f"Manuscript ID mismatch: {mid1} vs {mid2}"))
 
-    # 3. Title similarity
-    title1 = str(doc1_fields.get("publication_title", "")).strip() or None
-    title2 = str(doc2_fields.get("publication_title", "")).strip() or None
-    if not title1:
-        title1 = str(doc1_fields.get("presentation_title", "")).strip() or None
-    if not title2:
-        title2 = str(doc2_fields.get("presentation_title", "")).strip() or None
+    # 3. Title similarity (check multiple title fields)
+    title1 = _get_best_title(doc1_fields)
+    title2 = _get_best_title(doc2_fields)
     if title1 and title2:
         sim = _title_similarity(title1, title2)
-        if sim >= 0.9:
-            signals.append(MatchSignal("title", sim, f"Title similarity: {sim:.0%}"))
-        elif sim >= 0.7:
+        if sim >= 0.95:
+            signals.append(MatchSignal("title", sim, f"Title exact match: {sim:.0%}"))
+        elif sim >= 0.8:
+            signals.append(MatchSignal("title", sim, f"Title strong similarity: {sim:.0%}"))
+        elif sim >= 0.6:
             signals.append(MatchSignal("title", sim, f"Title partial match: {sim:.0%}"))
         else:
             signals.append(MatchSignal("title", sim, f"Title differs: {sim:.0%}"))
@@ -286,6 +296,15 @@ def match_entities(
         signals=tuple(signals),
         outcome=outcome,
     )
+
+
+def _get_best_title(fields: dict[str, object]) -> str | None:
+    """Get the best available title from fields."""
+    for key in ("publication_title", "presentation_title", "project_title", "event_title", "award_title"):
+        title = str(fields.get(key, "")).strip()
+        if title:
+            return title
+    return None
 
 
 __all__ = [
