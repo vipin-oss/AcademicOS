@@ -349,12 +349,32 @@ def _load(db: Session, repo: SQLAlchemyObjectRepository, document_id: str) -> Un
 def _require_read(doc: UniversalObject, user: UniversalObject) -> None:
     from app.application.use_cases.auth.helpers import get_roles
 
-    if not ObjectPermissionEvaluator().can(
-        principal={"sub": str(user.id), "roles": get_roles(user)},
-        scope=object_acl_scope(doc),
-        action=PermissionAction.READ,
-    ):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="No read permission on this document")
+    # Check direct ownership
+    owner = doc.audit.created_by if doc.audit else None
+    if owner and owner == str(user.id):
+        return
+
+    # Check if user has admin role
+    from app.domain.value_objects.enums import UserRole
+    user_roles = get_roles(user)
+    if UserRole.ADMIN.value in user_roles:
+        return
+
+    # Check explicit ACL grants (readers/writers/managers lists)
+    from app.application.use_cases.object_acl import object_acl_scope
+    import json
+    scope = object_acl_scope(doc)
+    if scope:
+        try:
+            acl = json.loads(scope)
+            sub = str(user.id)
+            for key in ("readers", "writers", "managers"):
+                if sub in (acl.get(key) or []):
+                    return
+        except (ValueError, TypeError):
+            pass
+
+    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="No read permission on this document")
 
 
 def _maybe_notify(

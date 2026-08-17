@@ -917,7 +917,7 @@ def export_projects(
 
     from app.domain.value_objects.enums import ObjectType
 
-    projects = repo.list_by_type(ObjectType.PROJECT)
+    projects = repo.find_by_type(ObjectType.RESEARCH_PROJECT)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["title", "status", "start_date", "end_date", "budget", "created_at"])

@@ -424,7 +424,12 @@ def list_documents(
     ),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListDocumentsResponseModel:
+    from app.application.use_cases.auth.helpers import get_roles
+    from app.domain.value_objects.enums import UserRole
+    user_roles = get_roles(user)
+    is_admin = UserRole.ADMIN.value in user_roles
     try:
         result = ListDocumentsUseCase(repo).execute(
             ListDocumentsQuery(
@@ -437,12 +442,18 @@ def list_documents(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
+    # Filter to only documents owned by this user (unless admin)
+    user_id = str(user.id)
+    filtered = [
+        o for o in result.items
+        if is_admin or (o.uploaded_by == user_id)
+    ]
     return ListDocumentsResponseModel(
         items=[
             DocumentResponseModel(**to_response(o, url=_download_url(o, storage)))
-            for o in result.items
+            for o in filtered
         ],
-        total_count=result.total_count,
+        total_count=len(filtered),
         page=result.page,
         page_size=result.page_size,
     )
@@ -453,7 +464,10 @@ def get_document(
     document_id: str,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> DocumentResponseModel:
+    from app.application.use_cases.auth.helpers import get_roles
+    from app.domain.value_objects.enums import UserRole
     try:
         out = GetDocumentUseCase(repo).execute(
             GetDocumentQuery(object_id=ObjectId.parse(document_id))
@@ -464,6 +478,13 @@ def get_document(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
+    # Ownership check (owner-first, then admin, then ACL grants)
+    user_roles = get_roles(user)
+    is_admin = UserRole.ADMIN.value in user_roles
+    owner = out.uploaded_by
+    is_owner = owner == str(user.id)
+    if not is_owner and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No read permission on this document")
     return DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
 
 

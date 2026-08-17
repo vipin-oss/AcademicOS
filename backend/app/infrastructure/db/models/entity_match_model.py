@@ -9,9 +9,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Float, String, Text
-from sqlalchemy.orm import declarative_base
 
-Base = declarative_base()
+from app.infrastructure.db.models.object_model import Base
 
 
 class EntityMatchModel(Base):

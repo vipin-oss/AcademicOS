@@ -319,6 +319,36 @@ def create_faculty(
 # ---------------------------------------------------------------------------
 # Single faculty: fetch / update / delete / photo
 # ---------------------------------------------------------------------------
+@router.get("/export")
+def export_faculty(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> Response:
+    """Export faculty as CSV."""
+    import csv
+    import io
+
+    from app.domain.value_objects.enums import ObjectType
+
+    faculty = repo.find_by_type(ObjectType.FACULTY)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["name", "designation", "department", "email", "phone", "created_at"])
+    for f in faculty:
+        writer.writerow([
+            f.title or "",
+            f.metadata.get_value("designation") or "",
+            f.metadata.get_value("department") or "",
+            f.metadata.get_value("email") or "",
+            f.metadata.get_value("phone") or "",
+            str(f.created_at) if f.created_at else "",
+        ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="faculty.csv"'},
+    )
+
+
 @router.get("/{faculty_id}", response_model=FacultyResponseModel)
 def get_faculty(
     faculty_id: str,
@@ -424,31 +454,3 @@ def download_faculty_photo(
     )
 
 
-@router.get("/export")
-def export_faculty(
-    repo: SQLAlchemyObjectRepository = Depends(_repository),
-) -> Response:
-    """Export faculty as CSV."""
-    import csv
-    import io
-
-    from app.domain.value_objects.enums import ObjectType
-
-    faculty = repo.list_by_type(ObjectType.FACULTY)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["name", "designation", "department", "email", "phone", "created_at"])
-    for f in faculty:
-        writer.writerow([
-            f.title or "",
-            f.metadata.get_value("designation") or "",
-            f.metadata.get_value("department") or "",
-            f.metadata.get_value("email") or "",
-            f.metadata.get_value("phone") or "",
-            str(f.created_at) if f.created_at else "",
-        ])
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="faculty.csv"'},
-    )

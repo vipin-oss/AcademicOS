@@ -329,7 +329,8 @@ class DocumentIntakeService:
                 ))
                 continue
 
-            # Second check: duplicate against CONFIRMED claims from other documents
+            # Second check: exact duplicate against CONFIRMED claims from other documents
+            # (same predicate + same value = already known fact, skip to avoid noise)
             existing = self._store.confirmed_by_predicate(f.predicate_id)
             dup = next(
                 (c for c, _s in existing if _norm(claim_value_key(c)) == _norm(f.value)),
@@ -341,19 +342,14 @@ class DocumentIntakeService:
                     f.predicate_id, f.value, "skipped", reason="duplicate",
                 ))
                 continue
-            conflict = next(
-                (c for c, _s in existing if _norm(claim_value_key(c)) != _norm(f.value)),
-                None,
-            )
-            if conflict is not None:
-                conflicts.append(ConflictHit(
-                    f.predicate_id, conflict.claim_id,
-                    claim_value_key(conflict), f.value,
-                ))
-                records.append(RecordOutcome(
-                    f.predicate_id, f.value, "skipped", reason="conflict",
-                ))
-                continue
+
+            # NOTE: We intentionally do NOT flag cross-document conflicts.
+            # Different documents naturally have different values for the same
+            # predicate (e.g., different certificates have different recipients,
+            # venues, dates). This is NORMAL and should not block routing.
+            # Only same-document value changes are conflicts (handled by the
+            # claim lifecycle via supersede).
+
             records.append(self._write_record(f, document_id, version, acl_scope, spans))
 
         review_required = bool(duplicates or conflicts) or any(
