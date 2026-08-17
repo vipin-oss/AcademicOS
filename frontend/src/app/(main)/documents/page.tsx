@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Filter, Plus, RefreshCw } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { cn } from "@/lib/utils";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
 import { SearchBar } from "@/components/features/objects/SearchBar";
@@ -13,6 +14,8 @@ import {
   UploadModal,
   type DocumentSaveResult,
 } from "@/components/features/documents/UploadModal";
+import { MultiFileUpload } from "@/components/features/documents/MultiFileUpload";
+import { SimpleUpload } from "@/components/features/documents/SimpleUpload";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useDocuments } from "@/hooks/useDocuments";
 import { DEFAULT_DOC_PAGE_SIZE, SEARCH_WINDOW_SIZE } from "@/lib/documents/constants";
@@ -39,6 +42,7 @@ export default function DocumentsPage() {
   const [type, setType] = useState<DocumentTypeValue | "all">("all");
   const [status, setStatus] = useState<DocumentStatus | "all">("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [uploadMode, setUploadMode] = useState<"single" | "multi">("single");
   const { toast, show, dismiss } = useToast();
 
   const {
@@ -160,6 +164,42 @@ export default function DocumentsPage() {
               required to cover the full dataset.
             </p>
           ) : null}
+
+          {/* Upload section */}
+          <div className="mt-6">
+            <div className="mb-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setUploadMode("single")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  uploadMode === "single"
+                    ? "bg-[var(--accent-subtle)] text-[var(--accent)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                )}
+              >
+                Single File
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadMode("multi")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  uploadMode === "multi"
+                    ? "bg-[var(--accent-subtle)] text-[var(--accent)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                )}
+              >
+                Multiple Files
+              </button>
+            </div>
+
+            {uploadMode === "single" ? (
+              <SimpleUpload onUploaded={() => refresh()} />
+            ) : (
+              <MultiFileUpload onBatchComplete={() => refresh()} />
+            )}
+          </div>
 
           <div className="mt-6 space-y-4">
             {error ? (
