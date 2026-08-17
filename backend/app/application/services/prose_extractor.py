@@ -91,16 +91,17 @@ _DATE_RANGE_RE = re.compile(
 )
 
 # "participated in the X" for certificate event titles
+# Uses [\s\S] to match across newlines since event names often span multiple lines
 _PARTICIPATED_IN_RE = re.compile(
     r"(?i:participated\s+in\s+the\s+)"
-    r"(.+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
+    r"([\s\S]+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
     re.IGNORECASE,
 )
 
 # "attended the X" for certificate event titles
 _ATTENDED_RE = re.compile(
     r"(?i:attended\s+the\s+)"
-    r"(.+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
+    r"([\s\S]+?)(?=\s+(?:held|organi[sz]ed|on\s+\d|from\s+\d)\b|[,.]|\s*$)",
     re.IGNORECASE,
 )
 

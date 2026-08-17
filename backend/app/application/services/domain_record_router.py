@@ -151,6 +151,13 @@ class DomainRecordRouter:
         if dups:
             return RouteOutcome("event", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing event")
+        # Title-only duplicate check when no date is available
+        if not start:
+            title_cf = title.strip().casefold()
+            for obj in self._repository.find_by_type(ObjectType.EVENT):
+                if obj.title and obj.title.strip().casefold() == title_cf:
+                    return RouteOutcome("event", "duplicate", existing_id=str(obj.id),
+                                        reason="existing event (title match)")
         try:
             out = CreateEventUseCase(self._repository).execute(
                 CreateEventCommand(input=CreateEventInput(
