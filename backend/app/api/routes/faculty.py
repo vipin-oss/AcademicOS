@@ -340,7 +340,7 @@ def export_faculty(
             f.metadata.get_value("department") or "",
             f.metadata.get_value("email") or "",
             f.metadata.get_value("phone") or "",
-            str(f.created_at) if f.created_at else "",
+            str(f.audit.created_at) if f.audit and f.audit.created_at else "",
         ])
     return Response(
         content=output.getvalue(),

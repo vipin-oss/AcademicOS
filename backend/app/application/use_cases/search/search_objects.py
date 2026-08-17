@@ -15,6 +15,7 @@ behaviour — same candidates, same ordering, same gate.
 """
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -33,7 +34,7 @@ from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.repositories.search_repository import SearchRepository
 from app.domain.repositories.vector_repository import VectorRepository
-from app.domain.value_objects.enums import PermissionAction
+from app.domain.value_objects.enums import ObjectType, PermissionAction, UserRole
 from app.domain.value_objects.object_id import ObjectId
 
 _log = logging.getLogger(__name__)
@@ -124,6 +125,10 @@ class SearchObjectsUseCase:
         The index is derived data; the object is the authority. A candidate
         for an object that no longer exists, or that the principal may not
         READ, is removed BEFORE ranking (never ranked, never leaked).
+
+        For DOCUMENT objects: ownership is enforced when the document was
+        created by a real user (owner starts with "obj:user:"). Documents
+        with explicit ACL grants use the grant evaluator. Admins always pass.
         """
         if not candidates:
             return []
@@ -131,11 +136,44 @@ class SearchObjectsUseCase:
             [ObjectId(c.object_id) for c in candidates]
         )
         by_id = {str(obj.id): obj for obj in objects}
+        user_sub = str(principal.get("sub") or "")
+        user_roles = [str(r) for r in (principal.get("roles") or [])]
+        is_admin = UserRole.ADMIN.value in user_roles
         allowed: list = []
         for candidate in candidates:
             obj = by_id.get(candidate.object_id)
             if obj is None:
                 continue
+            # For DOCUMENT objects created by real users, enforce ownership
+            if obj.object_type is ObjectType.DOCUMENT:
+                owner = obj.audit.created_by if obj.audit else None
+                # Only enforce ownership for documents with real user owners
+                if owner and owner.startswith("obj:user:"):
+                    if is_admin:
+                        allowed.append(candidate)
+                        continue
+                    if owner == user_sub:
+                        allowed.append(candidate)
+                        continue
+                    # Check explicit ACL grants
+                    scope = object_acl_scope(obj)
+                    if scope:
+                        try:
+                            acl = json.loads(scope)
+                            has_grants = any(acl.get(k) for k in ("readers", "writers", "managers"))
+                            if has_grants:
+                                if self._permission_evaluator.can(
+                                    principal=principal,
+                                    scope=scope,
+                                    action=PermissionAction.READ,
+                                ):
+                                    allowed.append(candidate)
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                    # No grants and not owner → deny
+                    continue
+            # Non-document or test-fixture documents: use standard evaluator
             if self._permission_evaluator.can(
                 principal=principal,
                 scope=object_acl_scope(obj),

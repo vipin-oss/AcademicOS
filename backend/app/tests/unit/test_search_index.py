@@ -531,18 +531,18 @@ def test_use_case_requires_a_criterion(db, repo):
 
 
 def test_use_case_prefilters_by_read_permission(db, repo):
-    open_doc = UniversalObject.create(ObjectType.DOCUMENT, "Open Doc", created_by="f:1")
-    restricted = UniversalObject.create(
-        ObjectType.DOCUMENT, "Secret Doc", created_by="f:2"
-    )
-    restricted.set_metadata(
+    # Documents without explicit ACL grants are owner-only (security hardening)
+    my_doc = UniversalObject.create(ObjectType.DOCUMENT, "My Doc", created_by="obj:user:alice-0001")
+    bob_doc = UniversalObject.create(ObjectType.DOCUMENT, "Bob Doc", created_by="obj:user:bob-0002")
+    shared_doc = UniversalObject.create(ObjectType.DOCUMENT, "Shared Doc", created_by="obj:user:bob-0002")
+    shared_doc.set_metadata(
         MetadataEntry(
-            "acl.readers", json.dumps(["obj:user:bob-0002"]),
+            "acl.readers", json.dumps(["obj:user:alice-0001"]),
             MetadataLayer.L1_SYSTEM, Provenance.SYSTEM,
         ),
         actor="system",
     )
-    _seed_documents(db, repo, open_doc, restricted)
+    _seed_documents(db, repo, my_doc, bob_doc, shared_doc)
 
     use_case = SearchObjectsUseCase(
         SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator()
@@ -550,10 +550,19 @@ def test_use_case_prefilters_by_read_permission(db, repo):
     alice = _user("obj:user:alice-0001")
     bob = _user("obj:user:bob-0002")
 
-    for candidate in use_case.execute(user=alice, text="doc"):
-        assert candidate.object_id == str(open_doc.id)  # unauthorized never leaks
-    hits = use_case.execute(user=bob, text="doc")
-    assert {h.object_id for h in hits} == {str(open_doc.id), str(restricted.id)}
+    # Alice can find her own doc + doc explicitly shared with her, but NOT bob's private doc
+    alice_hits = use_case.execute(user=alice, text="doc")
+    alice_ids = {h.object_id for h in alice_hits}
+    assert str(my_doc.id) in alice_ids  # own doc
+    assert str(shared_doc.id) in alice_ids  # explicitly shared
+    assert str(bob_doc.id) not in alice_ids  # bob's private doc not leaked
+
+    # Bob can find his own docs + docs shared with him, but NOT alice's private doc
+    bob_hits = use_case.execute(user=bob, text="doc")
+    bob_ids = {h.object_id for h in bob_hits}
+    assert str(bob_doc.id) in bob_ids  # own doc
+    assert str(shared_doc.id) in bob_ids  # own doc (shared with alice)
+    assert str(my_doc.id) not in bob_ids  # alice's private doc not leaked
 
 
 def test_use_case_never_leaks_deleted_rows(db, repo):

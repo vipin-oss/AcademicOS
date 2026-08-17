@@ -159,20 +159,35 @@ def _analysis_out(
     ]
     result = AnalysisOut(**d)
     # Professor-friendly label for what the document will become
-    _MODULE_TO_RECORD_LABEL: dict[str, str] = {
-        "publications": "Publication",
-        "research": "Research Project",
-        "events": "Event",
-        "committees": "Committee",
-        "finance": "Finance Record",
-        "faculty": "Faculty Record",
-        "teaching": "Teaching Record",
-        "students": "Student Record",
-        "general_document": "Document",
+    # First check routing results (more accurate than module for certificates)
+    _ROUTING_MODULE_LABEL: dict[str, str] = {
+        "event": "Event",
+        "publication": "Publication",
+        "project": "Research Project",
+        "committee": "Committee",
     }
-    result.target_record_label = _MODULE_TO_RECORD_LABEL.get(
-        result.target_module, result.target_module.replace("_", " ").title()
-    )
+    routing_label = ""
+    for r in routing or []:
+        if r.kind in ("created", "duplicate") and r.module in _ROUTING_MODULE_LABEL:
+            routing_label = _ROUTING_MODULE_LABEL[r.module]
+            break
+    if routing_label:
+        result.target_record_label = routing_label
+    else:
+        _MODULE_TO_RECORD_LABEL: dict[str, str] = {
+            "publications": "Publication",
+            "research": "Research Project",
+            "events": "Event",
+            "committees": "Committee",
+            "finance": "Finance Record",
+            "faculty": "Faculty Record",
+            "teaching": "Teaching Record",
+            "students": "Student Record",
+            "general_document": "Document",
+        }
+        result.target_record_label = _MODULE_TO_RECORD_LABEL.get(
+            result.target_module, result.target_module.replace("_", " ").title()
+        )
     return result
 
 

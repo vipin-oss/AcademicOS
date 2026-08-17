@@ -527,7 +527,7 @@ def export_committees(
             c.metadata.get_value("description") or "",
             c.metadata.get_value("department") or "",
             c.metadata.get_value("constitution_date") or "",
-            str(c.created_at) if c.created_at else "",
+            str(c.audit.created_at) if c.audit and c.audit.created_at else "",
         ])
     return Response(
         content=output.getvalue(),

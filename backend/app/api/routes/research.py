@@ -928,7 +928,7 @@ def export_projects(
             p.metadata.get_value("start_date") or "",
             p.metadata.get_value("end_date") or "",
             p.metadata.get_value("budget_approved") or "",
-            str(p.created_at) if p.created_at else "",
+            str(p.audit.created_at) if p.audit and p.audit.created_at else "",
         ])
     return Response(
         content=output.getvalue(),
