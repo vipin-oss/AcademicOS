@@ -181,10 +181,6 @@ function ReviewCard({
           <p className="text-base font-medium text-[var(--text-primary)] break-words">
             {item.display_value}
           </p>
-          <div className="mt-1 flex items-center gap-1.5">
-            <Eye className="h-3 w-3 text-[var(--text-tertiary)]" />
-            <span className="text-xs text-[var(--text-tertiary)]">{sourceFriendly(item.source)}</span>
-          </div>
         </div>
       ) : editing ? (
         <div className="mb-3 flex gap-2">
@@ -218,6 +214,26 @@ function ReviewCard({
       ) : (
         <div className="mb-3 rounded-md bg-[var(--bg-hover)] px-3 py-2">
           <p className="text-sm text-[var(--text-tertiary)] italic">Not found in the document</p>
+        </div>
+      )}
+
+      {/* Source evidence */}
+      {hasValue && item.source_text && item.source_text.trim() !== "" && (
+        <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-blue-600 mb-1">
+            Found in document
+          </p>
+          <p className="text-xs text-blue-900 font-mono break-words">
+            &ldquo;{item.source_text}&rdquo;
+          </p>
+        </div>
+      )}
+
+      {/* Source method */}
+      {hasValue && !editing && (
+        <div className="mb-3 flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
+          <Eye className="h-3 w-3" />
+          <span>{sourceFriendly(item.source)}</span>
         </div>
       )}
 

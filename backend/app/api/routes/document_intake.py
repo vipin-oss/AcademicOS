@@ -654,6 +654,7 @@ def get_pending_review(
     document_id: str,
     db: Session = Depends(get_db),
     user: UniversalObject = Depends(get_current_user),
+    storage: LocalFileStorage = Depends(get_storage),
 ) -> PendingReviewResponse:
     """Get all pending review fields for a specific document.
 
@@ -685,12 +686,32 @@ def get_pending_review(
                 seen_keys.add(dedup_key)
                 unique_claims.append(c)
 
+    # Get document text for source evidence
+    doc_text = _text_for(db, storage, document_id)
+
     items = []
     for c in unique_claims:
         display_val = _claim_display_value(c)
         # Determine source from claim's value kind
         value_kind = c.value.get("kind", "") if isinstance(c.value, dict) else ""
         source = "label" if value_kind in ("text", "date") else "regex"
+
+        # Extract source snippet from document text
+        source_snippet = ""
+        if display_val and doc_text:
+            val_lower = display_val.strip().lower()
+            text_lower = doc_text.lower()
+            idx = text_lower.find(val_lower)
+            if idx >= 0:
+                start = max(0, idx - 30)
+                end = min(len(doc_text), idx + len(display_val) + 30)
+                snippet = doc_text[start:end].strip()
+                if start > 0:
+                    snippet = "..." + snippet
+                if end < len(doc_text):
+                    snippet = snippet + "..."
+                source_snippet = snippet
+
         items.append(PendingReviewItem(
             claim_id=c.claim_id,
             predicate_id=c.predicate_id,
@@ -698,7 +719,7 @@ def get_pending_review(
             confidence=c.fact_confidence,
             source=source,
             status=c.status.value if hasattr(c.status, "value") else str(c.status),
-            source_text=str(c.value.get("text", "")) if isinstance(c.value, dict) else "",
+            source_text=source_snippet,
         ))
 
     return PendingReviewResponse(
