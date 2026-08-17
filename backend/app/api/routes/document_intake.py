@@ -371,18 +371,19 @@ def _improve_document_title(
     doc: UniversalObject,
     analysis: DocumentAnalysis,
 ) -> None:
-    """Update document title from extracted fields if it's still a generic filename."""
+    """Update document title from extracted fields if it's still a generic filename.
+
+    Does NOT call repo.save() — the caller's db.commit() will persist.
+    """
     current_title = (doc.title or "").strip()
-    # Check if title looks like a raw filename
     is_generic = (
         not current_title
         or current_title.endswith((".txt", ".pdf", ".docx", ".doc", ".xlsx", ".pptx"))
-        or len(current_title) < 20  # Very short titles are likely abbreviations
+        or len(current_title) < 20
         or ("_" in current_title or "-" in current_title)
     )
     if not is_generic:
         return
-    # Try to derive a better title from extracted fields
     _TITLE_FIELDS = [
         "conference_name", "event_title", "publication_title",
         "project_title", "award_title", "recipient",
@@ -393,8 +394,8 @@ def _improve_document_title(
                 new_title = str(f.value).strip()
                 if len(new_title) > 120:
                     new_title = new_title[:117] + "..."
-                doc.set_title(new_title)
-                repo.save(doc)
+                if new_title != doc.title:
+                    doc.title = new_title
                 return
 
 
