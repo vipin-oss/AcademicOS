@@ -61,6 +61,13 @@ export interface DocumentAnalysisResponse {
     extracted_value: unknown;
   }>;
   routing: DocumentAnalysisRoute[];
+  /** Cross-document entity matches. */
+  entity_matches?: Array<{
+    target_doc_id: string;
+    confidence: number;
+    outcome: string;
+    signals: Array<{ signal_type: string; confidence: number; evidence: string }>;
+  }>;
   /** "deterministic" | "ai_assisted" — whether the AI enrichment layer added fields. */
   extraction_mode?: string;
   /** Number of AI candidate values rejected (low confidence / ungrounded). */
@@ -71,6 +78,8 @@ export interface DocumentAnalysisResponse {
   enrichment_status?: string;
   /** Timestamp of last enrichment attempt */
   enrichment_timestamp?: string | null;
+  /** Professor-friendly label for the target record type (e.g., "Publication", "Event") */
+  target_record_label?: string;
 }
 
 function statusFallback(status: number): string {

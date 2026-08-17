@@ -10,9 +10,13 @@ import type { ListDocumentsResponse, DocumentResponse } from "@/types";
 
 interface PendingItem {
   id: string;
+  predicate_id: string;
   label: string;
+  displayValue: string;
   sourceDocumentId: string;
+  documentTitle: string;
   confidence: number | null;
+  tier: string;
 }
 
 interface MissingItem {
@@ -21,6 +25,12 @@ interface MissingItem {
   missingField: string;
   whyItMatters: string;
   documentId: string | null;
+}
+
+interface DocumentGroup {
+  documentId: string;
+  documentTitle: string;
+  items: PendingItem[];
 }
 
 /** Convert predicate_id to human-readable label */
@@ -43,8 +53,18 @@ function friendlyFieldName(predicateId: string): string {
     acceptance_date: "Acceptance Date",
     issuing_authority: "Issuing Authority",
     event_title: "Title",
+    start_date: "Start Date",
+    end_date: "End Date",
+    organizer: "Organizer",
   };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ");
+  return map[predicateId] ?? predicateId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function confidenceBadge(confidence: number | null): { label: string; color: string } {
+  if (confidence === null) return { label: "", color: "" };
+  if (confidence >= 0.9) return { label: "High", color: "text-emerald-600" };
+  if (confidence >= 0.75) return { label: "Medium", color: "text-amber-600" };
+  return { label: "Low", color: "text-red-600" };
 }
 
 export default function HomePage() {
@@ -58,7 +78,7 @@ export default function HomePage() {
     Promise.all([
       api.get<ListDocumentsResponse>("/documents", { query: { page_size: 5 } }),
       api.get<{ total_count: number }>("/objects", { query: { page_size: 1 } }),
-      api.get<any[]>("/confirmations/pending", { query: { page_size: 5 } }).catch(() => []),
+      api.get<any[]>("/confirmations/pending", { query: { page_size: 20 } }).catch(() => []),
       api.get<any[]>("/missing-info", { query: { limit: 5 } }).catch(() => []),
     ]).then(([docs, objects, pending, missing]) => {
       setRecentDocs(docs.items ?? []);
@@ -66,9 +86,13 @@ export default function HomePage() {
       setPendingItems(
         (Array.isArray(pending) ? pending : []).map((item: any) => ({
           id: item.claim_id,
-          label: `${friendlyFieldName(item.predicate_id)}: ${String(item.value_schema)}`,
+          predicate_id: item.predicate_id,
+          label: friendlyFieldName(item.predicate_id),
+          displayValue: item.display_value || "",
           sourceDocumentId: item.source_document_id,
+          documentTitle: item.document_title || "",
           confidence: item.fact_confidence,
+          tier: item.tier || "",
         }))
       );
       setMissingItems(
@@ -96,6 +120,23 @@ export default function HomePage() {
       setPendingItems((prev) => prev.filter((item) => item.id !== claimId));
     } catch { /* ignore */ }
   };
+
+  // Group pending items by source document
+  const documentGroups: DocumentGroup[] = [];
+  const groupMap = new Map<string, DocumentGroup>();
+  for (const item of pendingItems) {
+    let group = groupMap.get(item.sourceDocumentId);
+    if (!group) {
+      group = {
+        documentId: item.sourceDocumentId,
+        documentTitle: item.documentTitle || "Untitled document",
+        items: [],
+      };
+      groupMap.set(item.sourceDocumentId, group);
+      documentGroups.push(group);
+    }
+    group.items.push(item);
+  }
 
   return (
     <div className="flex min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)]">
@@ -130,35 +171,82 @@ export default function HomePage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-6">
-              {/* Needs Your Attention */}
-              {pendingItems.length > 0 && (
+              {/* Needs Your Attention — grouped by document */}
+              {documentGroups.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50">
                   <div className="flex items-center justify-between border-b border-amber-200 px-5 py-4">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="h-4 w-4 text-amber-600" />
                       <h2 className="text-sm font-semibold text-amber-900">Needs Your Attention</h2>
                     </div>
-                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">{pendingItems.length} pending</span>
+                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">{pendingItems.length} items</span>
                   </div>
                   <div className="divide-y divide-amber-200">
-                    {pendingItems.slice(0, 5).map((item) => (
-                      <div key={item.id} className="flex items-center gap-3 px-5 py-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-amber-900">{item.label}</p>
-                          <p className="text-xs text-amber-700">
-                            {item.confidence != null ? `Confidence: ${Math.round(item.confidence * 100)}%` : ""}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button type="button" onClick={() => void handleApprove(item.id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Approve">
-                            <CheckCircle2 className="h-4 w-4" />
-                          </button>
-                          <button type="button" onClick={() => void handleReject(item.id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Reject">
-                            <XCircle className="h-4 w-4" />
-                          </button>
+                    {documentGroups.slice(0, 3).map((group) => (
+                      <div key={group.documentId} className="px-5 py-4">
+                        <Link
+                          href={`/documents/${encodeURIComponent(group.documentId)}`}
+                          className="flex items-center gap-2 text-sm font-medium text-amber-900 hover:text-amber-700 hover:underline"
+                        >
+                          <FileText className="h-4 w-4 shrink-0" />
+                          {group.documentTitle}
+                          <span className="text-xs font-normal text-amber-600">
+                            ({group.items.length} {group.items.length === 1 ? "item" : "items"})
+                          </span>
+                        </Link>
+                        <div className="mt-2 space-y-2 pl-6">
+                          {group.items.slice(0, 4).map((item) => {
+                            const conf = confidenceBadge(item.confidence);
+                            return (
+                              <div key={item.id} className="flex items-center gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs text-amber-800">
+                                    <span className="font-medium">{item.label}</span>
+                                    {item.displayValue ? (
+                                      <span className="ml-2 text-amber-900 font-medium">
+                                        {item.displayValue}
+                                      </span>
+                                    ) : (
+                                      <span className="ml-2 text-amber-600 italic">
+                                        not found
+                                      </span>
+                                    )}
+                                    {conf.label && (
+                                      <span className={`ml-2 text-[10px] font-medium ${conf.color}`}>
+                                        {conf.label}
+                                      </span>
+                                    )}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button type="button" onClick={() => void handleApprove(item.id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Confirm">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button type="button" onClick={() => void handleReject(item.id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Dismiss">
+                                    <XCircle className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {group.items.length > 4 && (
+                            <Link
+                              href={`/documents/${encodeURIComponent(group.documentId)}`}
+                              className="inline-flex items-center gap-1 text-xs text-amber-700 hover:underline"
+                            >
+                              +{group.items.length - 4} more — Review document <ArrowRight className="h-3 w-3" />
+                            </Link>
+                          )}
                         </div>
                       </div>
                     ))}
+                    {documentGroups.length > 3 && (
+                      <div className="px-5 py-3 text-center">
+                        <Link href="/documents" className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:underline">
+                          View all documents <ArrowRight className="h-3 w-3" />
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

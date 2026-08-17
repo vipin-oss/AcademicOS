@@ -102,6 +102,7 @@ class AnalysisOut(BaseModel):
     ai_rejected: int = 0
     enrichment_status: str = "not_started"
     enrichment_timestamp: str | None = None
+    target_record_label: str = ""  # e.g. "Publication", "Event"
 
 
 def _analysis_out(
@@ -115,7 +116,16 @@ def _analysis_out(
          "existing_id": r.existing_id, "reason": r.reason}
         for r in (routing or [])
     ]
-    # Add field confidence from reconciled fields
+
+    # Build a predicate_id -> record_status map from actual record outcomes
+    record_status_map: dict[str, str] = {}
+    for r in a.records:
+        record_status_map[r.predicate_id] = r.status
+    # Build a predicate_id -> conflict/duplicate lookup
+    conflict_preds = {c.predicate_id for c in a.conflicts}
+    duplicate_preds = {d_hit.predicate_id for d_hit in a.duplicates}
+
+    # Add field confidence from reconciled fields — with accurate status
     d["field_confidence"] = [
         FieldConfidenceOut(
             field_name=f.field_name,
@@ -123,8 +133,14 @@ def _analysis_out(
             value=str(f.value),
             confidence=f.confidence,
             source=f.extractor,
-            risk="medium",  # Default, will be enriched from field_candidate
-            status="proposed" if f.extractor == "ai" else "auto_applied",
+            risk="low" if f.confidence >= 0.9 else ("medium" if f.confidence >= 0.75 else "high"),
+            status=(
+                "conflict" if f.predicate_id in conflict_preds
+                else "review_required" if f.predicate_id in duplicate_preds
+                else "auto_applied" if record_status_map.get(f.predicate_id) == "auto_suggested"
+                else "proposed" if record_status_map.get(f.predicate_id) == "proposed"
+                else "proposed"
+            ),
         )
         for f in a.fields
     ]
@@ -141,7 +157,23 @@ def _analysis_out(
         )
         for m in (entity_matches or [])
     ]
-    return AnalysisOut(**d)
+    result = AnalysisOut(**d)
+    # Professor-friendly label for what the document will become
+    _MODULE_TO_RECORD_LABEL: dict[str, str] = {
+        "publications": "Publication",
+        "research": "Research Project",
+        "events": "Event",
+        "committees": "Committee",
+        "finance": "Finance Record",
+        "faculty": "Faculty Record",
+        "teaching": "Teaching Record",
+        "students": "Student Record",
+        "general_document": "Document",
+    }
+    result.target_record_label = _MODULE_TO_RECORD_LABEL.get(
+        result.target_module, result.target_module.replace("_", " ").title()
+    )
+    return result
 
 
 def _service(db: Session, ai_core: AiCore | None = None) -> DocumentIntakeService:

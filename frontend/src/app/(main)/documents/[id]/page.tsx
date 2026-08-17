@@ -27,6 +27,7 @@ import { KgLinks } from "@/components/features/documents/KgLinks";
 import { DocumentPreview } from "@/components/features/documents/DocumentPreview";
 import { DocumentViewer } from "@/components/features/documents/DocumentViewer";
 import { DocumentAnalysisResult } from "@/components/features/documents/DocumentAnalysisResult";
+import { DocumentReviewPanel } from "@/components/features/documents/DocumentReviewPanel";
 import { EntityMatchReview } from "@/components/features/documents/EntityMatchReview";
 import { RelatedDocuments } from "@/components/features/documents/RelatedDocuments";
 import { EmptyState } from "@/components/features/objects/EmptyState";
@@ -286,6 +287,22 @@ export default function DocumentDetailsPage() {
                       </p>
                     )}
                   </Section>
+
+                  {/* Document Review Panel — unified review experience */}
+                  {analysis && (analysis.review_required || (analysis.field_confidence && analysis.field_confidence.some((f) => f.status !== "auto_applied"))) && (
+                    <div className="lg:col-span-2">
+                      <h2 className="mb-3 text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 text-amber-600" />
+                        Document Review
+                      </h2>
+                      <DocumentReviewPanel
+                        analysis={analysis}
+                        documentId={document.id}
+                        documentTitle={document.title}
+                        onReviewChanged={refresh}
+                      />
+                    </div>
+                  )}
 
                   {/* Entity Match Review — possible related documents */}
                   <Section title="Possible Matches" className="lg:col-span-2">

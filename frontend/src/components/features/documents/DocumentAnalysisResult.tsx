@@ -140,17 +140,25 @@ function FieldConfidenceRow({ field }: { field: FieldConfidence }) {
   const config = statusConfig[field.status] ?? statusConfig.proposed;
 
   return (
-    <div className="flex items-center justify-between py-1">
+    <div className="flex items-center justify-between py-1.5">
       <div className="flex items-center gap-2 min-w-0">
         {sourceIcon(field.source)}
         <span className="truncate text-xs text-[var(--text-primary)]">
           {friendlyFieldName(field.predicate_id)}
         </span>
-        <span className="text-xs text-[var(--text-tertiary)]">
-          {sourceLabel(field.source)}
-        </span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {/* Show actual value */}
+        {field.value && field.value !== "null" && field.value !== "undefined" && field.value.trim() !== "" && (
+          <span className="text-xs text-[var(--text-secondary)] truncate max-w-[180px]">
+            {field.value}
+          </span>
+        )}
+        {(!field.value || field.value === "null" || field.value.trim() === "") && (
+          <span className="text-xs text-[var(--text-tertiary)] italic">
+            Not found
+          </span>
+        )}
         <span className={`text-xs font-medium ${confidenceColor(field.confidence)}`}>
           {confidenceLabel(field.confidence)}
         </span>
@@ -251,13 +259,18 @@ export function DocumentAnalysisResult({
           <div className="text-xs font-medium text-[var(--text-tertiary)] mb-1">
             Detected information:
           </div>
-          <ul className="space-y-0.5 text-[var(--text-secondary)]">
+          <ul className="space-y-1 text-[var(--text-secondary)]">
             {analysis.fields.slice(0, 8).map((f) => (
-              <li key={f.predicate_id} className="truncate">
-                <span className="capitalize">{friendlyFieldName(f.predicate_id)}</span>: {String(f.value)}
-                {f.extractor === "ai" ? (
-                  <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] text-purple-700">AI</span>
-                ) : null}
+              <li key={f.predicate_id} className="flex items-center justify-between">
+                <span className="text-xs text-[var(--text-primary)]">
+                  {friendlyFieldName(f.predicate_id)}
+                </span>
+                <span className="text-xs text-[var(--text-secondary)] truncate max-w-[200px]">
+                  {String(f.value)}
+                  {f.extractor === "ai" ? (
+                    <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] text-purple-700">AI</span>
+                  ) : null}
+                </span>
               </li>
             ))}
             {analysis.fields.length > 8 && (

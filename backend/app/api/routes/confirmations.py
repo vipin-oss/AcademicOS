@@ -40,6 +40,9 @@ from app.infrastructure.db.session import get_db
 from app.infrastructure.persistence.cdm_decision_store import SQLCdmDecisionStore
 from app.infrastructure.persistence.claim_decision_store import SQLClaimDecisionStore
 from app.infrastructure.persistence.claim_store import SQLClaimStore
+from app.infrastructure.repositories.sqlalchemy_object_repository import (
+    SQLAlchemyObjectRepository,
+)
 
 router = APIRouter(
     prefix="/confirmations",
@@ -58,6 +61,9 @@ class PendingOut(BaseModel):
     extraction_confidence: float | None
     acl_scope: str | None
     tier: str
+    display_value: str = ""
+    source_text: str = ""
+    document_title: str = ""
 
 
 class DecisionOut(BaseModel):
@@ -112,6 +118,21 @@ def pending(
     items = queue.pending(
         page=page, page_size=page_size, can_decide=_can_decide(user),
     )
+
+    # Batch-load document titles for all unique source_document_ids
+    from app.domain.value_objects.object_id import ObjectId
+    from app.domain.value_objects.enums import ObjectType
+    repo = SQLAlchemyObjectRepository(db)
+    doc_ids = {i.source_document_id for i in items if i.source_document_id}
+    doc_titles: dict[str, str] = {}
+    for did in doc_ids:
+        try:
+            doc = repo.get_by_id(ObjectId(did))
+            if doc is not None and doc.object_type is ObjectType.DOCUMENT:
+                doc_titles[did] = doc.title or did
+        except Exception:  # noqa: BLE001 - best-effort title lookup
+            pass
+
     return [
         PendingOut(
             claim_id=i.claim_id, predicate_id=i.predicate_id,
@@ -119,6 +140,9 @@ def pending(
             source_version=i.source_version, fact_confidence=i.fact_confidence,
             extraction_confidence=i.extraction_confidence, acl_scope=i.acl_scope,
             tier=i.tier,
+            display_value=i.display_value,
+            source_text=i.source_text,
+            document_title=doc_titles.get(i.source_document_id, ""),
         )
         for i in items
     ]

@@ -12,7 +12,22 @@ from dataclasses import dataclass
 
 from app.application.ports.claim_store import ClaimStore
 from app.application.services.confidence_triage import triage_key
-from app.domain.value_objects.claim import ClaimStatus, confidence_tier
+from app.domain.value_objects.claim import Claim, ClaimStatus, confidence_tier
+
+
+def _claim_display_value(claim: Claim) -> str:
+    """Extract a human-readable display string from a claim's value dict."""
+    value = claim.value if isinstance(claim.value, dict) else {}
+    kind = value.get("kind")
+    if kind in ("money",):
+        amount = value.get("amount")
+        return str(amount) if amount is not None else ""
+    if kind in ("number", "date", "text"):
+        v = value.get("value")
+        return str(v) if v is not None else ""
+    # raw or unknown
+    text = value.get("text")
+    return str(text) if text is not None else ""
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,8 @@ class PendingClaim:
     acl_scope: str | None
     tier: str
     needs_ocr: bool = False
+    display_value: str = ""
+    source_text: str = ""
 
 
 class ConfirmationQueue:
@@ -70,6 +87,8 @@ class ConfirmationQueue:
                 extraction_confidence=c.extraction_confidence,
                 acl_scope=c.acl_scope,
                 tier=confidence_tier(c.fact_confidence) if c.fact_confidence is not None else "low",
+                display_value=_claim_display_value(c),
+                source_text=str(c.value.get("text", "")) if isinstance(c.value, dict) else "",
             )
             for c in page_claims
         ]
