@@ -25,41 +25,11 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import type { PendingReviewItemResponse } from "@/lib/api/documentIntake";
+import { friendlyFieldName } from "@/lib/fieldLabels";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function friendlyFieldName(predicateId: string): string {
-  const map: Record<string, string> = {
-    publication_title: "Title",
-    publication_year: "Year",
-    journal_name: "Journal",
-    authors: "Authors",
-    doi: "DOI",
-    conference_name: "Conference",
-    venue: "Venue",
-    funding_agency: "Funding Agency",
-    principal_investigator: "Principal Investigator",
-    sanctioned_amount: "Amount",
-    project_title: "Project Title",
-    recipient: "Recipient",
-    certificate_number: "Certificate Number",
-    manuscript_id: "Manuscript ID",
-    acceptance_date: "Acceptance Date",
-    issuing_authority: "Issuing Authority",
-    event_title: "Title",
-    co_investigator: "Co-Investigator",
-    project_duration_months: "Duration",
-    sanction_order_number: "Sanction Number",
-    start_date: "Start Date",
-    end_date: "End Date",
-    organizer: "Organizer",
-    reference_number: "Reference Number",
-    conference_organizer: "Organizer",
-  };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 function confidenceLabel(c: number | null): { text: string; color: string } {
   if (c === null) return { text: "", color: "" };
@@ -331,6 +301,8 @@ export function PendingReviewSection({
 }: PendingReviewSectionProps) {
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(true);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const [confirmAllDone, setConfirmAllDone] = useState(false);
 
   const handleResolved = useCallback(
     (claimId: string) => {
@@ -341,6 +313,31 @@ export function PendingReviewSection({
   );
 
   const pendingItems = items.filter((item) => !resolvedIds.has(item.claim_id));
+
+  const handleConfirmAll = useCallback(async () => {
+    setConfirmingAll(true);
+    try {
+      await api.post(
+        `/documents/${documentId}/confirm-all-high-confidence`,
+        undefined,
+        { query: { min_confidence: 0.9 } },
+      );
+      const highConfIds = pendingItems
+        .filter((item) => (item.confidence ?? 0) >= 0.9)
+        .map((item) => item.claim_id);
+      setResolvedIds((prev) => {
+        const next = new Set(prev);
+        highConfIds.forEach((id) => next.add(id));
+        return next;
+      });
+      setConfirmAllDone(true);
+      onItemResolved();
+    } catch {
+      // Silent failure — user can still confirm individually
+    } finally {
+      setConfirmingAll(false);
+    }
+  }, [documentId, pendingItems, onItemResolved]);
 
   if (loading) {
     return (
@@ -378,11 +375,7 @@ export function PendingReviewSection({
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50" id="review-section">
       {/* Header */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 border-b border-amber-200 px-5 py-4 text-left hover:bg-amber-100 transition-colors"
-      >
+      <div className="flex w-full items-center gap-2 border-b border-amber-200 px-5 py-4">
         <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
         <div className="flex-1">
           <h2 className="text-sm font-semibold text-amber-900">
@@ -395,16 +388,43 @@ export function PendingReviewSection({
         <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">
           {pendingItems.length}
         </span>
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 text-amber-600" />
-        ) : (
-          <ChevronRight className="h-4 w-4 text-amber-600" />
-        )}
-      </button>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="p-1 rounded hover:bg-amber-100 transition-colors"
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 text-amber-600" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-amber-600" />
+          )}
+        </button>
+      </div>
 
-      {/* Items */}
+      {/* Confirm All + Items */}
       {expanded && (
         <div className="p-4 space-y-3">
+          {/* Confirm All High-Confidence button */}
+          {pendingItems.some((item) => (item.confidence ?? 0) >= 0.9) && (
+            <div className="flex items-center gap-3 pb-2 border-b border-amber-200">
+              <button
+                type="button"
+                onClick={() => void handleConfirmAll()}
+                disabled={confirmingAll}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {confirmingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                {confirmingAll ? "Confirming…" : "Confirm all high-confidence"}
+              </button>
+              <span className="text-xs text-[var(--text-tertiary)]">
+                Confirms items with high confidence in one click. Others need individual review.
+              </span>
+            </div>
+          )}
           {pendingItems.map((item) => (
             <ReviewCard
               key={item.claim_id}

@@ -16,7 +16,7 @@ otherwise) bound to the source document for provenance.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -803,6 +803,72 @@ def get_pending_review(
         document_title=doc.title or document_id,
         items=items,
         total_pending=len(items),
+    )
+
+
+class BulkConfirmHighConfidenceOut(BaseModel):
+    """Result of confirming all high-confidence pending items for a document."""
+    document_id: str
+    confirmed: int
+    remaining: int
+
+
+@router.post("/{document_id}/confirm-all-high-confidence", response_model=BulkConfirmHighConfidenceOut)
+def confirm_all_high_confidence(
+    document_id: str,
+    min_confidence: float = Query(default=0.9, ge=0.0, le=1.0),
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> BulkConfirmHighConfidenceOut:
+    """Confirm all pending review items for a document at/above min_confidence."""
+    from app.domain.value_objects.claim import ClaimStatus
+    from app.application.services.claim_confirmation import ClaimConfirmationService
+    from app.application.services.claim_service import ClaimService
+    from app.infrastructure.persistence.claim_decision_store import SQLClaimDecisionStore
+
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    store = SQLClaimStore(db)
+    all_claims = store.by_source(document_id)
+    high_conf = [
+        c for c in all_claims
+        if c.status in (ClaimStatus.PROPOSED, ClaimStatus.AUTO_SUGGESTED)
+        and (c.fact_confidence or 0) >= min_confidence
+    ]
+
+    confirm_svc = ClaimConfirmationService(ClaimService(store), SQLClaimDecisionStore(db))
+    confirmed = 0
+    for c in high_conf:
+        try:
+            confirm_svc.approve(c.claim_id, reviewer=str(user.id))
+            confirmed += 1
+        except Exception:
+            pass
+    db.commit()
+
+    remaining_claims = store.by_source(document_id)
+    remaining = sum(
+        1 for c in remaining_claims
+        if c.status in (ClaimStatus.PROPOSED, ClaimStatus.AUTO_SUGGESTED)
+    )
+
+    if remaining == 0:
+        try:
+            from app.infrastructure.persistence.notification_store import SQLNotificationStore
+            notif_store = SQLNotificationStore(db)
+            for n in notif_store.by_user(str(user.id), limit=100):
+                if n.action_url and document_id in (n.action_url or ""):
+                    notif_store.mark_read(n.id, str(user.id))
+            db.commit()
+        except Exception:
+            pass
+
+    return BulkConfirmHighConfidenceOut(
+        document_id=document_id,
+        confirmed=confirmed,
+        remaining=remaining,
     )
 
 

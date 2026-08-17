@@ -148,6 +148,40 @@ def pending(
     ]
 
 
+def _try_resolve_notification(db: Session, claim_id: str, user_id: str) -> None:
+    """After a review action, check if all pending items for the claim's
+    document are resolved. If so, mark the document's notification as read."""
+    try:
+        from app.domain.value_objects.claim import ClaimStatus
+        from app.infrastructure.persistence.notification_store import SQLNotificationStore
+
+        store = SQLClaimStore(db)
+        claim = store.get(claim_id)
+        if not claim:
+            return
+        doc_id = claim[0].source_document_id
+
+        # Check if any proposed/auto_suggested claims remain for this document
+        remaining = store.by_source(doc_id)
+        has_pending = any(
+            c.status in (ClaimStatus.PROPOSED, ClaimStatus.AUTO_SUGGESTED)
+            for c in remaining
+        )
+
+        if not has_pending:
+            notif_store = SQLNotificationStore(db)
+            notifs = notif_store.by_user(user_id, limit=100)
+            changed = False
+            for n in notifs:
+                if n.action_url and doc_id in (n.action_url or ""):
+                    notif_store.mark_read(n.id, user_id)
+                    changed = True
+            if changed:
+                db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 @router.post("/{claim_id}/approve", response_model=DecisionOut)
 def approve_claim(
     claim_id: str,
@@ -164,6 +198,7 @@ def approve_claim(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     db.commit()
+    _try_resolve_notification(db, claim_id, str(user.id))
     return _to_decision(record)
 
 
@@ -181,6 +216,7 @@ def reject_claim(
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     db.commit()
+    _try_resolve_notification(db, claim_id, str(user.id))
     return _to_decision(record)
 
 
@@ -199,6 +235,7 @@ def correct_claim(
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     db.commit()
+    _try_resolve_notification(db, claim_id, str(user.id))
     return _to_decision(record)
 
 

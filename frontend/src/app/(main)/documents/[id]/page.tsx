@@ -378,10 +378,6 @@ export default function DocumentDetailsPage() {
                       </span>
                       <span className="text-sm text-[var(--text-tertiary)]">current revision</span>
                     </div>
-                    <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                      The version increments on every change. Browsing past revisions requires a
-                      backend snapshots endpoint.
-                    </p>
                   </Section>
 
                   <Section title="Timeline">
@@ -415,7 +411,7 @@ export default function DocumentDetailsPage() {
 
                   <SectionPlaceholder
                     title="Activity"
-                    description="Who changed what, and when — available once the audit-log endpoint is implemented."
+                    description="View changes made to this document."
                     icon={<ActivityIcon className="h-4 w-4" aria-hidden="true" />}
                   />
                 </div>

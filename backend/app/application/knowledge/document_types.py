@@ -40,7 +40,7 @@ DOCUMENT_TYPES: tuple[DocumentTypeSpec, ...] = (
        ("conference", "conferences", "symposium", "workshop", "seminar"),
        ("conference", "symposium", "workshop", "seminar", "international conference"),
        ("conference", "symposium", "workshop", "seminar", "proceedings")),
-    _t("conference_certificate", "Conference Certificate", "research",
+    _t("conference_certificate", "Conference Certificate", "events",
        ("certificate", "certif", "participation_cert", "icist", "icit", "ieee", "acm"),
        ("certificate", "certificate of participation", "certificate of presentation",
         "this is to certify that", "participation certificate", "certificate of attendance"),
