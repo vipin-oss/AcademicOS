@@ -33,7 +33,7 @@ Static routes are declared BEFORE parameterised ones so ids never capture
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -905,3 +905,33 @@ def delete_expenditure(
     except ValueError as exc:
         raise _unprocessable(exc)
     return None
+
+
+@router.get("/export")
+def export_projects(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> Response:
+    """Export research projects as CSV."""
+    import csv
+    import io
+
+    from app.domain.value_objects.enums import ObjectType
+
+    projects = repo.list_by_type(ObjectType.PROJECT)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["title", "status", "start_date", "end_date", "budget", "created_at"])
+    for p in projects:
+        writer.writerow([
+            p.title or "",
+            p.metadata.get_value("status") or "",
+            p.metadata.get_value("start_date") or "",
+            p.metadata.get_value("end_date") or "",
+            p.metadata.get_value("budget_approved") or "",
+            str(p.created_at) if p.created_at else "",
+        ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="research_projects.csv"'},
+    )

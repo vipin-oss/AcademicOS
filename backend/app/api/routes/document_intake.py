@@ -38,6 +38,12 @@ from app.application.services.entity_linking import EntityLinkingService
 from app.application.services.entity_resolution import MatchResult, match_entities
 from app.application.services.document_intake import DocumentAnalysis, DocumentIntakeService
 from app.application.services.domain_record_router import DomainRecordRouter, RouteOutcome
+from app.application.services.notification_service import (
+    NotificationService,
+    notify_conflicts_detected,
+    notify_document_analyzed,
+)
+from app.infrastructure.persistence.notification_store import SQLNotificationStore
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
 from app.application.use_cases.object_acl import object_acl_scope
 from app.domain.entities.object import UniversalObject
@@ -273,6 +279,10 @@ def analyze_document(
 
     db.commit()
 
+    # Generate notifications for meaningful events (Revision #18)
+    _maybe_notify(db, str(user.id), document_id, doc.title or document_id,
+                  analysis, entity_matches)
+
     # Get enrichment status from persisted metadata
     enrichment_status = doc.metadata.get_value("ai_enrichment_status") or "not_started"
     enrichment_timestamp = doc.metadata.get_value("ai_enrichment_timestamp")
@@ -299,6 +309,53 @@ def _require_read(doc: UniversalObject, user: UniversalObject) -> None:
         action=PermissionAction.READ,
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="No read permission on this document")
+
+
+def _maybe_notify(
+    db: Session,
+    user_id: str,
+    document_id: str,
+    document_title: str,
+    analysis: DocumentAnalysis,
+    entity_matches: list,
+) -> None:
+    """Generate notifications for meaningful events only.
+
+    Does NOT notify for every successful upload.
+    Only notifies when professor action is needed.
+    """
+    try:
+        notif_svc = NotificationService(SQLNotificationStore(db))
+
+        # 1. Entity match requiring review
+        medium_matches = [m for m in entity_matches if m.outcome == "medium"]
+        if medium_matches:
+            notif_svc.create(
+                user_id=user_id,
+                notification_type="entity_match",
+                title="Possible related document found",
+                message=f'"{document_title}" may refer to the same publication as another document.',
+                action_url=f"/documents/{document_id}",
+                metadata={"document_id": document_id, "match_count": len(medium_matches)},
+            )
+
+        # 2. Conflicts detected
+        if analysis.conflicts:
+            notify_conflicts_detected(
+                notif_svc, user_id, document_id, document_title,
+                len(analysis.conflicts),
+            )
+
+        # 3. Review required (not from conflicts — those are handled above)
+        if analysis.review_required and not analysis.conflicts and not entity_matches:
+            notify_document_analyzed(
+                notif_svc, user_id, document_id, document_title,
+                len(analysis.fields), review_required=True,
+            )
+
+        db.commit()
+    except Exception:  # noqa: BLE001 - notifications are best-effort
+        db.rollback()
 
 
 class LinkRequest(BaseModel):

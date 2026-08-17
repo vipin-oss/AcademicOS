@@ -278,3 +278,33 @@ def delete_event(event_id: str, repo: SQLAlchemyObjectRepository = Depends(_repo
     except ObjectNotFoundError as exc:
         raise _not_found(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/export")
+def export_events(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> Response:
+    """Export events as CSV."""
+    import csv
+    import io
+
+    from app.domain.value_objects.enums import ObjectType
+
+    events = repo.list_by_type(ObjectType.EVENT)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["title", "event_type", "start_date", "end_date", "venue", "created_at"])
+    for e in events:
+        writer.writerow([
+            e.title or "",
+            e.metadata.get_value("event_type") or "",
+            e.metadata.get_value("start_date") or "",
+            e.metadata.get_value("end_date") or "",
+            e.metadata.get_value("venue") or "",
+            str(e.created_at) if e.created_at else "",
+        ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="events.csv"'},
+    )

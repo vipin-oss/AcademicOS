@@ -562,5 +562,34 @@ def delete_committee(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/export")
+def export_committees(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+) -> Response:
+    """Export committees as CSV."""
+    import csv
+    import io
+
+    from app.domain.value_objects.enums import ObjectType
+
+    committees = repo.list_by_type(ObjectType.COMMITTEE)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["name", "description", "department", "constitution_date", "created_at"])
+    for c in committees:
+        writer.writerow([
+            c.title or "",
+            c.metadata.get_value("description") or "",
+            c.metadata.get_value("department") or "",
+            c.metadata.get_value("constitution_date") or "",
+            str(c.created_at) if c.created_at else "",
+        ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="committees.csv"'},
+    )
+
+
 # Keep the frozen mapper import referenced (ObjectId is used by sibling routes).
 _ = ObjectId
