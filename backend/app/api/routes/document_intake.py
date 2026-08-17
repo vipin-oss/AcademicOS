@@ -34,6 +34,8 @@ from app.application.exceptions import ValidationError
 from app.application.services.ai_semantic_extractor import AiSemanticExtractor
 from app.application.services.claim_service import ClaimService
 from app.application.services.document_annotation_service import DocumentAnnotationService
+from app.application.services.entity_linking import EntityLinkingService
+from app.application.services.entity_resolution import MatchResult, match_entities
 from app.application.services.document_intake import DocumentAnalysis, DocumentIntakeService
 from app.application.services.domain_record_router import DomainRecordRouter, RouteOutcome
 from app.application.use_cases.documents.create_document import CreateDocumentUseCase
@@ -297,3 +299,125 @@ def _require_read(doc: UniversalObject, user: UniversalObject) -> None:
         action=PermissionAction.READ,
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="No read permission on this document")
+
+
+class LinkRequest(BaseModel):
+    """Request to link two documents."""
+    target_doc_id: str
+    confidence: float = 0.0
+    evidence: str = ""
+
+
+class LinkResponse(BaseModel):
+    """Response for entity linking operation."""
+    success: bool
+    source_doc_id: str
+    target_doc_id: str
+    already_linked: bool = False
+    error: str | None = None
+
+
+class RelatedDocsResponse(BaseModel):
+    """Response for related documents query."""
+    document_id: str
+    related: list[dict]
+
+
+@router.post("/{document_id}/link", response_model=LinkResponse)
+def link_documents(
+    document_id: str,
+    body: LinkRequest,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> LinkResponse:
+    """Link two documents as referring to the same academic entity.
+
+    Creates a RELATED_TO relationship between the source document
+    and the target document. Idempotent — no duplicate relationships.
+    """
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    linking_service = EntityLinkingService(repo)
+    result = linking_service.create_link(
+        source_doc_id=document_id,
+        target_doc_id=body.target_doc_id,
+        confidence=body.confidence,
+        evidence=body.evidence or "Manual link confirmation",
+        actor=str(user.id),
+    )
+
+    if result.success:
+        db.commit()
+
+    return LinkResponse(
+        success=result.success,
+        source_doc_id=result.source_doc_id,
+        target_doc_id=result.target_doc_id,
+        already_linked=result.already_linked,
+        error=result.error,
+    )
+
+
+@router.post("/{document_id}/confirm-match/{target_doc_id}", response_model=LinkResponse)
+def confirm_entity_match(
+    document_id: str,
+    target_doc_id: str,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> LinkResponse:
+    """Confirm an entity match and create a relationship.
+
+    This is the professor-friendly endpoint for confirming that two
+    documents refer to the same academic entity.
+    """
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    # Verify target exists and user has access
+    target = repo.get_by_id(ObjectId(target_doc_id))
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Target document not found")
+
+    # Create the link
+    linking_service = EntityLinkingService(repo)
+    result = linking_service.create_link(
+        source_doc_id=document_id,
+        target_doc_id=target_doc_id,
+        confidence=1.0,  # User-confirmed = highest confidence
+        evidence="Confirmed by user",
+        actor=str(user.id),
+    )
+
+    if result.success:
+        db.commit()
+
+    return LinkResponse(
+        success=result.success,
+        source_doc_id=result.source_doc_id,
+        target_doc_id=result.target_doc_id,
+        already_linked=result.already_linked,
+        error=result.error,
+    )
+
+
+@router.get("/{document_id}/related", response_model=RelatedDocsResponse)
+def get_related_documents(
+    document_id: str,
+    db: Session = Depends(get_db),
+    user: UniversalObject = Depends(get_current_user),
+) -> RelatedDocsResponse:
+    """Get all documents related to the given document."""
+    repo = SQLAlchemyObjectRepository(db)
+    doc = _load(db, repo, document_id)
+    _require_read(doc, user)
+
+    linking_service = EntityLinkingService(repo)
+    related = linking_service.get_related_documents(document_id)
+
+    return RelatedDocsResponse(
+        document_id=document_id,
+        related=related,
+    )
