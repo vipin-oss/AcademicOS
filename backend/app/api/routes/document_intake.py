@@ -359,7 +359,78 @@ def analyze_document(
     result = _analysis_out(analysis, routing, entity_matches)
     result.enrichment_status = enrichment_status
     result.enrichment_timestamp = enrichment_timestamp
+
+    # Improve document title if it's still a generic filename
+    _improve_document_title(repo, doc, analysis)
+
     return result
+
+
+def _improve_document_title(
+    repo: SQLAlchemyObjectRepository,
+    doc: UniversalObject,
+    analysis: DocumentAnalysis,
+) -> None:
+    """Update document title from extracted fields if it's still a generic filename."""
+    current_title = (doc.title or "").strip()
+    # Check if title looks like a raw filename
+    is_generic = (
+        not current_title
+        or current_title.endswith((".txt", ".pdf", ".docx", ".doc", ".xlsx", ".pptx"))
+        or current_title.replace("_", "").replace("-", "").replace(" ", "").isalnum()
+        and "_" in current_title or "-" in current_title
+    )
+    if not is_generic:
+        return
+    # Try to derive a better title from extracted fields
+    _TITLE_FIELDS = [
+        "conference_name", "event_title", "publication_title",
+        "project_title", "award_title", "recipient",
+    ]
+    for pred_id in _TITLE_FIELDS:
+        for f in analysis.fields:
+            if f.predicate_id == pred_id and f.value and str(f.value).strip():
+                new_title = str(f.value).strip()
+                if len(new_title) > 120:
+                    new_title = new_title[:117] + "..."
+                doc.set_title(new_title)
+                repo.save(doc)
+                return
+
+
+def _find_date_in_text(iso_date: str, text: str) -> int:
+    """Try to find a normalized ISO date (e.g. '2025-03-17') in raw text.
+    Returns the character index of the match, or -1 if not found.
+    Handles common date formats: '17 March 2025', 'March 17, 2025',
+    '15-17 March 2025', '15/03/2025', etc.
+    """
+    import re
+    try:
+        parts = iso_date.strip().split("-")
+        if len(parts) != 3:
+            return -1
+        year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+    except (ValueError, IndexError):
+        return -1
+
+    _MONTHS = [
+        "", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ]
+    month_name = _MONTHS[month] if 1 <= month <= 12 else ""
+    text_lower = text.lower()
+
+    # Try common patterns
+    patterns = [
+        rf'\b{day}\s+{month_name}\s+{year}\b',       # 17 March 2025
+        rf'\b{month_name}\s+{day},?\s+{year}\b',      # March 17, 2025
+        rf'\b{day}\b.*?\b{month_name}\b.*?\b{year}\b', # 15-17 March 2025
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text_lower, re.IGNORECASE)
+        if m:
+            return m.start()
+    return -1
 
 
 def _load(db: Session, repo: SQLAlchemyObjectRepository, document_id: str) -> UniversalObject:
@@ -702,15 +773,19 @@ def get_pending_review(
             val_lower = display_val.strip().lower()
             text_lower = doc_text.lower()
             idx = text_lower.find(val_lower)
+            if idx < 0 and value_kind == "date":
+                idx = _find_date_in_text(display_val, doc_text)
             if idx >= 0:
                 start = max(0, idx - 30)
-                end = min(len(doc_text), idx + len(display_val) + 30)
+                end = min(len(doc_text), idx + 60)
                 snippet = doc_text[start:end].strip()
                 if start > 0:
                     snippet = "..." + snippet
                 if end < len(doc_text):
                     snippet = snippet + "..."
                 source_snippet = snippet
+            elif display_val.strip():
+                source_snippet = "Source text available, exact location not determined"
 
         items.append(PendingReviewItem(
             claim_id=c.claim_id,

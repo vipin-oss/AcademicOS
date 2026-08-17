@@ -30,8 +30,18 @@ class NotificationService:
         action_url: Optional[str] = None,
         metadata: Optional[dict] = None,
     ) -> NotificationRecord:
-        """Create a new notification."""
+        """Create a new notification. Idempotent: skips if an identical
+        unread notification already exists for this user+type+action_url."""
         import json as json_mod
+
+        existing = self._store.find_matching(
+            user_id=user_id,
+            notification_type=notification_type,
+            action_url=action_url,
+            unread_only=True,
+        )
+        if existing and action_url:
+            return existing
 
         metadata_json = json_mod.dumps(metadata) if metadata else None
         return self._store.put(

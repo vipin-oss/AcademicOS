@@ -124,3 +124,22 @@ class SQLNotificationStore(NotificationStore):
         self._db.delete(model)
         self._db.flush()
         return True
+
+    def find_matching(
+        self,
+        user_id: str,
+        notification_type: str,
+        action_url: Optional[str] = None,
+        unread_only: bool = True,
+    ) -> Optional[NotificationRecord]:
+        """Find an existing notification matching the criteria."""
+        query = self._db.query(NotificationModel).filter(
+            NotificationModel.user_id == user_id,
+            NotificationModel.notification_type == notification_type,
+        )
+        if action_url is not None:
+            query = query.filter(NotificationModel.action_url == action_url)
+        if unread_only:
+            query = query.filter(NotificationModel.is_read == False)
+        model = query.order_by(NotificationModel.created_at.desc()).first()
+        return _to_record(model) if model else None

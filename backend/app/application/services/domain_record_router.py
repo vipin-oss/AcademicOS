@@ -103,6 +103,25 @@ class RouteOutcome:
     reason: str = ""
 
 
+_TITLE_STOP_WORDS = frozenset({
+    "organizer", "organised by", "organized by", "venue", "location",
+    "certificate number", "certificate no", "date", "participant",
+    "this is to certify", "held at", "held on",
+})
+
+
+def _clean_event_title(title: str) -> str:
+    """Remove trailing metadata from event titles."""
+    import re
+    for stop in _TITLE_STOP_WORDS:
+        pattern = re.compile(r'\s+' + re.escape(stop) + r'\s*:', re.IGNORECASE)
+        m = pattern.search(title)
+        if m:
+            title = title[:m.start()].strip()
+    title = title.split("\n")[0].strip()
+    return title
+
+
 def _f(fields: dict[str, object], key: str) -> str | None:
     v = fields.get(key)
     return str(v) if v not in (None, "") else None
@@ -143,6 +162,8 @@ class DomainRecordRouter:
         title = _f(fields, "conference_name") or _f(fields, "event_title")
         if not title:
             return RouteOutcome("event", "skipped", reason="no conference/event title")
+        # Clean title: stop before trailing metadata keywords
+        title = _clean_event_title(title)
         start = _f(fields, "start_date")
         dups = find_event_duplicates(
             self._repository, title=title, event_code=None,

@@ -100,9 +100,15 @@ export function UploadModal({
       setUploadedBy("");
     }
 
-    // Populate the "Object" select from the existing objects.
+    // Populate the "Object" select with professor-relevant types only.
+    const ALLOWED_TYPES = new Set(["event", "publication", "research_project", "committee", "student", "faculty"]);
     listObjects({ pageSize: 100 })
-      .then((response) => setObjects(response.items ?? []))
+      .then((response) => {
+        const filtered = (response.items ?? []).filter(
+          (o) => ALLOWED_TYPES.has(o.object_type)
+        );
+        setObjects(filtered);
+      })
       .catch(() => setObjects([]));
   }, [open, document]);
 

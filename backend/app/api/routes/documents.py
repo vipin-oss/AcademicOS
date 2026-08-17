@@ -529,6 +529,12 @@ def create_document(
     )
     # Auto-derive fields when not provided by the user.
     auto_title = title if title and title.strip() else file_name.rsplit(".", 1)[0] if "." in file_name else file_name
+    # Clean up generic filenames for professor-facing display
+    if not title or not title.strip():
+        cleaned = auto_title.replace("_", " ").replace("-", " ").strip()
+        if cleaned == cleaned.lower() or cleaned == cleaned.upper():
+            cleaned = cleaned.title()
+        auto_title = cleaned
     auto_doc_type = document_type if document_type and document_type.strip() else _infer_doc_type(file_name, mime_type)
     auto_uploaded_by = str(user.id)
     # V3 M11 (ADR-058): the canonical sync pipeline — hash + quarantine

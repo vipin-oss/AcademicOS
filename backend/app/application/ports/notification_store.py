@@ -66,3 +66,13 @@ class NotificationStore(abc.ABC):
     @abc.abstractmethod
     def delete(self, notification_id: str, user_id: str) -> bool:
         """Delete a notification. Returns True if found."""
+
+    @abc.abstractmethod
+    def find_matching(
+        self,
+        user_id: str,
+        notification_type: str,
+        action_url: Optional[str] = None,
+        unread_only: bool = True,
+    ) -> Optional[NotificationRecord]:
+        """Find an existing notification matching the criteria. Returns None if not found."""

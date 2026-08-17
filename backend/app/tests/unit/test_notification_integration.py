@@ -162,4 +162,4 @@ class TestNotificationIdempotency:
             action_url="/documents/doc:1",
         )
         notifs = svc.get_user_notifications("u:1")
-        assert len(notifs) == 2  # Two separate events (by design)
+        assert len(notifs) == 1  # Duplicate prevented by dedup
