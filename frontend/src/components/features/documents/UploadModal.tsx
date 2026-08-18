@@ -101,13 +101,11 @@ export function UploadModal({
     }
 
     // Populate the "Object" select with professor-relevant types only.
-    const ALLOWED_TYPES = new Set(["event", "publication", "research_project", "committee", "student", "faculty"]);
-    listObjects({ pageSize: 100 })
+    // Use API-level filtering so the backend doesn't return documents/users/notifications.
+    const ACADEMIC_TYPES = "event,publication,research_project,grant,committee,student,faculty";
+    listObjects({ pageSize: 100, objectType: ACADEMIC_TYPES })
       .then((response) => {
-        const filtered = (response.items ?? []).filter(
-          (o) => ALLOWED_TYPES.has(o.object_type)
-        );
-        setObjects(filtered);
+        setObjects(response.items ?? []);
       })
       .catch(() => setObjects([]));
   }, [open, document]);

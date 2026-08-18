@@ -503,16 +503,19 @@ class TestNotificationIntegration:
         assert len(notifs) == 3
 
     def test_no_spam_notifications_for_same_document(self, db):
-        """Re-analyzing same document doesn't spam notifications."""
+        """Re-analyzing same document doesn't spam notifications.
+
+        The dedup logic in NotificationService.create() prevents duplicate
+        unread notifications for the same user+type+action_url.
+        """
         svc = _notif_svc(db)
 
         notify_document_analyzed(svc, "u:1", "obj:doc:1", "Paper", 5, False)
-        # Second analysis — if called again, would create another notification
-        # This is by design — each analysis is a separate event
+        # Second analysis — dedup prevents a second identical notification
         notify_document_analyzed(svc, "u:1", "obj:doc:1", "Paper", 5, False)
 
         notifs = svc.get_user_notifications("u:1")
-        assert len(notifs) == 2  # Two separate events
+        assert len(notifs) == 1  # Dedup: only one unread notification
 
     def test_review_notification_for_conflicts(self, db):
         """Conflict notifications are meaningful."""

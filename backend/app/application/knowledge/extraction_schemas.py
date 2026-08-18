@@ -59,7 +59,7 @@ CONFERENCE_FIELDS = (
 PUBLICATION_FIELDS = (
     _f("title", "publication_title", "label", True, ("title", "paper title", "article title")),
     _f("authors", "authors", "label", False, ("authors", "author")),
-    _f("journal", "journal_name", "label", False, ("journal", "journal name", "venue")),
+    _f("journal", "journal_name", "label", False, ("journal", "journal name", "published in", "venue of publication")),
     _f("volume", "volume", "label", False, ("volume",)),
     _f("issue", "issue", "label", False, ("issue",)),
     _f("pages", "pages", "label", False, ("pages", "page range")),
@@ -76,7 +76,7 @@ AWARD_FIELDS = (
     _f("recipient", "recipient", "label", False, ("recipient", "awarded to", "presented to")),
     _f("date", "award_date", "date", False, ()),
     _f("category", "award_category", "label", False, ("category",)),
-    _f("reference_number", "reference_number", "label", False, ("reference number", "citation", "certificate number")),
+    _f("reference_number", "reference_number", "label", False, ("reference number", "citation", "award number")),
 )
 
 PROJECT_FIELDS = (

@@ -125,7 +125,10 @@ def _analysis_out(
     conflict_preds = {c.predicate_id for c in a.conflicts}
     duplicate_preds = {d_hit.predicate_id for d_hit in a.duplicates}
 
-    # Add field confidence from reconciled fields — with accurate status
+    # Add field confidence from reconciled fields — with consistent
+    # professor-facing status. All pending items show as "proposed" (Suggested)
+    # so the professor sees a uniform review experience. The distinction
+    # between "new field" and "duplicate of existing" is internal only.
     d["field_confidence"] = [
         FieldConfidenceOut(
             field_name=f.field_name,
@@ -136,9 +139,7 @@ def _analysis_out(
             risk="low" if f.confidence >= 0.9 else ("medium" if f.confidence >= 0.75 else "high"),
             status=(
                 "conflict" if f.predicate_id in conflict_preds
-                else "review_required" if f.predicate_id in duplicate_preds
                 else "auto_applied" if record_status_map.get(f.predicate_id) == "auto_suggested"
-                else "proposed" if record_status_map.get(f.predicate_id) == "proposed"
                 else "proposed"
             ),
         )
@@ -290,6 +291,17 @@ def analyze_upload(
     )
     routing = _route_records(repo, analysis, str(user.id), str(out.id))
     db.commit()
+
+    # Auto-index for immediate search after upload
+    try:
+        from app.infrastructure.search.index_applier import SearchIndexApplier
+        applier = SearchIndexApplier(db)
+        applier.apply_pending()
+        applier.backfill_missing()
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
     return _analysis_out(analysis, routing)
 
 
@@ -340,10 +352,13 @@ def analyze_document(
 
     db.commit()
 
-    # Auto-index for immediate search after analysis
+    # Auto-index for immediate search after analysis.
+    # Also backfill any objects that predate the outbox system.
     try:
         from app.infrastructure.search.index_applier import SearchIndexApplier
-        SearchIndexApplier(db).apply_pending()
+        applier = SearchIndexApplier(db)
+        applier.apply_pending()
+        applier.backfill_missing()
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()
@@ -847,6 +862,20 @@ def confirm_all_high_confidence(
         except Exception:
             pass
     db.commit()
+
+    # Project confirmed claims into domain objects
+    if confirmed > 0:
+        try:
+            from app.application.services.claim_projection import ClaimProjectionService
+            projection = ClaimProjectionService(store, repo)
+            result = projection.project_document(document_id, created_by=str(user.id))
+            if result.status == "projected":
+                for outcome in result.outcomes:
+                    if outcome.kind == "created":
+                        pass  # Successfully created domain record
+            db.commit()
+        except Exception:  # noqa: BLE001 - projection is best-effort
+            db.rollback()
 
     remaining_claims = store.by_source(document_id)
     remaining = sum(

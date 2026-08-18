@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { api } from "@/lib/api/client";
 import type { ListDocumentsResponse, DocumentResponse } from "@/types";
+import { friendlyFieldName } from "@/lib/fieldLabels";
 
 interface PendingItem {
   id: string;
@@ -31,33 +32,6 @@ interface DocumentGroup {
   documentId: string;
   documentTitle: string;
   items: PendingItem[];
-}
-
-/** Convert predicate_id to human-readable label */
-function friendlyFieldName(predicateId: string): string {
-  const map: Record<string, string> = {
-    publication_title: "Title",
-    publication_year: "Year",
-    journal_name: "Journal",
-    authors: "Authors",
-    doi: "DOI",
-    conference_name: "Conference",
-    venue: "Venue",
-    funding_agency: "Funding Agency",
-    principal_investigator: "Principal Investigator",
-    sanctioned_amount: "Amount",
-    project_title: "Project Title",
-    recipient: "Recipient",
-    certificate_number: "Certificate Number",
-    manuscript_id: "Manuscript ID",
-    acceptance_date: "Acceptance Date",
-    issuing_authority: "Issuing Authority",
-    event_title: "Title",
-    start_date: "Start Date",
-    end_date: "End Date",
-    organizer: "Organizer",
-  };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function confidenceBadge(confidence: number | null): { label: string; color: string } {

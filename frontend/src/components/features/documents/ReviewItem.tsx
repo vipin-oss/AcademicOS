@@ -24,6 +24,7 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { friendlyFieldName } from "@/lib/fieldLabels";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -56,35 +57,6 @@ export interface ReviewItemProps {
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function friendlyFieldName(predicateId: string): string {
-  const map: Record<string, string> = {
-    publication_title: "Title",
-    publication_year: "Year",
-    journal_name: "Journal",
-    authors: "Authors",
-    doi: "DOI",
-    conference_name: "Conference",
-    venue: "Venue",
-    funding_agency: "Funding Agency",
-    principal_investigator: "Principal Investigator",
-    sanctioned_amount: "Amount",
-    project_title: "Project Title",
-    recipient: "Recipient",
-    certificate_number: "Certificate Number",
-    manuscript_id: "Manuscript ID",
-    acceptance_date: "Acceptance Date",
-    issuing_authority: "Issuing Authority",
-    event_title: "Title",
-    co_investigator: "Co-Investigator",
-    project_duration_months: "Duration",
-    sanction_order_number: "Sanction Number",
-    start_date: "Start Date",
-    end_date: "End Date",
-    organizer: "Organizer",
-  };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 function confidenceLabel(confidence: number): { label: string; color: string; bg: string } {
   if (confidence >= 0.9) return { label: "High confidence", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" };

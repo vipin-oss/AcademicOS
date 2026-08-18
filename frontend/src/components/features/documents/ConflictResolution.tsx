@@ -15,6 +15,7 @@ import { useState, useCallback } from "react";
 import { AlertCircle, CheckCircle2, RefreshCw, Edit3 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import { friendlyFieldName } from "@/lib/fieldLabels";
 
 interface Conflict {
   predicate_id: string;
@@ -27,33 +28,6 @@ interface ConflictResolutionProps {
   conflicts: Conflict[];
   documentId: string;
   onResolved?: () => void;
-}
-
-/** Map predicate_id to professor-friendly field name */
-function friendlyFieldName(predicateId: string): string {
-  const map: Record<string, string> = {
-    publication_title: "Publication Title",
-    publication_year: "Publication Year",
-    journal_name: "Journal",
-    authors: "Authors",
-    doi: "DOI",
-    conference_name: "Conference",
-    venue: "Venue",
-    funding_agency: "Funding Agency",
-    principal_investigator: "Principal Investigator",
-    sanctioned_amount: "Amount",
-    project_title: "Project Title",
-    recipient: "Recipient",
-    certificate_number: "Certificate Number",
-    manuscript_id: "Manuscript ID",
-    acceptance_date: "Acceptance Date",
-    issuing_authority: "Issuing Authority",
-    event_title: "Title",
-    co_investigator: "Co-Investigator",
-    project_duration_months: "Duration",
-    sanction_order_number: "Sanction Number",
-  };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ");
 }
 
 export function ConflictResolution({ conflicts, documentId, onResolved }: ConflictResolutionProps) {

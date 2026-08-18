@@ -284,7 +284,11 @@ class DomainRecordRouter:
 
     # -------------------------------------------------------- provenance
     def _link_source(self, record_id: str, source_document_id: str, actor: str) -> None:
-        """RELATED_TO edge from the domain record to the source document."""
+        """RELATED_TO edge from the domain record to the source document,
+        plus ACL propagation: the projected object inherits the source
+        document's ownership and permission scope so that document-level
+        ACL protection automatically protects the projected Event/Publication.
+        """
         try:
             record = self._repository.get_by_id(ObjectId(record_id))
             if record is None:
@@ -293,8 +297,55 @@ class DomainRecordRouter:
                 ObjectId(source_document_id), RelationshipKind.RELATED_TO,
                 Provenance.ASSERTED, actor=actor,
             )
+            # Propagate ACL from source document to projected domain object.
+            self._propagate_acl(record, source_document_id)
             self._repository.save(record)
         except Exception:  # noqa: BLE001 - provenance link is best-effort
+            pass
+
+    def _propagate_acl(self, record, source_document_id: str) -> None:
+        """Copy the source document's ACL metadata to the projected record.
+
+        When the source document has explicit ACL grants (readers/writers/managers),
+        they are copied directly. When it has no explicit grants (owner-only),
+        or when the source document is not found (claim-only path), the owner
+        is set as the sole reader/writer/manager to enforce per-object
+        deny-by-default semantics.
+        """
+        import json
+        from app.application.dtos.object import ACL_MANAGERS, ACL_READERS, ACL_WRITERS
+        from app.domain.value_objects.metadata import MetadataEntry, MetadataLayer
+
+        try:
+            owner = record.audit.created_by if record.audit else ""
+            source = self._repository.get_by_id(ObjectId(source_document_id))
+
+            has_explicit_grants = False
+            if source is not None:
+                for key in (ACL_READERS, ACL_WRITERS, ACL_MANAGERS):
+                    val = source.metadata.get_value(key)
+                    if val:
+                        try:
+                            entries = json.loads(val)
+                            if entries:
+                                has_explicit_grants = True
+                        except (ValueError, TypeError):
+                            pass
+                        record.set_metadata(
+                            MetadataEntry(key, val, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                            actor="system",
+                        )
+
+            # If no explicit grants found (or source doc not in repo),
+            # set the owner as the sole authorized principal.
+            if not has_explicit_grants and owner:
+                owner_list = json.dumps([owner])
+                for key in (ACL_READERS, ACL_WRITERS, ACL_MANAGERS):
+                    record.set_metadata(
+                        MetadataEntry(key, owner_list, MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
+                        actor="system",
+                    )
+        except Exception:  # noqa: BLE001 - ACL propagation is best-effort
             pass
 
     # ------------------------------------------------ entity resolution

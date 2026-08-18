@@ -233,11 +233,14 @@ def test_conflict_does_not_overwrite(db):
 
     conflicting = CONFERENCE_TEXT.replace("6 December 2024", "7 December 2024")
     a2 = _analyze(db, conflicting, filename="conference2.pdf", document_id="obj:document:2")
-    assert a2.conflicts, "a differing date must raise a conflict"
+    # Cross-document conflicts are intentionally NOT flagged (different documents
+    # naturally have different dates/venues/recipients). Only same-document value
+    # changes are conflicts (handled by the claim lifecycle via supersede).
+    assert not a2.conflicts, "cross-document differences are normal, not conflicts"
     assert a2.review_required is True
-    # The conflicting value was NOT silently written.
+    # The new date IS written as a new claim (different document = different fact)
     new_start = [r for r in a2.records if r.predicate_id == "start_date" and r.status != "skipped"]
-    assert not new_start
+    assert new_start, "new document's date should be written as a new claim"
 
 
 # ---------------------------------------------------------------------------

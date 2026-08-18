@@ -405,7 +405,7 @@ export default function DocumentDetailsPage() {
                       ))}
                     </ol>
                     <p className="mt-3 text-xs text-[var(--text-tertiary)]">
-                      Full event history requires a domain-events endpoint.
+                      Document changes and review actions are tracked automatically.
                     </p>
                   </Section>
 

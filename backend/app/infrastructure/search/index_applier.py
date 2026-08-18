@@ -445,6 +445,42 @@ class SearchIndexApplier:
             if str(obj.id) not in with_history
         ]
 
+    # ---------------------------------------------------------- backfill
+    def backfill_missing(self) -> dict:
+        """Index objects that exist but are missing from the search index.
+
+        Called as a reconciliation step to ensure all objects are searchable.
+        Objects already in the index are skipped (idempotent upsert).
+        """
+        from app.infrastructure.db.models.search_document_model import SearchDocumentModel
+
+        # Find all object IDs in the search index
+        indexed_ids = set(
+            self._session.execute(
+                select(SearchDocumentModel.object_id).distinct()
+            ).scalars().all()
+        )
+
+        # Find all objects that exist but aren't indexed
+        all_objects = self._objects.list()
+        missing = [obj for obj in all_objects if str(obj.id) not in indexed_ids]
+
+        if not missing:
+            return {"backfilled": 0}
+
+        _log.info("Backfilling %d missing objects into search index", len(missing))
+
+        def write() -> None:
+            for obj in missing:
+                document = to_search_document(SnapshotMapper.to_snapshot(obj))
+                self._index.upsert(document)
+                self._sync_fts(str(obj.id), document)
+                self._sync_identity(str(obj.id))
+                self._propagate_acl(str(obj.id))
+
+        commit_with_retry(self._session, write)
+        return {"backfilled": len(missing)}
+
     # ---------------------------------------------------------- resolution
     def _document_for(self, aggregate_id: str) -> SearchDocument | None:
         """The CURRENT search document for one aggregate, from durable state.

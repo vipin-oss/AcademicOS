@@ -148,6 +148,47 @@ def pending(
     ]
 
 
+def _project_after_confirmation(db: Session, claim_id: str, user_id: str) -> None:
+    """After a review action, project confirmed claims into domain objects.
+
+    This is the critical bridge: confirmed claims become visible academic
+    records (Events, Publications, Research Projects, etc.) that the professor
+    can see in their dashboard, search, and reports.
+    """
+    try:
+        from app.application.services.claim_projection import ClaimProjectionService
+
+        store = SQLClaimStore(db)
+        claim_tuple = store.get(claim_id)
+        if not claim_tuple:
+            return
+        claim = claim_tuple[0]
+        doc_id = claim.source_document_id
+
+        repo = SQLAlchemyObjectRepository(db)
+        projection = ClaimProjectionService(store, repo)
+        result = projection.project_document(doc_id, created_by=user_id)
+
+        if result.status == "projected":
+            for outcome in result.outcomes:
+                if outcome.kind == "created":
+                    _log.info(
+                        "Projected %s %s from document %s",
+                        outcome.module, outcome.object_id, doc_id,
+                    )
+        db.commit()
+    except Exception:  # noqa: BLE001 - projection is best-effort
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).warning(
+            "Claim projection failed for %s", claim_id, exc_info=True
+        )
+
+
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
+
 def _try_resolve_notification(db: Session, claim_id: str, user_id: str) -> None:
     """After a review action, check if all pending items for the claim's
     document are resolved. If so, mark the document's notification as read."""
@@ -199,6 +240,7 @@ def approve_claim(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     db.commit()
     _try_resolve_notification(db, claim_id, str(user.id))
+    _project_after_confirmation(db, claim_id, str(user.id))
     return _to_decision(record)
 
 
@@ -236,6 +278,8 @@ def correct_claim(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     db.commit()
     _try_resolve_notification(db, claim_id, str(user.id))
+    # Projection: the corrected claim is CONFIRMED/ASSERTED, so project it
+    _project_after_confirmation(db, claim_id, str(user.id))
     return _to_decision(record)
 
 
@@ -280,6 +324,21 @@ def bulk_confirm_suggested(
         can_decide=_can_decide(user),
     )
     db.commit()
+
+    # Project confirmed claims into domain objects for each affected document
+    doc_ids_seen: set[str] = set()
+    for decision in result.decisions:
+        try:
+            store = SQLClaimStore(db)
+            claim_tuple = store.get(decision.subject_id)
+            if claim_tuple:
+                doc_id = claim_tuple[0].source_document_id
+                if doc_id not in doc_ids_seen:
+                    doc_ids_seen.add(doc_id)
+                    _project_after_confirmation(db, decision.subject_id, str(user.id))
+        except Exception:  # noqa: BLE001 - projection is best-effort
+            pass
+
     return BulkConfirmOut(
         confirmed=result.confirmed,
         skipped=result.skipped,

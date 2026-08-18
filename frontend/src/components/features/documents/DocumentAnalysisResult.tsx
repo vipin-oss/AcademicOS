@@ -7,6 +7,7 @@
 import { Loader2, CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles } from "lucide-react";
 
 import { ConflictResolution } from "./ConflictResolution";
+import { friendlyFieldName } from "@/lib/fieldLabels";
 import type {
   DocumentAnalysisField,
   DocumentAnalysisResponse,
@@ -33,33 +34,6 @@ const MODULE_LABELS: Record<string, string> = {
   finance: "Finance",
   general_document: "Documents",
 };
-
-/** Convert predicate_id to professor-friendly label */
-function friendlyFieldName(predicateId: string): string {
-  const map: Record<string, string> = {
-    publication_title: "Title",
-    publication_year: "Year",
-    journal_name: "Journal",
-    authors: "Authors",
-    doi: "DOI",
-    conference_name: "Conference",
-    venue: "Venue",
-    funding_agency: "Funding Agency",
-    principal_investigator: "Principal Investigator",
-    sanctioned_amount: "Amount",
-    project_title: "Project Title",
-    recipient: "Recipient",
-    certificate_number: "Certificate Number",
-    manuscript_id: "Manuscript ID",
-    acceptance_date: "Acceptance Date",
-    issuing_authority: "Issuing Authority",
-    event_title: "Title",
-    co_investigator: "Co-Investigator",
-    project_duration_months: "Duration",
-    sanction_order_number: "Sanction Number",
-  };
-  return map[predicateId] ?? predicateId.replace(/_/g, " ");
-}
 
 function typeLabel(typeId: string | null): string {
   if (!typeId) return "Unknown";

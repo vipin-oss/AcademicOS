@@ -40,16 +40,22 @@ export interface UpdateObjectPayload {
 export interface ListObjectsParams {
   page?: number;
   pageSize?: number;
+  /** Comma-separated object types to filter (e.g. "event,publication,grant") */
+  objectType?: string;
 }
 
 export function listObjects(
   params: ListObjectsParams = {},
   options?: RequestOptions,
 ): Promise<ListObjectsResponse> {
-  const { page = 1, pageSize = DEFAULT_PAGE_SIZE } = params;
+  const { page = 1, pageSize = DEFAULT_PAGE_SIZE, objectType } = params;
+  const query: Record<string, string | number> = { page, page_size: pageSize };
+  if (objectType) {
+    query.object_type = objectType;
+  }
   return api.get<ListObjectsResponse>("/objects", {
     ...options,
-    query: { page, page_size: pageSize },
+    query,
   });
 }
 

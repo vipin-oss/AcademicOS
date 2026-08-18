@@ -103,19 +103,37 @@ def _repository(db: Session = Depends(get_db)) -> SQLAlchemyObjectRepository:
 def list_objects(
     page: int = Query(1, ge=1, description="1-based page number"),
     page_size: int = Query(20, ge=1, le=100, description="items per page"),
+    object_type: str | None = Query(None, description="Filter by object type (comma-separated for multiple)"),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
 ) -> ListObjectsResponse:
     try:
-        result = ListObjectsUseCase(repo).execute(
-            ListObjectsQuery(page=page, page_size=page_size)
-        )
+        if object_type:
+            from app.application.dtos.object import CreateObjectOutput
+            all_objs = repo.list()
+            allowed_types = {t.strip() for t in object_type.split(",")}
+            filtered = [
+                o for o in all_objs
+                if (o.object_type.value if hasattr(o.object_type, 'value') else str(o.object_type)) in allowed_types
+            ]
+            total = len(filtered)
+            start = (page - 1) * page_size
+            page_objs = filtered[start:start + page_size]
+            items = [CreateObjectOutput.from_domain(o, []) for o in page_objs]
+        else:
+            # No filter: use the paginated use case for efficiency.
+            result = ListObjectsUseCase(repo).execute(
+                ListObjectsQuery(page=page, page_size=page_size)
+            )
+            items = result.items
+            total = result.total_count
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     return ListObjectsResponse(
-        items=[ObjectResponse(**to_response(o)) for o in result.items],
-        total_count=result.total_count,
-        page=result.page,
-        page_size=result.page_size,
+        items=[ObjectResponse(**to_response(o)) for o in items],
+        total_count=total,
+        page=page,
+        page_size=page_size,
     )
 
 
