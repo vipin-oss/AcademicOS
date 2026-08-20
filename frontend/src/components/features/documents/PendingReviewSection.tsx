@@ -3,9 +3,9 @@
 /**
  * PendingReviewSection — shows all pending review fields for a document.
  *
- * Fetches data from /documents/{id}/pending-review (not from analysis).
- * This ensures it always shows the REAL pending claims, even if re-analysis
- * creates different results.
+ * Simplified table view: Field | Value | Confidence | Actions.
+ * "Confirm All" button at top for high-confidence items.
+ * Individual Edit/Reject on hover/click.
  */
 
 import { useCallback, useState } from "react";
@@ -15,44 +15,23 @@ import {
   CheckCircle2,
   XCircle,
   Edit3,
-  FileText,
   Loader2,
   ChevronDown,
   ChevronRight,
-  Eye,
   Sparkles,
-  HelpCircle,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import type { PendingReviewItemResponse } from "@/lib/api/documentIntake";
 import { friendlyFieldName } from "@/lib/fieldLabels";
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-function confidenceLabel(c: number | null): { text: string; color: string } {
-  if (c === null) return { text: "", color: "" };
-  if (c >= 0.9) return { text: "High confidence", color: "text-emerald-700" };
-  if (c >= 0.75) return { text: "Medium confidence", color: "text-amber-700" };
-  return { text: "Low confidence", color: "text-red-700" };
+function confidenceDot(c: number | null): { color: string; title: string } {
+  if (c === null) return { color: "bg-gray-300", title: "" };
+  if (c >= 0.9) return { color: "bg-emerald-500", title: "High confidence" };
+  if (c >= 0.75) return { color: "bg-amber-500", title: "Medium confidence" };
+  return { color: "bg-red-500", title: "Low confidence" };
 }
 
-function sourceFriendly(source: string): string {
-  switch (source) {
-    case "label": return "Found near a label in the document";
-    case "regex": return "Matched a known pattern";
-    case "prose": return "Extracted from document text";
-    case "ai": return "AI suggestion";
-    default: return "Extracted from document";
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Single Review Item                                                  */
-/* ------------------------------------------------------------------ */
-
-function ReviewCard({
+function ReviewRow({
   item,
   onResolved,
 }: {
@@ -63,226 +42,124 @@ function ReviewCard({
   const [resolved, setResolved] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(item.display_value);
-  const [localError, setLocalError] = useState<string | null>(null);
 
-  const conf = confidenceLabel(item.confidence);
+  const conf = confidenceDot(item.confidence);
   const hasValue = item.display_value && item.display_value.trim() !== "";
   const fieldName = friendlyFieldName(item.predicate_id);
 
   const handleConfirm = useCallback(async () => {
     setActing(true);
-    setLocalError(null);
     try {
       await api.post(`/confirmations/${item.claim_id}/approve`, {});
       setResolved(true);
       onResolved(item.claim_id);
-    } catch {
-      setLocalError("Could not confirm. Please try again.");
-    } finally {
-      setActing(false);
-    }
+    } catch { /* ignore */ } finally { setActing(false); }
   }, [item.claim_id, onResolved]);
 
   const handleReject = useCallback(async () => {
     setActing(true);
-    setLocalError(null);
     try {
       await api.post(`/confirmations/${item.claim_id}/reject`, {});
       setResolved(true);
       onResolved(item.claim_id);
-    } catch {
-      setLocalError("Could not dismiss. Please try again.");
-    } finally {
-      setActing(false);
-    }
+    } catch { /* ignore */ } finally { setActing(false); }
   }, [item.claim_id, onResolved]);
 
   const handleEditSave = useCallback(async () => {
     if (!editValue.trim()) return;
     setActing(true);
-    setLocalError(null);
     try {
       await api.post(`/confirmations/${item.claim_id}/correct`, {
         raw_value: editValue.trim(),
-        notes: "Manual correction by user",
+        notes: "Manual correction",
       });
       setEditing(false);
       setResolved(true);
       onResolved(item.claim_id);
-    } catch {
-      setLocalError("Could not save edit. Please try again.");
-    } finally {
-      setActing(false);
-    }
+    } catch { /* ignore */ } finally { setActing(false); }
   }, [item.claim_id, editValue, onResolved]);
 
   if (resolved) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
-        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-        <span className="text-sm text-emerald-800">{fieldName} — saved</span>
-      </div>
+      <tr className="bg-emerald-50">
+        <td className="px-3 py-2 text-xs text-emerald-700" colSpan={4}>
+          <CheckCircle2 className="inline h-3.5 w-3.5 mr-1" />{fieldName} saved
+        </td>
+      </tr>
     );
   }
 
   return (
-    <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4" data-testid={`review-item-${item.predicate_id}`}>
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm font-medium text-[var(--text-primary)]">{fieldName}</span>
-        {item.status === "proposed" && (
-          <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-medium">
-            Needs confirmation
-          </span>
-        )}
-        {item.status === "auto_suggested" && (
-          <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[10px] font-medium">
-            Suggested
-          </span>
-        )}
-        {conf.text && (
-          <span className={`ml-auto text-xs font-medium ${conf.color}`}>{conf.text}</span>
-        )}
-      </div>
+    <tr className="group hover:bg-[var(--bg-hover)] transition-colors">
+      {/* Field name */}
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${conf.color}`} title={conf.title} aria-label={conf.title} />
+          <span className="text-sm font-medium text-[var(--text-primary)]">{fieldName}</span>
+            {item.status === "auto_suggested" && (
+            <Sparkles className="h-3 w-3 text-blue-400" />
+          )}
+        </div>
+      </td>
 
       {/* Value */}
-      {hasValue && !editing ? (
-        <div className="mb-3 rounded-md bg-[var(--bg-hover)] px-3 py-2">
-          <p className="text-base font-medium text-[var(--text-primary)] break-words">
-            {item.display_value}
-          </p>
-        </div>
-      ) : editing ? (
-        <div className="mb-3 flex gap-2">
-          <input
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            className="flex-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-app)] px-3 py-1.5 text-sm text-[var(--text-primary)]"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleEditSave();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            autoFocus
-          />
-          <button
-            type="button"
-            onClick={() => void handleEditSave()}
-            disabled={acting}
-            className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={() => { setEditing(false); setEditValue(item.display_value); }}
-            className="rounded-md border border-[var(--border-subtle)] px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="mb-3 rounded-md bg-[var(--bg-hover)] px-3 py-2">
-          <p className="text-sm text-[var(--text-tertiary)] italic">Not found in the document</p>
-        </div>
-      )}
+      <td className="px-3 py-2.5">
+        {editing ? (
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-sm"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleEditSave();
+                if (e.key === "Escape") { setEditing(false); setEditValue(item.display_value); }
+              }}
+              autoFocus
+            />
+            <button type="button" onClick={() => void handleEditSave()} disabled={acting}
+              className="rounded bg-[var(--accent)] px-2 py-1 text-xs text-white disabled:opacity-50">Save</button>
+            <button type="button" onClick={() => { setEditing(false); setEditValue(item.display_value); }}
+              className="rounded border border-[var(--border-subtle)] px-2 py-1 text-xs">Cancel</button>
+          </div>
+        ) : hasValue ? (
+          <span className="text-sm text-[var(--text-primary)]">{item.display_value}</span>
+        ) : (
+          <span className="text-sm text-[var(--text-tertiary)] italic">Not found</span>
+        )}
+      </td>
 
-      {/* Source evidence */}
-      {hasValue && item.source_text && item.source_text.trim() !== "" && (
-        <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-blue-600 mb-1">
-            Found in document
-          </p>
-          <p className="text-xs text-blue-900 font-mono break-words">
-            &ldquo;{item.source_text}&rdquo;
-          </p>
-        </div>
-      )}
-
-      {/* Source method */}
-      {hasValue && !editing && (
-        <div className="mb-3 flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
-          <Eye className="h-3 w-3" />
-          <span>{sourceFriendly(item.source)}</span>
-        </div>
-      )}
-
-      {/* Why am I seeing this? */}
-      <div className="mb-3 flex items-start gap-1.5 text-xs text-[var(--text-tertiary)]">
-        <HelpCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <span>
-          {hasValue
-            ? "This information was extracted from the document and may need your confirmation."
-            : `This field was not found. You can add it or leave it blank.`}
-        </span>
-      </div>
-
-      {/* Error */}
-      {localError && (
-        <div className="mb-3 rounded-md bg-[var(--danger-subtle)] px-3 py-2 text-xs text-[var(--danger)]">
-          {localError}
-        </div>
-      )}
+      {/* Source evidence (compact) */}
+      <td className="px-3 py-2.5 max-w-[200px]">
+        {hasValue && item.source_text && item.source_text.trim() !== "" && !editing && (
+          <span className="text-[11px] text-blue-600 font-mono truncate block" title={item.source_text}>
+            &ldquo;{item.source_text.length > 50 ? item.source_text.slice(0, 50) + "..." : item.source_text}&rdquo;
+          </span>
+        )}
+      </td>
 
       {/* Actions */}
-      {hasValue ? (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void handleConfirm()}
-            disabled={acting}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-            {acting ? "Saving…" : "Confirm"}
-          </button>
-          <button
-            type="button"
-            onClick={() => { setEditing(true); setEditValue(item.display_value); }}
-            disabled={acting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Edit3 className="h-3.5 w-3.5" />
-            Edit
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReject()}
-            disabled={acting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <XCircle className="h-3.5 w-3.5" />
-            Not applicable
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => { setEditing(true); setEditValue(""); }}
-            disabled={acting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]"
-          >
-            <Edit3 className="h-3.5 w-3.5" />
-            Add {fieldName}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReject()}
-            disabled={acting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)]"
-          >
-            Leave blank
-          </button>
-        </div>
-      )}
-    </div>
+      <td className="px-3 py-2.5 text-right">
+        {editing ? null : (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button type="button" onClick={() => void handleConfirm()} disabled={acting}
+              className="rounded-md bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50" title="Confirm">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            </button>
+            <button type="button" onClick={() => { setEditing(true); setEditValue(item.display_value); }} disabled={acting}
+              className="rounded-md bg-[var(--bg-hover)] p-1.5 text-[var(--text-secondary)] hover:bg-[var(--border-subtle)] disabled:opacity-50" title="Edit">
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+            <button type="button" onClick={() => void handleReject()} disabled={acting}
+              className="rounded-md bg-red-50 p-1.5 text-red-600 hover:bg-red-100 disabled:opacity-50" title="Not applicable">
+              <XCircle className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* Main Section                                                        */
-/* ------------------------------------------------------------------ */
 
 export interface PendingReviewSectionProps {
   documentId: string;
@@ -302,7 +179,7 @@ export function PendingReviewSection({
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(true);
   const [confirmingAll, setConfirmingAll] = useState(false);
-  const [confirmAllDone, setConfirmAllDone] = useState(false);
+  const [createdRecords, setCreatedRecords] = useState<Array<{id: string; type: string; title: string}>>([]);
 
   const handleResolved = useCallback(
     (claimId: string) => {
@@ -317,11 +194,9 @@ export function PendingReviewSection({
   const handleConfirmAll = useCallback(async () => {
     setConfirmingAll(true);
     try {
-      await api.post(
-        `/documents/${documentId}/confirm-all-high-confidence`,
-        undefined,
-        { query: { min_confidence: 0.9 } },
-      );
+      const result: any = await api.post(`/documents/${documentId}/confirm-all-high-confidence`, undefined, {
+        query: { min_confidence: 0.9 },
+      });
       const highConfIds = pendingItems
         .filter((item) => (item.confidence ?? 0) >= 0.9)
         .map((item) => item.claim_id);
@@ -330,13 +205,11 @@ export function PendingReviewSection({
         highConfIds.forEach((id) => next.add(id));
         return next;
       });
-      setConfirmAllDone(true);
+      if (result?.records_created?.length > 0) {
+        setCreatedRecords(result.records_created);
+      }
       onItemResolved();
-    } catch {
-      // Silent failure — user can still confirm individually
-    } finally {
-      setConfirmingAll(false);
-    }
+    } catch { /* silent */ } finally { setConfirmingAll(false); }
   }, [documentId, pendingItems, onItemResolved]);
 
   if (loading) {
@@ -344,7 +217,7 @@ export function PendingReviewSection({
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
         <div className="flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-          <span className="text-sm text-amber-800">Loading review items…</span>
+          <span className="text-sm text-amber-800">Loading review items...</span>
         </div>
       </div>
     );
@@ -352,18 +225,38 @@ export function PendingReviewSection({
 
   if (pendingItems.length === 0) {
     if (resolvedIds.size > 0) {
+      const TYPE_LABELS: Record<string, string> = {
+        event: "Event", publication: "Publication", project: "Research Project", committee: "Committee",
+      };
+      const TYPE_LINKS: Record<string, string> = {
+        event: "/events/", publication: "/publications/", project: "/research/projects/", committee: "/committees/",
+      };
       return (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-emerald-600" />
             <div>
-              <p className="text-sm font-semibold text-emerald-900">Review complete</p>
-              <p className="text-xs text-emerald-700">
-                Your document information has been saved.{" "}
-                <Link href={`/documents/${encodeURIComponent(documentId)}`} className="underline hover:text-emerald-900">
-                  View document
-                </Link>
-              </p>
+              <p className="text-sm font-semibold text-emerald-900">All reviewed</p>
+              {createdRecords.length > 0 ? (
+                <div className="mt-1 space-y-1">
+                  {createdRecords.map((rec) => (
+                    <p key={rec.id} className="text-xs text-emerald-700">
+                      Recorded as {TYPE_LABELS[rec.type] ?? rec.type}:{" "}
+                      <Link href={`${TYPE_LINKS[rec.type] ?? "/records/"}${encodeURIComponent(rec.id)}`}
+                        className="font-semibold underline hover:text-emerald-900">
+                        {rec.title || "View"}
+                      </Link>
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-700">
+                  Information saved.{" "}
+                  <Link href={`/documents/${encodeURIComponent(documentId)}`} className="underline hover:text-emerald-900">
+                    View document
+                  </Link>
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -372,66 +265,49 @@ export function PendingReviewSection({
     return null;
   }
 
+  const highConfCount = pendingItems.filter((i) => (i.confidence ?? 0) >= 0.9).length;
+
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50" id="review-section">
       {/* Header */}
-      <div className="flex w-full items-center gap-2 border-b border-amber-200 px-5 py-4">
+      <div className="flex w-full items-center gap-2 border-b border-amber-200 px-4 py-3">
         <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-amber-900">
-            Review required
+            {pendingItems.length} {pendingItems.length === 1 ? "field" : "fields"} need your review
           </h2>
-          <p className="text-xs text-amber-700">
-            AcademicOS found {pendingItems.length} {pendingItems.length === 1 ? "item" : "items"} that may need your confirmation.
-          </p>
         </div>
-        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">
-          {pendingItems.length}
-        </span>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="p-1 rounded hover:bg-amber-100 transition-colors"
-        >
-          {expanded ? (
-            <ChevronDown className="h-4 w-4 text-amber-600" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-amber-600" />
-          )}
+        {highConfCount > 0 && (
+          <button type="button" onClick={() => void handleConfirmAll()} disabled={confirmingAll}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50 shrink-0">
+            {confirmingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {confirmingAll ? "Confirming..." : `Confirm All (${highConfCount})`}
+          </button>
+        )}
+        <button type="button" onClick={() => setExpanded((v) => !v)}
+          className="p-1 rounded hover:bg-amber-100 transition-colors shrink-0">
+          {expanded ? <ChevronDown className="h-4 w-4 text-amber-600" /> : <ChevronRight className="h-4 w-4 text-amber-600" />}
         </button>
       </div>
 
-      {/* Confirm All + Items */}
+      {/* Table */}
       {expanded && (
-        <div className="p-4 space-y-3">
-          {/* Confirm All High-Confidence button */}
-          {pendingItems.some((item) => (item.confidence ?? 0) >= 0.9) && (
-            <div className="flex items-center gap-3 pb-2 border-b border-amber-200">
-              <button
-                type="button"
-                onClick={() => void handleConfirmAll()}
-                disabled={confirmingAll}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {confirmingAll ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                )}
-                {confirmingAll ? "Confirming…" : "Confirm all high-confidence"}
-              </button>
-              <span className="text-xs text-[var(--text-tertiary)]">
-                Confirms items with high confidence in one click. Others need individual review.
-              </span>
-            </div>
-          )}
-          {pendingItems.map((item) => (
-            <ReviewCard
-              key={item.claim_id}
-              item={item}
-              onResolved={handleResolved}
-            />
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-amber-200 text-xs text-amber-700">
+                <th className="px-3 py-2 text-left font-medium">Field</th>
+                <th className="px-3 py-2 text-left font-medium">Extracted Value</th>
+                <th className="px-3 py-2 text-left font-medium">Source</th>
+                <th className="px-3 py-2 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-amber-100">
+              {pendingItems.map((item) => (
+                <ReviewRow key={item.claim_id} item={item} onResolved={handleResolved} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

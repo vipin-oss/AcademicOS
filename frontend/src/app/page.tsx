@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle, AlertTriangle, Calendar, FlaskConical } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { api } from "@/lib/api/client";
@@ -17,7 +17,6 @@ interface PendingItem {
   sourceDocumentId: string;
   documentTitle: string;
   confidence: number | null;
-  tier: string;
 }
 
 interface MissingItem {
@@ -36,9 +35,9 @@ interface DocumentGroup {
 
 function confidenceBadge(confidence: number | null): { label: string; color: string } {
   if (confidence === null) return { label: "", color: "" };
-  if (confidence >= 0.9) return { label: "High", color: "text-emerald-600" };
-  if (confidence >= 0.75) return { label: "Medium", color: "text-amber-600" };
-  return { label: "Low", color: "text-red-600" };
+  if (confidence >= 0.9) return { label: "High confidence", color: "text-emerald-600" };
+  if (confidence >= 0.75) return { label: "Medium confidence", color: "text-amber-600" };
+  return { label: "Low confidence", color: "text-red-600" };
 }
 
 export default function HomePage() {
@@ -66,7 +65,6 @@ export default function HomePage() {
           sourceDocumentId: item.source_document_id,
           documentTitle: item.document_title || "",
           confidence: item.fact_confidence,
-          tier: item.tier || "",
         }))
       );
       setMissingItems(
@@ -95,6 +93,13 @@ export default function HomePage() {
     } catch { /* ignore */ }
   };
 
+  const handleApproveAll = async () => {
+    try {
+      await api.post("/confirmations/suggested/confirm-all", {});
+      setPendingItems([]);
+    } catch { /* ignore */ }
+  };
+
   // Group pending items by source document
   const documentGroups: DocumentGroup[] = [];
   const groupMap = new Map<string, DocumentGroup>();
@@ -112,48 +117,65 @@ export default function HomePage() {
     group.items.push(item);
   }
 
+  const highConfidenceCount = pendingItems.filter((item) => (item.confidence ?? 0) >= 0.9).length;
+
   return (
     <div className="flex min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)]">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopHeader />
         <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-[var(--text-primary)]">Welcome to AcademicOS</h1>
-            <p className="mt-1 text-sm text-[var(--text-tertiary)]">Upload documents, ask questions, and let AcademicOS organize your academic life.</p>
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-[var(--text-primary)]">Dashboard</h1>
+            <p className="mt-1 text-sm text-[var(--text-tertiary)]">
+              Upload documents, review extracted data, and manage your academic records.
+            </p>
           </div>
 
-          {/* Quick actions */}
+          {/* Quick actions — the 4 things a professor does most */}
           <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Link href="/documents" className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
+            <Link href="/documents" className="group flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-subtle)] text-[var(--accent)]"><Upload className="h-5 w-5" /></div>
-              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Upload</p><p className="text-xs text-[var(--text-tertiary)]">Add documents</p></div>
+              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Upload Document</p><p className="text-xs text-[var(--text-tertiary)]">Certificate, paper, notice...</p></div>
             </Link>
-            <Link href="/search" className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Search className="h-5 w-5" /></div>
+            <Link href="/events" className="group flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50 text-purple-600"><Calendar className="h-5 w-5" /></div>
+              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Events</p><p className="text-xs text-[var(--text-tertiary)]">Conferences, workshops...</p></div>
+            </Link>
+            <Link href="/research" className="group flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><FlaskConical className="h-5 w-5" /></div>
+              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Research</p><p className="text-xs text-[var(--text-tertiary)]">Projects, grants...</p></div>
+            </Link>
+            <Link href="/search" className="group flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><Search className="h-5 w-5" /></div>
               <div><p className="text-sm font-semibold text-[var(--text-primary)]">Search</p><p className="text-xs text-[var(--text-tertiary)]">Find anything</p></div>
-            </Link>
-            <Link href="/ai" className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50 text-purple-600"><Sparkles className="h-5 w-5" /></div>
-              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Ask AI</p><p className="text-xs text-[var(--text-tertiary)]">Get answers</p></div>
-            </Link>
-            <Link href="/records" className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 transition-all hover:border-[var(--accent)] hover:shadow-sm">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><BookOpen className="h-5 w-5" /></div>
-              <div><p className="text-sm font-semibold text-[var(--text-primary)]">Records</p><p className="text-xs text-[var(--text-tertiary)]">Academic data</p></div>
             </Link>
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-6">
-              {/* Needs Your Attention — grouped by document */}
+              {/* Needs Your Review — the MOST important section */}
               {documentGroups.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50">
                   <div className="flex items-center justify-between border-b border-amber-200 px-5 py-4">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="h-4 w-4 text-amber-600" />
-                      <h2 className="text-sm font-semibold text-amber-900">Needs Your Attention</h2>
+                      <h2 className="text-sm font-semibold text-amber-900">Needs Your Review</h2>
                     </div>
-                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">{pendingItems.length} items</span>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        {pendingItems.length} {pendingItems.length === 1 ? "item" : "items"}
+                      </span>
+                      {highConfidenceCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleApproveAll}
+                          className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                        >
+                          Confirm All ({highConfidenceCount})
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="divide-y divide-amber-200">
                     {documentGroups.slice(0, 3).map((group) => (
@@ -165,23 +187,22 @@ export default function HomePage() {
                           <FileText className="h-4 w-4 shrink-0" />
                           {group.documentTitle}
                           <span className="text-xs font-normal text-amber-600">
-                            ({group.items.length} {group.items.length === 1 ? "item" : "items"})
+                            ({group.items.length} {group.items.length === 1 ? "field" : "fields"})
                           </span>
                         </Link>
                         <div className="mt-2 space-y-2 pl-6">
                           {group.items.slice(0, 4).map((item) => {
                             const conf = confidenceBadge(item.confidence);
                             return (
-                              <Link
+                              <div
                                 key={item.id}
-                                href={`/documents/${encodeURIComponent(group.documentId)}`}
-                                className="flex items-center gap-3 rounded-md px-2 py-1.5 -mx-2 transition-colors hover:bg-amber-100"
+                                className="flex items-center gap-3 rounded-md px-2 py-1.5 -mx-2"
                               >
                                 <div className="min-w-0 flex-1">
                                   <p className="text-xs text-amber-800">
                                     <span className="font-medium">{item.label}</span>
                                     {item.displayValue ? (
-                                      <span className="ml-2 text-amber-900 font-medium">
+                                      <span className="ml-2 text-amber-900 font-semibold">
                                         {item.displayValue}
                                       </span>
                                     ) : (
@@ -196,15 +217,15 @@ export default function HomePage() {
                                     )}
                                   </p>
                                 </div>
-                                <div className="flex items-center gap-1" onClick={(e) => e.preventDefault()}>
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); void handleApprove(item.id); }} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Confirm">
+                                <div className="flex items-center gap-1">
+                                  <button type="button" onClick={() => void handleApprove(item.id)} className="rounded-lg bg-emerald-100 p-1.5 text-emerald-700 hover:bg-emerald-200" aria-label="Confirm">
                                     <CheckCircle2 className="h-3.5 w-3.5" />
                                   </button>
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); void handleReject(item.id); }} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Dismiss">
+                                  <button type="button" onClick={() => void handleReject(item.id)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" aria-label="Dismiss">
                                     <XCircle className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
-                              </Link>
+                              </div>
                             );
                           })}
                           {group.items.length > 4 && (
@@ -262,10 +283,10 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* Recent Activity */}
+              {/* Recent Documents */}
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
                 <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-5 py-4">
-                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent Activity</h2>
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent Documents</h2>
                   <Link href="/documents" className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline">View all <ArrowRight className="h-3 w-3" /></Link>
                 </div>
                 {loading ? <div className="space-y-3 p-5">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded-lg bg-[var(--bg-hover)]" />)}</div> : recentDocs.length > 0 ? (
@@ -284,24 +305,38 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* Right sidebar */}
             <div className="space-y-4">
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-5">
-                <h2 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Academic Summary</h2>
+                <h2 className="mb-4 text-sm font-semibold text-[var(--text-primary)]">Your Academic Records</h2>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Total Records</span><span className="text-sm font-semibold text-[var(--text-primary)]">{totalObjects}</span></div>
-                  <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Recent Uploads</span><span className="text-sm font-semibold text-[var(--text-primary)]">{recentDocs.length}</span></div>
+                  <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Documents</span><span className="text-sm font-semibold text-[var(--text-primary)]">{recentDocs.length}</span></div>
                   {pendingItems.length > 0 && (
-                    <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Pending Review</span><span className="text-sm font-semibold text-amber-600">{pendingItems.length}</span></div>
+                    <Link href="/documents" className="flex items-center justify-between group">
+                      <span className="text-sm text-[var(--text-secondary)]">Pending Review</span>
+                      <span className="text-sm font-semibold text-amber-600 group-hover:underline">{pendingItems.length}</span>
+                    </Link>
                   )}
                   {missingItems.length > 0 && (
-                    <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Incomplete Records</span><span className="text-sm font-semibold text-orange-600">{missingItems.length}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-sm text-[var(--text-secondary)]">Incomplete</span><span className="text-sm font-semibold text-orange-600">{missingItems.length}</span></div>
                   )}
+                </div>
+                <div className="mt-4 border-t border-[var(--border-subtle)] pt-4">
+                  <Link href="/records" className="flex items-center gap-2 text-sm font-medium text-[var(--accent)] hover:underline">
+                    <BookOpen className="h-4 w-4" /> View all records <ArrowRight className="h-3 w-3" />
+                  </Link>
                 </div>
               </div>
 
               <div className="rounded-xl border border-purple-200 bg-purple-50 p-5">
-                <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-purple-600" /><p className="text-sm font-semibold text-purple-900">AI Tip</p></div>
-                <p className="mt-2 text-xs text-purple-700">Try asking: &quot;What information is missing from my academic records?&quot; or &quot;Generate my updated CV.&quot;</p>
+                <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-purple-600" /><p className="text-sm font-semibold text-purple-900">AI Assistant</p></div>
+                <p className="mt-2 text-xs text-purple-700">Ask questions about your academic data, generate CVs, or find missing information.</p>
+                <div className="mt-3 space-y-1.5">
+                  <p className="text-[11px] text-purple-600 italic">&quot;What conferences did I attend this year?&quot;</p>
+                  <p className="text-[11px] text-purple-600 italic">&quot;Generate my updated CV.&quot;</p>
+                  <p className="text-[11px] text-purple-600 italic">&quot;What is missing from my research records?&quot;</p>
+                </div>
                 <Link href="/ai" className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-purple-600 hover:underline">Open AI Assistant <ArrowRight className="h-3 w-3" /></Link>
               </div>
             </div>

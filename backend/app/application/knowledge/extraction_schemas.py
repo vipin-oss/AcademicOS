@@ -48,7 +48,7 @@ CONFERENCE_FIELDS = (
     _f("participation_type", "participation_type", "label",
        False, ("participation", "participation type", "attended as")),
     _f("presentation_title", "presentation_title", "label",
-       False, ("presentation title", "paper title", "title of the paper")),
+       False, ("presentation title", "title of the paper", "title of paper presented")),
     _f("presentation_type", "presentation_type", "label",
        False, ("presentation type", "oral", "poster")),
     _f("event_url", "event_url", "url", False, ()),

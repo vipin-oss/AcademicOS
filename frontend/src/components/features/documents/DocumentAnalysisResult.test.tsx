@@ -79,7 +79,7 @@ describe("DocumentAnalysisResult", () => {
               field_name: "conference_name",
               predicate_id: "conference_name",
               value: "Quantum Materials",
-              original_text: "…",
+              original_text: "...",
               confidence: 0.9,
               extractor: "prose",
             },
@@ -96,13 +96,13 @@ describe("DocumentAnalysisResult", () => {
         analyzing={false}
       />,
     );
-    expect(screen.getByText(/Yes/)).toBeTruthy();
     expect(screen.getByText(/New Delhi/)).toBeTruthy();
     expect(screen.getByText("AI")).toBeTruthy();
+    expect(screen.getByText(/pieces of information/)).toBeTruthy();
   });
 
-  it("shows AI assistance: No by default", () => {
+  it("shows field count in simplified summary", () => {
     render(<DocumentAnalysisResult analysis={analysis()} analyzing={false} />);
-    expect(screen.getByText(/No/)).toBeTruthy();
+    expect(screen.getByText(/piece/)).toBeTruthy();
   });
 });

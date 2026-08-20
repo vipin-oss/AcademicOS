@@ -236,6 +236,64 @@ def _route_records(
     )
 
 
+
+def _auto_confirm_and_project(
+    db: Session, document_id: str, user_id: str, repo: SQLAlchemyObjectRepository
+) -> list[dict]:
+    """Auto-confirm all AUTO_SUGGESTED claims and project domain objects.
+
+    When a document is analyzed and all claims are high-confidence (auto_suggested),
+    this automatically confirms them and creates the domain object (Event, Publication,
+    etc.) so the professor sees it immediately after upload — no manual review needed.
+    """
+    from app.domain.value_objects.claim import ClaimStatus
+    from app.application.services.claim_confirmation import ClaimConfirmationService
+    from app.application.services.claim_service import ClaimService
+    from app.infrastructure.persistence.claim_decision_store import SQLClaimDecisionStore
+
+    store = SQLClaimStore(db)
+    all_claims = store.by_source(document_id)
+    auto_suggested = [
+        c for c in all_claims if c.status == ClaimStatus.AUTO_SUGGESTED
+    ]
+    proposed = [
+        c for c in all_claims if c.status == ClaimStatus.PROPOSED
+    ]
+
+    # Auto-confirm all AUTO_SUGGESTED claims regardless of PROPOSED ones.
+    # PROPOSED claims remain for manual review but don't block auto-confirm.
+    if not auto_suggested:
+        return []
+
+    confirm_svc = ClaimConfirmationService(ClaimService(store), SQLClaimDecisionStore(db))
+    for c in auto_suggested:
+        try:
+            confirm_svc.approve(c.claim_id, reviewer=user_id)
+        except Exception:
+            pass
+    db.commit()
+
+    # Project domain objects
+    records_created = []
+    try:
+        from app.application.services.claim_projection import ClaimProjectionService
+        projection = ClaimProjectionService(store, repo)
+        result = projection.project_document(document_id, created_by=user_id)
+        if result.status == "projected":
+            for outcome in result.outcomes:
+                if outcome.kind == "created":
+                    obj = repo.get_by_id(ObjectId(outcome.object_id))
+                    records_created.append({
+                        "id": outcome.object_id,
+                        "type": outcome.module,
+                        "title": obj.title if obj else "",
+                    })
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    return records_created
+
 def _text_for(db: Session, storage, document_id: str) -> str:
     repo = SQLAlchemyObjectRepository(db)
     annotation = DocumentAnnotationService(
@@ -291,6 +349,10 @@ def analyze_upload(
     )
     routing = _route_records(repo, analysis, str(user.id), str(out.id))
     db.commit()
+
+    # Auto-confirm high-confidence claims and project domain objects
+    # so the professor sees the Event/Publication immediately after upload.
+    _auto_confirm_and_project(db, str(out.id), str(user.id), repo)
 
     # Auto-index for immediate search after upload
     try:
@@ -351,6 +413,9 @@ def analyze_document(
             pass
 
     db.commit()
+
+    # Auto-confirm high-confidence claims and project domain objects
+    _auto_confirm_and_project(db, document_id, str(user.id), repo)
 
     # Auto-index for immediate search after analysis.
     # Also backfill any objects that predate the outbox system.
@@ -826,6 +891,7 @@ class BulkConfirmHighConfidenceOut(BaseModel):
     document_id: str
     confirmed: int
     remaining: int
+    records_created: list[dict] = []
 
 
 @router.post("/{document_id}/confirm-all-high-confidence", response_model=BulkConfirmHighConfidenceOut)
@@ -864,15 +930,21 @@ def confirm_all_high_confidence(
     db.commit()
 
     # Project confirmed claims into domain objects
+    records_created: list[dict] = []
     if confirmed > 0:
         try:
             from app.application.services.claim_projection import ClaimProjectionService
             projection = ClaimProjectionService(store, repo)
-            result = projection.project_document(document_id, created_by=str(user.id))
-            if result.status == "projected":
-                for outcome in result.outcomes:
+            proj_result = projection.project_document(document_id, created_by=str(user.id))
+            if proj_result.status == "projected":
+                for outcome in proj_result.outcomes:
                     if outcome.kind == "created":
-                        pass  # Successfully created domain record
+                        obj = repo.get_by_id(ObjectId(outcome.object_id))
+                        records_created.append({
+                            "id": outcome.object_id,
+                            "type": outcome.module,
+                            "title": obj.title if obj else "",
+                        })
             db.commit()
         except Exception:  # noqa: BLE001 - projection is best-effort
             db.rollback()
@@ -898,6 +970,7 @@ def confirm_all_high_confidence(
         document_id=document_id,
         confirmed=confirmed,
         remaining=remaining,
+        records_created=records_created,
     )
 
 

@@ -5,16 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Clock,
-  Activity as ActivityIcon,
   Download,
-  HardDrive,
-  Link2,
   Pencil,
   RefreshCw,
   Trash2,
-  Sparkles,
   Loader2,
-  CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -22,14 +17,8 @@ import { TopHeader } from "@/components/layout/TopHeader";
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
 import { DocumentHeader } from "@/components/features/documents/DocumentHeader";
 import { DocumentMetadata } from "@/components/features/documents/DocumentMetadata";
-import { CitationPanel } from "@/components/features/documents/CitationPanel";
-import { KgLinks } from "@/components/features/documents/KgLinks";
-import { DocumentPreview } from "@/components/features/documents/DocumentPreview";
 import { DocumentViewer } from "@/components/features/documents/DocumentViewer";
 import { DocumentAnalysisResult } from "@/components/features/documents/DocumentAnalysisResult";
-import { DocumentReviewPanel } from "@/components/features/documents/DocumentReviewPanel";
-import { EntityMatchReview } from "@/components/features/documents/EntityMatchReview";
-import { RelatedDocuments } from "@/components/features/documents/RelatedDocuments";
 import { EmptyState } from "@/components/features/objects/EmptyState";
 import { DetailSkeleton } from "@/components/features/objects/LoadingSkeleton";
 import {
@@ -37,7 +26,7 @@ import {
   type DocumentSaveResult,
 } from "@/components/features/documents/UploadModal";
 import { ConfirmDialog } from "@/components/features/objects/ConfirmDialog";
-import { Section, SectionPlaceholder, DetailRow } from "@/components/features/objects/DetailSection";
+import { Section, DetailRow } from "@/components/features/objects/DetailSection";
 import { Spinner } from "@/components/features/objects/Spinner";
 import { Toast, useToast } from "@/components/features/objects/Toast";
 import { useDocument } from "@/hooks/useDocument";
@@ -51,19 +40,9 @@ import { setFlash } from "@/lib/objects/flash";
 import { formatDateTime, titleCase } from "@/lib/utils";
 import { formatFileSize } from "@/lib/documents/constants";
 
-/**
- * Next.js hands the dynamic segment back percent-encoded. This is the ONE and
- * ONLY decode in the whole flow — the hook and the API layer forward the
- * decoded id untouched, so the backend receives `doc:pdf:…` exactly as
- * `ObjectId.parse` (or its document equivalent) expects.
- */
 function decodeRouteId(raw: string | string[] | undefined): string {
   const value = Array.isArray(raw) ? raw[0] ?? "" : raw ?? "";
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value; // malformed escape sequence — use the raw segment
-  }
+  try { return decodeURIComponent(value); } catch { return value; }
 }
 
 export default function DocumentDetailsPage() {
@@ -75,7 +54,6 @@ export default function DocumentDetailsPage() {
   const { toast, show, dismiss } = useToast();
   const { download, downloadingId, error: downloadError } = useDocumentDownload();
 
-  // Pending review — fetches real pending claims for this document
   const {
     items: pendingReviewItems,
     totalPending,
@@ -83,17 +61,9 @@ export default function DocumentDetailsPage() {
     refresh: refreshPendingReview,
   } = usePendingReview(documentId);
 
-  // AI enrichment polling — polls while enrichment is running
-  const {
-    analysis,
-    enrichmentStatus,
-    retry: retryEnrichment,
-  } = useAnalysisPolling({ documentId, enabled: !!document });
+  const { analysis, enrichmentStatus, retry: retryEnrichment } = useAnalysisPolling({ documentId, enabled: !!document });
 
-  // Surface download failures through the page toast
-  useEffect(() => {
-    if (downloadError) show("error", downloadError);
-  }, [downloadError, show]);
+  useEffect(() => { if (downloadError) show("error", downloadError); }, [downloadError, show]);
 
   const [viewerPage, setViewerPage] = useState(1);
   const [editOpen, setEditOpen] = useState(false);
@@ -101,75 +71,41 @@ export default function DocumentDetailsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const handleSaved = useCallback(
-    (result: DocumentSaveResult) => {
-      setEditOpen(false);
-      refresh();
-      if (result.warning) show("warning", result.warning);
-      else show("success", "Document updated successfully.");
-    },
-    [refresh, show],
-  );
+  const handleSaved = useCallback((result: DocumentSaveResult) => {
+    setEditOpen(false);
+    refresh();
+    if (result.warning) show("warning", result.warning);
+    else show("success", "Document updated.");
+  }, [refresh, show]);
 
   const handleDelete = useCallback(async () => {
     if (!document || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
+    setDeleting(true); setDeleteError(null);
     try {
       await deleteDocument(document.id);
-      setFlash({ kind: "success", message: `“${document.title}” was deleted.` });
-      setConfirmOpen(false);
-      router.push("/documents");
-      router.refresh();
-    } catch (err) {
-      setDeleteError(toErrorMessage(err, "Failed to delete this document."));
-      setDeleting(false);
-    }
+      setFlash({ kind: "success", message: `"${document.title}" deleted.` });
+      setConfirmOpen(false); router.push("/documents"); router.refresh();
+    } catch (err) { setDeleteError(toErrorMessage(err, "Failed to delete.")); setDeleting(false); }
   }, [document, deleting, router]);
-
-  const objectHref = document?.object_id
-    ? `/objects/${encodeURIComponent(document.object_id)}`
-    : null;
 
   const actions = document ? (
     <>
       {document.url ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            void download(document);
-          }}
+        <button type="button" onClick={(e) => { e.stopPropagation(); void download(document); }}
           disabled={downloadingId === document.id}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {downloadingId === document.id ? (
-            <Spinner className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <Download className="h-4 w-4" aria-hidden="true" />
-          )}
-          {downloadingId === document.id ? "Downloading…" : "Download"}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">
+          {downloadingId === document.id ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+          {downloadingId === document.id ? "Downloading..." : "Download"}
         </button>
       ) : null}
-      <button
-        type="button"
-        onClick={() => setEditOpen(true)}
-        disabled={deleting}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+      <button type="button" onClick={() => setEditOpen(true)} disabled={deleting}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">
+        <Pencil className="h-4 w-4" /> Edit
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          setDeleteError(null);
-          setConfirmOpen(true);
-        }}
-        disabled={deleting}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger)] px-3 py-2 text-sm font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger-subtle)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {deleting ? <Spinner /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-        {deleting ? "Deleting…" : "Delete"}
+      <button type="button" onClick={() => { setDeleteError(null); setConfirmOpen(true); }} disabled={deleting}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger)] px-3 py-2 text-sm font-medium text-[var(--danger)] hover:bg-[var(--danger-subtle)] disabled:opacity-50">
+        {deleting ? <Spinner /> : <Trash2 className="h-4 w-4" />}
+        {deleting ? "Deleting..." : "Delete"}
       </button>
     </>
   ) : null;
@@ -181,123 +117,65 @@ export default function DocumentDetailsPage() {
         <TopHeader />
         <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="inline-flex items-center gap-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:text-[var(--accent)]"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+            <button type="button" onClick={() => router.back()}
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--accent)]">
+              <ArrowLeft className="h-4 w-4" /> Back
             </button>
             {document ? (
-              <button
-                type="button"
-                onClick={refresh}
-                disabled={refreshing}
-                aria-label="Refresh document"
-                title="Refresh"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:opacity-50"
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-                  aria-hidden="true"
-                />
-                {refreshing ? "Refreshing…" : "Refresh"}
+              <button type="button" onClick={refresh} disabled={refreshing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-50">
+                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+                {refreshing ? "Refreshing..." : "Refresh"}
               </button>
             ) : null}
           </div>
 
-          <Breadcrumbs
-            items={[
-              { label: "Dashboard", href: "/" },
-              { label: "Documents", href: "/documents" },
-              { label: document?.title ?? (notFound ? "Not found" : "Document") },
-            ]}
-          />
+          <Breadcrumbs items={[
+            { label: "Dashboard", href: "/" },
+            { label: "Documents", href: "/documents" },
+            { label: document?.title ?? (notFound ? "Not found" : "Document") },
+          ]} />
 
           <div className="mt-4">
-            {loading ? (
-              <DetailSkeleton />
-            ) : notFound ? (
-              <EmptyState
-                title="Document not found"
+            {loading ? <DetailSkeleton /> : notFound ? (
+              <EmptyState title="Document not found"
                 description="This document may have been deleted, or the link is invalid."
-                action={
-                  <button
-                    type="button"
-                    onClick={() => router.push("/documents")}
-                    className="mt-3 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)]"
-                  >
-                    Back to Documents
-                  </button>
-                }
-              />
+                action={<button type="button" onClick={() => router.push("/documents")}
+                  className="mt-3 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]">Back to Documents</button>} />
             ) : error ? (
-              <EmptyState
-                title="Could not load this document"
-                description={error}
-                action={
-                  <button
-                    type="button"
-                    onClick={refresh}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)]"
-                  >
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" /> Try again
-                  </button>
-                }
-              />
+              <EmptyState title="Could not load this document" description={error}
+                action={<button type="button" onClick={refresh}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]">
+                  <RefreshCw className="h-4 w-4" /> Try again</button>} />
             ) : document ? (
               <div className="space-y-4">
                 <DocumentHeader document={document} actions={actions} />
 
-                {/* PENDING REVIEW — shown prominently at the top */}
+                {/* Pending review — most important, shown first */}
                 {(totalPending > 0 || pendingReviewLoading) && (
                   <PendingReviewSection
                     documentId={document.id}
                     documentTitle={document.title}
                     items={pendingReviewItems}
                     loading={pendingReviewLoading}
-                    onItemResolved={() => {
-                      refreshPendingReview();
-                      refresh();
-                    }}
+                    onItemResolved={() => { refreshPendingReview(); refresh(); }}
                   />
                 )}
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Section title="Overview">
+                  {/* Document info — consolidated */}
+                  <Section title="Document Information">
                     <dl className="text-sm">
-                      <DetailRow label="Document ID" value={document.id} mono />
-                      <DetailRow label="Type" value={titleCase(document.document_type)} />
                       <DetailRow label="Title" value={document.title} />
+                      <DetailRow label="Type" value={titleCase(document.document_type)} />
                       <DetailRow label="Status" value={titleCase(document.status)} />
-                      <DetailRow label="Uploaded by" value={document.uploaded_by || "—"} />
+                      <DetailRow label="Uploaded" value={`${formatDateTime(document.created_at)} by ${document.uploaded_by || "unknown"}`} />
+                      <DetailRow label="File" value={`${document.file_name || "—"} (${formatFileSize(document.file_size)})`} />
                     </dl>
                   </Section>
 
-                  <Section title="Audit Information">
-                    <dl className="text-sm">
-                      <DetailRow label="Uploaded by" value={document.uploaded_by || "—"} />
-                      <DetailRow label="Uploaded at" value={formatDateTime(document.created_at)} />
-                      <DetailRow
-                        label="Last updated"
-                        value={
-                          document.updated_at ? (
-                            formatDateTime(document.updated_at)
-                          ) : (
-                            <span className="text-[var(--text-tertiary)]">Not exposed by the API</span>
-                          )
-                        }
-                      />
-                      <DetailRow label="Current version" value={`v${document.version}`} />
-                    </dl>
-                  </Section>
-
-                  <Section title="Metadata" className="lg:col-span-2">
-                    <DocumentMetadata document={document} />
-                  </Section>
-
-                  {/* AI Enrichment Status — polls while processing */}
-                  <Section title="AI Analysis" className="lg:col-span-2">
+                  {/* AI Analysis */}
+                  <Section title="AI Analysis">
                     <DocumentAnalysisResult
                       analysis={analysis}
                       analyzing={enrichmentStatus === "running"}
@@ -306,122 +184,32 @@ export default function DocumentDetailsPage() {
                       onRetryEnrichment={retryEnrichment}
                     />
                     {!analysis && enrichmentStatus === "not_started" && (
-                      <p className="mt-2 text-sm text-[var(--text-tertiary)]">
-                        AI analysis has not run yet. It will start automatically in the background.
-                      </p>
-                    )}
-                  </Section>
-
-                  {/* Document Review Panel — unified review experience */}
-                  {analysis && (analysis.review_required || (analysis.field_confidence && analysis.field_confidence.some((f) => f.status !== "auto_applied"))) && (
-                    <div className="lg:col-span-2">
-                      <h2 className="mb-3 text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
-                        <AlertCircle className="h-4 w-4 text-amber-600" />
-                        Document Review
-                      </h2>
-                      <DocumentReviewPanel
-                        analysis={analysis}
-                        documentId={document.id}
-                        documentTitle={document.title}
-                        onReviewChanged={refresh}
-                      />
-                    </div>
-                  )}
-
-                  {/* Entity Match Review — possible related documents */}
-                  <Section title="Possible Matches" className="lg:col-span-2">
-                    <EntityMatchReview
-                      documentId={document.id}
-                      documentTitle={document.title}
-                      onMatchResolved={refresh}
-                    />
-                  </Section>
-
-                  {/* Confirmed Related Documents */}
-                  <Section title="Related Documents" className="lg:col-span-2">
-                    <RelatedDocuments documentId={document.id} />
-                  </Section>
-
-                  <Section title="Linked Object">
-                    {objectHref ? (
-                      <a
-                        href={objectHref}
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline"
-                        title={document.object_title ?? document.object_id ?? undefined}
-                      >
-                        <Link2 className="h-4 w-4" aria-hidden="true" />
-                        {document.object_title ?? document.object_id ?? "—"}
-                      </a>
-                    ) : (
                       <p className="text-sm text-[var(--text-tertiary)]">
-                        Not linked to any object.
+                        Analysis will start automatically in the background.
                       </p>
                     )}
                   </Section>
 
-                  <Section title="File Information">
-                    <dl className="text-sm">
-                      <DetailRow label="File name" value={document.file_name || "—"} />
-                      <DetailRow label="Size" value={formatFileSize(document.file_size)} />
-                      <DetailRow
-                        label="MIME type"
-                        value={document.mime_type || document.document_type}
-                      />
-                      <DetailRow label="Type" value={titleCase(document.document_type)} />
-                    </dl>
-                  </Section>
+                  {/* Linked Object */}
+                  {document.object_id ? (
+                    <Section title="Linked Record">
+                      <a href={`/objects/${encodeURIComponent(document.object_id)}`}
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline">
+                        {document.object_title ?? document.object_id ?? "View"}
+                      </a>
+                    </Section>
+                  ) : null}
 
-                  <Section title="Version History">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-mono text-2xl font-semibold text-[var(--text-primary)]">
-                        v{document.version}
-                      </span>
-                      <span className="text-sm text-[var(--text-tertiary)]">current revision</span>
-                    </div>
+                  {/* Metadata */}
+                  <Section title="Details" className="lg:col-span-2">
+                    <DocumentMetadata document={document} />
                   </Section>
-
-                  <Section title="Timeline">
-                    <ol className="space-y-3 text-sm">
-                      <li className="flex gap-3">
-                        <Clock
-                          className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-tertiary)]"
-                          aria-hidden="true"
-                        />
-                        <div>
-                          <p className="text-[var(--text-primary)]">Document uploaded</p>
-                          <p className="text-xs text-[var(--text-tertiary)]">
-                            {formatDateTime(document.created_at)} · {document.uploaded_by || "unknown"}
-                          </p>
-                        </div>
-                      </li>
-                      {(document.events ?? []).map((event, index) => (
-                        <li key={`${event}-${index}`} className="flex gap-3">
-                          <ActivityIcon
-                            className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-tertiary)]"
-                            aria-hidden="true"
-                          />
-                          <p className="text-[var(--text-primary)]">{titleCase(event)}</p>
-                        </li>
-                      ))}
-                    </ol>
-                    <p className="mt-3 text-xs text-[var(--text-tertiary)]">
-                      Document changes and review actions are tracked automatically.
-                    </p>
-                  </Section>
-
-                  <SectionPlaceholder
-                    title="Activity"
-                    description="View changes made to this document."
-                    icon={<ActivityIcon className="h-4 w-4" aria-hidden="true" />}
-                  />
                 </div>
 
+                {/* Preview */}
                 <Section title="Preview">
                   <DocumentViewer document={document} onPageChange={setViewerPage} />
                 </Section>
-
-                <CitationPanel document={document} currentPage={viewerPage} selection="" />
-                <KgLinks document={document} />
               </div>
             ) : null}
           </div>
@@ -430,33 +218,12 @@ export default function DocumentDetailsPage() {
 
       {document ? (
         <>
-          <UploadModal
-            open={editOpen}
-            document={document}
-            onClose={() => setEditOpen(false)}
-            onSaved={handleSaved}
-          />
-          <ConfirmDialog
-            open={confirmOpen}
-            title="Delete document?"
-            description={
-              <>
-                <span className="font-medium text-[var(--text-primary)]">“{document.title}”</span>{" "}
-                will be permanently removed. This action cannot be undone.
-              </>
-            }
-            confirmLabel="Delete"
-            loadingLabel="Deleting…"
-            loading={deleting}
-            error={deleteError}
+          <UploadModal open={editOpen} document={document} onClose={() => setEditOpen(false)} onSaved={handleSaved} />
+          <ConfirmDialog open={confirmOpen} title="Delete document?"
+            description={<><span className="font-medium">{document.title}</span> will be permanently removed.</>}
+            confirmLabel="Delete" loadingLabel="Deleting..." loading={deleting} error={deleteError}
             onConfirm={handleDelete}
-            onCancel={() => {
-              if (!deleting) {
-                setConfirmOpen(false);
-                setDeleteError(null);
-              }
-            }}
-          />
+            onCancel={() => { if (!deleting) { setConfirmOpen(false); setDeleteError(null); } }} />
         </>
       ) : null}
 

@@ -23,30 +23,26 @@ export const EVENT_STATUSES: { value: EventStatus; label: string }[] = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+/**
+ * Professor-friendly event types — reduced from 19 to 10 clear categories.
+ * Each maps to a broad academic activity type that professors think in.
+ * The backend accepts any string, so we can evolve this independently.
+ */
 export const EVENT_TYPES: { value: EventType; label: string }[] = [
   { value: "conference", label: "Conference" },
   { value: "workshop", label: "Workshop" },
   { value: "seminar", label: "Seminar" },
-  { value: "webinar", label: "Webinar" },
-  { value: "fdp", label: "Faculty Development Programme (FDP)" },
-  { value: "sttp", label: "Short Term Training Programme (STTP)" },
-  { value: "expert_lecture", label: "Expert Lecture" },
-  { value: "guest_lecture", label: "Guest Lecture" },
+  { value: "fdp", label: "Faculty Development Programme" },
+  { value: "sttp", label: "Short-Term Training" },
+  { value: "expert_lecture", label: "Invited / Expert Lecture" },
   { value: "invited_talk", label: "Invited Talk" },
-  { value: "mathematics_day", label: "Mathematics Day" },
-  { value: "science_day", label: "Science Day" },
-  { value: "orientation_programme", label: "Orientation Programme" },
   { value: "training_programme", label: "Training Programme" },
-  { value: "industry_visit", label: "Industry Visit" },
-  { value: "club_activity", label: "Club Activity" },
-  { value: "research_colloquium", label: "Research Colloquium" },
-  { value: "outreach_activity", label: "Outreach Activity" },
-  { value: "competition", label: "Competition" },
-  { value: "custom", label: "Custom Event" },
+  { value: "competition", label: "Competition / Hackathon" },
+  { value: "custom", label: "Other" },
 ];
 
 export const EVENT_MODES: { value: EventMode; label: string }[] = [
-  { value: "offline", label: "Offline" },
+  { value: "offline", label: "In-Person" },
   { value: "online", label: "Online" },
   { value: "hybrid", label: "Hybrid" },
 ];
@@ -78,9 +74,42 @@ export const PRESENTATION_RELATIONS: { value: PresentationRelation; label: strin
   { value: "poster_presentation", label: "Poster Presentation" },
 ];
 
+/**
+ * Broader categories for the Records page grouping.
+ * Maps multiple EVENT_TYPES values to a single display category.
+ */
+export const EVENT_TYPE_CATEGORIES: Record<string, string> = {
+  conference: "Conferences",
+  workshop: "Workshops & Training",
+  seminar: "Seminars & Talks",
+  fdp: "Workshops & Training",
+  sttp: "Workshops & Training",
+  expert_lecture: "Seminars & Talks",
+  invited_talk: "Seminars & Talks",
+  training_programme: "Workshops & Training",
+  competition: "Competitions",
+  custom: "Other",
+  // Legacy types that may exist in data
+  webinar: "Seminars & Talks",
+  guest_lecture: "Seminars & Talks",
+  mathematics_day: "Other",
+  science_day: "Other",
+  orientation_programme: "Workshops & Training",
+  industry_visit: "Other",
+  club_activity: "Other",
+  research_colloquium: "Seminars & Talks",
+  outreach_activity: "Other",
+};
+
 /** Label lookup for the vocabulary families (falls back to Title Case). */
 export function eventTypeLabel(value: string | null | undefined): string {
   return EVENT_TYPES.find((option) => option.value === value)?.label ?? "—";
+}
+
+/** Get the broad category for an event type. */
+export function eventTypeCategory(value: string | null | undefined): string {
+  if (!value) return "Other";
+  return EVENT_TYPE_CATEGORIES[value] ?? "Other";
 }
 
 /** PART 10 calendar-year filter options (newest first). */

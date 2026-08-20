@@ -177,26 +177,13 @@ export function DocumentAnalysisResult({
         ) : null}
       </div>
 
-      {/* Document type and confidence */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[var(--text-secondary)]">
-        <div>
-          <span className="text-[var(--text-tertiary)]">Document type: </span>
-          <span className="capitalize">{typeLabel(analysis.document_type_id)}</span>
-        </div>
-        <div>
-          <span className="text-[var(--text-tertiary)]">Confidence: </span>
-          <span className={confidenceColor(analysis.confidence)}>
-            {confidenceLabel(analysis.confidence)}
-          </span>
-        </div>
-        <div>
-          <span className="text-[var(--text-tertiary)]">Category: </span>
-          <span>{targetLabel}</span>
-        </div>
-        <div>
-          <span className="text-[var(--text-tertiary)]">AI assistance: </span>
-          <span>{aiAssisted ? "Yes" : "No"}</span>
-        </div>
+      {/* Document type and confidence — simplified */}
+      <div className="text-sm text-[var(--text-secondary)]">
+        <span>This is a </span>
+        <span className="font-medium text-[var(--text-primary)] capitalize">{typeLabel(analysis.document_type_id)}</span>
+        <span>. AcademicOS found </span>
+        <span className="font-medium text-[var(--text-primary)]">{analysis.fields.length}</span>
+        <span> {analysis.fields.length === 1 ? "piece" : "pieces"} of information.</span>
       </div>
 
       {/* AI Enrichment Status */}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2, Layout } from "lucide-react";
+import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2, Layout, Calendar, FlaskConical, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
@@ -21,9 +21,11 @@ const AVAILABLE_MODULES = [
 
 const DEFAULT_NAV: NavItem[] = [
   { id: "home", label: "Home", icon: Home, href: "/", visible: true },
-  { id: "docs", label: "Docs", icon: FileText, href: "/documents", visible: true },
-  { id: "records", label: "Records", icon: BookOpen, href: "/records", visible: true },
-  { id: "ai", label: "AI", icon: Sparkles, href: "/ai", visible: true },
+  { id: "docs", label: "Documents", icon: FileText, href: "/documents", visible: true },
+  { id: "events", label: "Events", icon: Calendar, href: "/events", visible: true },
+  { id: "publications", label: "Publications", icon: BookOpen, href: "/publications", visible: true },
+  { id: "research", label: "Research", icon: FlaskConical, href: "/research", visible: true },
+  { id: "search", label: "Search", icon: Search, href: "/search", visible: true },
 ];
 
 const STORAGE_KEY = "academicos-nav-config";

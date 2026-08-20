@@ -257,7 +257,7 @@ export function UploadModal({
             />
           </Field>
 
-          <Field label="Object" hint="Link this document to an existing object.">
+          <Field label="Related to" hint="Link this document to an existing record (optional).">
             <select
               value={objectId}
               onChange={(event) => setObjectId(event.target.value)}

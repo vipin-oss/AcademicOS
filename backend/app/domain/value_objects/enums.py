@@ -72,6 +72,7 @@ class ObjectType(str, Enum):
     LABORATORY = "laboratory"
     RESEARCH_AREA = "research_area"
     # System / structural
+    FOLDER = "folder"
     SPACE = "space"
     NOTE = "note"
     MESSAGE = "message"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CalendarPlus, Filter, Plus, RefreshCw } from "lucide-react";
+import { CalendarPlus, Filter, Plus, RefreshCw, Download } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { Breadcrumbs } from "@/components/features/objects/Breadcrumbs";
@@ -173,6 +173,14 @@ export default function EventsPage() {
                 >
                   <Plus className="h-4 w-4" aria-hidden="true" /> New Event
                 </button>
+                <a
+                  href="/api/v1/events/export"
+                  download
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]"
+                  title="Export events as CSV"
+                >
+                  <Download className="h-4 w-4" />
+                </a>
               </div>
             </div>
           </div>

@@ -615,6 +615,49 @@ def create_document(
             file_name,
             exc_info=True,
         )
+    # Auto-analyze: extract fields, create claims, route to domain objects.
+    # This ensures every uploaded document is immediately processed and
+    # the professor sees the Event/Publication right away.
+    if decision.quarantine == "clean":
+        try:
+            from app.api.routes.document_intake import _auto_confirm_and_project
+            text = ""
+            try:
+                from app.application.services.document_annotation_service import DocumentAnnotationService
+                from app.infrastructure.persistence.annotation_store import SQLAnnotationStore
+                from app.infrastructure.persistence.document_content_store import SQLDocumentContentStore
+                ann = DocumentAnnotationService(repo, SQLAnnotationStore(db), content_store=SQLDocumentContentStore(db))
+                text = (ann.extracted_text(str(out.id), storage) or {}).get("text") or ""
+            except Exception:
+                pass
+            if text:
+                from app.application.services.document_intake import DocumentIntakeService
+                from app.application.services.claim_service import ClaimService
+                from app.application.services.domain_record_router import DomainRecordRouter
+                from app.infrastructure.persistence.claim_store import SQLClaimStore
+                from app.application.use_cases.object_acl import object_acl_scope
+                doc_obj = repo.get_by_id(ObjectId(str(out.id)))
+                claim_store = SQLClaimStore(db)
+                intake_svc = DocumentIntakeService(ClaimService(claim_store), claim_store)
+                analysis = intake_svc.analyze(
+                    text=text, filename=file_name,
+                    document_id=str(out.id), version=out.version,
+                    acl_scope=object_acl_scope(doc_obj) if doc_obj else None,
+                )
+                if analysis.document_type_id and not analysis.conflicts:
+                    fields_dict = {f.predicate_id: f.value for f in analysis.fields}
+                    fields_dict["__types__"] = analysis.all_types()
+                    DomainRecordRouter(repo).route(
+                        type_ids=analysis.all_types(), fields=fields_dict,
+                        created_by=str(user.id),
+                        source_document_id=str(out.id),
+                        confidence=analysis.confidence,
+                    )
+                db.commit()
+                _auto_confirm_and_project(db, str(out.id), str(user.id), repo)
+        except Exception:
+            _log.debug("Auto-analysis after upload skipped (best-effort).")
+
     # Schedule background AI enrichment (non-blocking).
     if decision.quarantine == "clean" and settings.ai_enabled:
         try:

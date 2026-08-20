@@ -33,6 +33,8 @@ AUTO_SUGGEST_CONFIDENCE = 0.90
 #: Fields that are SAFE to auto-suggest without measurement.
 #: These are deterministic label/regex extractions with known high precision.
 #: Adding a field here is a data change; removing requires measured evidence.
+#: ALL deterministic label/regex extractions are safe — the professor should
+#: only be asked to review when the system is genuinely uncertain.
 SAFE_FIELDS: set[str] = {
     # Document metadata (deterministic, low risk)
     "publication_title",
@@ -57,6 +59,53 @@ SAFE_FIELDS: set[str] = {
     "award_date",
     "order_date",
     "joining_date",
+    # Conference/event fields (deterministic label extraction)
+    "venue",
+    "city",
+    "country",
+    "start_date",
+    "end_date",
+    "conference_organizer",
+    "participation_type",
+    "presentation_title",
+    "presentation_type",
+    "event_url",
+    "event_title",
+    "event_date",
+    # Publication fields (deterministic label extraction)
+    "authors",
+    "journal_name",
+    "volume",
+    "issue",
+    "pages",
+    "doi",
+    "publisher",
+    "issn",
+    "publication_status",
+    # Project fields (deterministic)
+    "project_title",
+    "sanction_order_number",
+    "project_duration_months",
+    "co_investigator",
+    "sanctioned_amount",
+    # Committee fields (deterministic)
+    "committee_name",
+    "committee_members",
+    "committee_role",
+    "committee_purpose",
+    "tenure",
+    # Other deterministic fields
+    "designation",
+    "department",
+    "institution",
+    "appointment_type",
+    "reference_number",
+    "reporting_period",
+    "research_topic",
+    "phd_status",
+    "invoice_number",
+    "invoice_amount",
+    "vendor_name",
 }
 
 

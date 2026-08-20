@@ -1,8 +1,13 @@
 "use client";
 
+/**
+ * Simple drag-and-drop upload component with automatic document analysis.
+ * Shows a progress stepper: Upload → Analyzing → Review
+ */
+
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Upload, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
+import { Upload, CheckCircle2, Loader2, ExternalLink, FileText, Sparkles } from "lucide-react";
 import { toErrorMessage } from "@/lib/api/client";
 import { uploadDocument, type UploadProgress } from "@/lib/api/documents";
 import { analyzeDocument, type DocumentAnalysisResponse } from "@/lib/api/documentIntake";
@@ -16,11 +21,41 @@ interface UploadResult {
   file_name: string;
 }
 
-/**
- * Simple drag-and-drop upload component with automatic document analysis.
- * Uploads file, then runs intelligence analysis showing confidence, extracted
- * fields, detected records, and any conflicts requiring review.
- */
+type Step = "upload" | "analyzing" | "done";
+
+function StepIndicator({ step }: { step: Step }) {
+  const steps = [
+    { key: "upload", label: "Upload", icon: Upload },
+    { key: "analyzing", label: "Analyze", icon: Sparkles },
+    { key: "done", label: "Review", icon: CheckCircle2 },
+  ];
+  const activeIndex = steps.findIndex((s) => s.key === step);
+
+  return (
+    <div className="flex items-center gap-2">
+      {steps.map((s, i) => {
+        const Icon = s.icon;
+        const active = i === activeIndex;
+        const done = i < activeIndex;
+        return (
+          <div key={s.key} className="flex items-center gap-1.5">
+            {i > 0 && <div className={cn("h-px w-6", done ? "bg-emerald-400" : "bg-[var(--border-subtle)]")} />}
+            <div className={cn(
+              "flex h-6 w-6 items-center justify-center rounded-full",
+              done ? "bg-emerald-100 text-emerald-600" : active ? "bg-[var(--accent-subtle)] text-[var(--accent)]" : "bg-[var(--bg-hover)] text-[var(--text-tertiary)]"
+            )}>
+              {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+            </div>
+            <span className={cn("text-xs", active ? "font-medium text-[var(--text-primary)]" : done ? "text-emerald-600" : "text-[var(--text-tertiary)]")}>
+              {s.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResult) => void }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -30,6 +65,8 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const step: Step = analyzing ? "analyzing" : (analysis || result) ? "done" : "upload";
 
   const runAnalysis = useCallback(async (docId: string) => {
     setAnalyzing(true);
@@ -47,65 +84,43 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
     async (files: FileList | File[]) => {
       const file = files[0];
       if (!file) return;
-
-      setUploading(true);
-      setError(null);
-      setResult(null);
-      setAnalysis(null);
-      setProgress(0);
-
+      setUploading(true); setError(null); setResult(null); setAnalysis(null); setProgress(0);
       try {
-        const saved = await uploadDocument(
-          { file },
-          { onProgress: (value: UploadProgress) => setProgress(value.percent) },
-        );
-        const uploadResult: UploadResult = {
-          id: saved.id,
-          title: saved.title,
-          document_type: saved.document_type,
-          file_name: saved.file_name,
-        };
+        const saved = await uploadDocument({ file }, { onProgress: (v: UploadProgress) => setProgress(v.percent) });
+        const uploadResult: UploadResult = { id: saved.id, title: saved.title, document_type: saved.document_type, file_name: saved.file_name };
         setResult(uploadResult);
         onUploaded?.(uploadResult);
-
-        // Run document analysis
         await runAnalysis(saved.id);
-      } catch (err) {
-        setError(toErrorMessage(err, "Upload failed. Please try again."));
-      } finally {
-        setUploading(false);
-        setProgress(null);
-      }
+      } catch (err) { setError(toErrorMessage(err, "Upload failed. Please try again.")); }
+      finally { setUploading(false); setProgress(null); }
     },
     [onUploaded, runAnalysis],
   );
 
-  const handleRetry = useCallback(() => {
-    if (result?.id) {
-      void runAnalysis(result.id);
-    }
-  }, [result?.id, runAnalysis]);
+  const handleRetry = useCallback(() => { if (result?.id) void runAnalysis(result.id); }, [result?.id, runAnalysis]);
 
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragging(false);
-      if (e.dataTransfer.files.length > 0) void handleFiles(e.dataTransfer.files);
-    },
-    [handleFiles],
-  );
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setDragging(false);
+    if (e.dataTransfer.files.length > 0) void handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
 
   return (
     <div className="space-y-3">
+      {/* Progress stepper */}
+      {(uploading || analyzing || result) && (
+        <div className="flex justify-center py-2">
+          <StepIndicator step={step} />
+        </div>
+      )}
+
+      {/* Upload zone */}
       <div
         onDrop={onDrop}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); setDragging(false); }}
         onClick={() => !uploading && inputRef.current?.click()}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); !uploading && inputRef.current?.click(); }}}
-        role="button"
-        tabIndex={0}
-        aria-label="Upload document"
+        role="button" tabIndex={0} aria-label="Upload document"
         className={cn(
           "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-colors",
           dragging ? "border-[var(--accent)] bg-[var(--accent-subtle)]" : "border-[var(--border-strong)] hover:border-[var(--accent)] hover:bg-[var(--bg-hover)]",
@@ -116,6 +131,11 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
           <>
             <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
             <p className="text-sm font-medium text-[var(--text-primary)]">Uploading{progress !== null ? ` (${progress}%)` : "..."}</p>
+          </>
+        ) : result ? (
+          <>
+            <FileText className="h-8 w-8 text-emerald-500" />
+            <p className="text-sm font-medium text-[var(--text-primary)]">Drop another file or click to browse</p>
           </>
         ) : (
           <>
@@ -129,45 +149,20 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         <input ref={inputRef} type="file" onChange={(e) => e.target.files && e.target.files.length > 0 && void handleFiles(e.target.files)} disabled={uploading} className="sr-only" aria-label="Choose file" />
       </div>
 
+      {/* Upload progress bar */}
       {uploading && progress !== null && (
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-hover)]">
           <div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${progress}%` }} />
         </div>
       )}
 
-      {/* Upload success with link */}
-      {result && !analysis && !analyzing && (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-emerald-900">{result.title}</p>
-            <p className="text-xs text-emerald-700">{result.document_type.toUpperCase()} · {result.file_name}</p>
-          </div>
-          <Link
-            href={`/documents/${result.id}`}
-            className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2.5 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
-          >
-            <ExternalLink className="h-3 w-3" /> View
-          </Link>
-        </div>
-      )}
-
-      {/* Document analysis result with enrichment status */}
+      {/* Analysis result */}
       {(analysis || analyzing) && (
         <div className="space-y-2">
-          <DocumentAnalysisResult
-            analysis={analysis}
-            analyzing={analyzing}
-            fileName={result?.file_name}
-            documentId={result?.id}
-            onRetryEnrichment={handleRetry}
-          />
+          <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} documentId={result?.id} onRetryEnrichment={handleRetry} />
           {result && analysis && (
-            <Link
-              href={`/documents/${result.id}`}
-              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" /> View document details
+            <Link href={`/documents/${result.id}`} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline">
+              <ExternalLink className="h-3 w-3" /> View full document
             </Link>
           )}
         </div>

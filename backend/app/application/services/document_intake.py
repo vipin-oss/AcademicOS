@@ -54,7 +54,7 @@ from app.domain.value_objects.span import Span
 
 #: Field-extractor confidence (deterministic).
 _LABEL_CONFIDENCE = 0.9
-_REGEX_CONFIDENCE = 0.85
+_REGEX_CONFIDENCE = 0.9  # Dates, DOIs, emails are deterministic — same confidence as labels
 
 
 @dataclass(frozen=True)
@@ -381,9 +381,10 @@ class DocumentIntakeService:
 
     def _write_record(self, f: ExtractedField, document_id, version, acl_scope, spans) -> RecordOutcome:
         """Propose or AUTO_SUGGEST one claim; never fabricate, never auto-confirm."""
+        from app.application.services.suggestion_policy import AUTO_SUGGEST_CONFIDENCE
         can_suggest = (
             self._policy.allows_auto_suggest(f.predicate_id)
-            and f.confidence >= 0.9
+            and f.confidence >= AUTO_SUGGEST_CONFIDENCE
         )
         field_spans = list(f.spans) if f.spans else list(spans or [])
         try:
