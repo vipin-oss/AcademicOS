@@ -172,6 +172,8 @@ class DomainRecordRouter:
         # Filter duplicates to only those owned by the current user
         dups = [d for d in dups if d.audit and d.audit.created_by == created_by]
         if dups:
+            # Link document to existing event (so professor sees the connection)
+            self._link_source(dups[0].id, source_document_id, created_by)
             return RouteOutcome("event", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing event")
         # Title-only duplicate check when no date is available
@@ -182,6 +184,8 @@ class DomainRecordRouter:
                 if obj.title and obj.title.strip().casefold() == title_cf:
                     # Only treat as duplicate if owned by the same user
                     if obj.audit and obj.audit.created_by == created_by:
+                        # Link document to existing event
+                        self._link_source(obj.id, source_document_id, created_by)
                         return RouteOutcome("event", "duplicate", existing_id=str(obj.id),
                                             reason="existing event (title match)")
         try:
@@ -209,6 +213,8 @@ class DomainRecordRouter:
         doi = _f(fields, "doi")
         dups = find_publication_duplicates(self._repository, doi=doi, title=title)
         if dups:
+            # Link document to existing publication
+            self._link_source(dups[0].id, source_document_id, created_by)
             return RouteOutcome("publication", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing publication")
         try:
@@ -241,6 +247,8 @@ class DomainRecordRouter:
         code = _f(fields, "sanction_order_number") or _f(fields, "order_number")
         dups = find_project_duplicates(self._repository, project_code=code)
         if dups:
+            # Link document to existing project
+            self._link_source(dups[0].id, source_document_id, created_by)
             return RouteOutcome("project", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing project")
         try:
@@ -271,6 +279,8 @@ class DomainRecordRouter:
             committee_type=None, department=_f(fields, "department"),
         )
         if dups:
+            # Link document to existing committee
+            self._link_source(dups[0].id, source_document_id, created_by)
             return RouteOutcome("committee", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing committee")
         try:
