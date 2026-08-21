@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth/session";
 import { CommandPalette } from "@/components/features/search/CommandPalette";
+import { WelcomeModal } from "@/components/features/onboarding/WelcomeModal";
 
 export default function MainLayout({ children }: { children: ReactNode }) {
   const { status } = useAuth();
@@ -31,6 +32,7 @@ export default function MainLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <CommandPalette />
+      <WelcomeModal />
       {children}
     </>
   );

@@ -115,20 +115,20 @@ class TestTitleVariations:
     """Minor title differences should still match."""
 
     def test_punctuation_differences(self):
-        """Minor punctuation differences → LOW (title only)."""
+        """Minor punctuation differences → MEDIUM (high similarity title match)."""
         fields1 = {"publication_title": "Deep Learning: A Review"}
         fields2 = {"publication_title": "Deep Learning - A Review"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        # Title only → LOW (safe policy)
-        assert result.confidence < MEDIUM_THRESHOLD
+        # High-similarity title match → MEDIUM (for review)
+        assert result.confidence >= MEDIUM_THRESHOLD
 
     def test_capitalization_differences(self):
-        """Capitalization differences → LOW (title only)."""
+        """Capitalization differences → MEDIUM (high similarity title match)."""
         fields1 = {"publication_title": "DEEP LEARNING FOR MICROPLASTICS"}
         fields2 = {"publication_title": "deep learning for microplastics"}
         result = match_entities(fields1, fields2, "doc:1", "doc:2")
-        # Title only → LOW (safe policy)
-        assert result.confidence < MEDIUM_THRESHOLD
+        # High-similarity title match → MEDIUM (for review)
+        assert result.confidence >= MEDIUM_THRESHOLD
 
 
 # =============================================================================

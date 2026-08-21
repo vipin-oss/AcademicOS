@@ -56,14 +56,18 @@ SNAPSHOT_TYPES: dict[str, ObjectType] = {
 class Snapshot:
     """Per-request read model: lazily caches ``find_by_type`` results."""
 
-    def __init__(self, repository: ObjectRepository) -> None:
+    def __init__(self, repository: ObjectRepository, user_id: str | None = None) -> None:
         self._repository = repository
+        self._user_id = user_id
         self._cache: dict[str, list[UniversalObject]] = {}
         self._by_id: dict[str, UniversalObject] | None = None
 
     def __getitem__(self, key: str) -> list[UniversalObject]:
         if key not in self._cache:
-            self._cache[key] = list(self._repository.find_by_type(SNAPSHOT_TYPES[key]))
+            if self._user_id:
+                self._cache[key] = list(self._repository.find_by_type_for_user(SNAPSHOT_TYPES[key], self._user_id))
+            else:
+                self._cache[key] = list(self._repository.find_by_type(SNAPSHOT_TYPES[key]))
         return self._cache[key]
 
     def by_id(self) -> dict[str, UniversalObject]:

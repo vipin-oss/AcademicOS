@@ -140,7 +140,7 @@ def test_ask_cross_module_grounding(client: TestClient):
     r = client.post(f"{API}/ask", json={"question": "What reports can I see?"})
     answer = r.json()["answer"]
     assert answer["intent"] == "report_catalogue"
-    assert answer["metrics"]["Report kinds"] == "9"
+    assert answer["metrics"]["Report kinds"] == "10"
     hrefs = {card["href"] for card in answer["cards"]}
     assert "/reports/publications" in hrefs and "/reports/analytics" in hrefs
     assert any(action["href"] == "/reports" for action in answer["actions"])

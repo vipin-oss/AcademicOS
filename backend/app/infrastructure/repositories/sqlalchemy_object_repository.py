@@ -529,6 +529,33 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
         return self.find(object_type=object_type)
 
+    def find_by_type_for_user(self, object_type: ObjectType, user_id: str) -> list[UniversalObject]:
+        """Find objects of a type owned by a specific user (ACL enforcement).
+        
+        Filters by audit.created_by (stored in audit_json), NOT owner_user_id
+        which is always 'default' in the current schema.
+        """
+        from sqlalchemy import text as sql_text
+        
+        obj_type_value = object_type.value if isinstance(object_type, ObjectType) else object_type
+        
+        # Filter by audit_json.created_by = user_id
+        # Works on both SQLite and PostgreSQL
+        stmt = select(ObjectModel).where(
+            ObjectModel.object_type == obj_type_value,
+        )
+        # Use JSON extraction to filter by audit.created_by
+        if self._session.get_bind().dialect.name == "postgresql":
+            stmt = stmt.where(
+                sql_text("audit_json->>'created_by' = :uid").bindparams(uid=user_id)
+            )
+        else:
+            stmt = stmt.where(
+                sql_text("json_extract(audit_json, '$.created_by') = :uid").bindparams(uid=user_id)
+            )
+        models = self._session.execute(stmt).scalars().all()
+        return self._to_domain_many(models)
+
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
         return self.find(status=status)
 

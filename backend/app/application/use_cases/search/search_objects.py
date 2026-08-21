@@ -126,9 +126,9 @@ class SearchObjectsUseCase:
         for an object that no longer exists, or that the principal may not
         READ, is removed BEFORE ranking (never ranked, never leaked).
 
-        For DOCUMENT objects: ownership is enforced when the document was
-        created by a real user (owner starts with "obj:user:"). Documents
-        with explicit ACL grants use the grant evaluator. Admins always pass.
+        V3 M9: Ownership is enforced for ALL object types created by real
+        users. Objects without explicit ACL and without a real user owner
+        are treated as test fixtures and allowed for backward compatibility.
         """
         if not candidates:
             return []
@@ -144,36 +144,37 @@ class SearchObjectsUseCase:
             obj = by_id.get(candidate.object_id)
             if obj is None:
                 continue
-            # For DOCUMENT objects created by real users, enforce ownership
-            if obj.object_type is ObjectType.DOCUMENT:
-                owner = obj.audit.created_by if obj.audit else None
-                # Only enforce ownership for documents with real user owners
-                if owner and owner.startswith("obj:user:"):
-                    if is_admin:
-                        allowed.append(candidate)
-                        continue
-                    if owner == user_sub:
-                        allowed.append(candidate)
-                        continue
-                    # Check explicit ACL grants
-                    scope = object_acl_scope(obj)
-                    if scope:
-                        try:
-                            acl = json.loads(scope)
-                            has_grants = any(acl.get(k) for k in ("readers", "writers", "managers"))
-                            if has_grants:
-                                if self._permission_evaluator.can(
-                                    principal=principal,
-                                    scope=scope,
-                                    action=PermissionAction.READ,
-                                ):
-                                    allowed.append(candidate)
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-                    # No grants and not owner → deny
+            # Get the owner from audit metadata
+            owner = obj.audit.created_by if obj.audit else None
+            
+            # For objects created by real users, enforce ownership
+            if owner and owner.startswith("obj:user:"):
+                if is_admin:
+                    allowed.append(candidate)
                     continue
-            # Non-document or test-fixture documents: use standard evaluator
+                if owner == user_sub:
+                    allowed.append(candidate)
+                    continue
+                # Check explicit ACL grants
+                scope = object_acl_scope(obj)
+                if scope:
+                    try:
+                        acl = json.loads(scope)
+                        has_grants = any(acl.get(k) for k in ("readers", "writers", "managers"))
+                        if has_grants:
+                            if self._permission_evaluator.can(
+                                principal=principal,
+                                scope=scope,
+                                action=PermissionAction.READ,
+                            ):
+                                allowed.append(candidate)
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                # No grants and not owner → deny
+                continue
+            
+            # Test fixtures or system objects: use standard evaluator
             if self._permission_evaluator.can(
                 principal=principal,
                 scope=object_acl_scope(obj),

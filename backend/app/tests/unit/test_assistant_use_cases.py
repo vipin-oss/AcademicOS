@@ -422,7 +422,7 @@ def test_dashboard_intents_world(provider):
 
 def test_report_intents_world(provider):
     catalogue = provider.answer("What reports can I see?", "faculty:ui")
-    assert catalogue.metrics["Report kinds"] == "9"
+    assert catalogue.metrics["Report kinds"] == "10"
     assert catalogue.cards[0].href.startswith("/reports/")
     pubs = provider.answer("Summarize the publications report", "faculty:ui")
     assert pubs.intent == dto.INTENT_MODULE_REPORT_SUMMARY

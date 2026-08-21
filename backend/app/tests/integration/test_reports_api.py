@@ -257,7 +257,7 @@ def test_catalogue(client):
     kinds = {k["key"]: k for k in r.json()["kinds"]}
     assert set(kinds) == {
         "publications", "research", "faculty", "students", "teaching",
-        "finance", "events", "committees", "analytics",
+        "finance", "events", "committees", "analytics", "academic_cv",
     }
     assert "faculty_id" in kinds["faculty"]["filters"]
 

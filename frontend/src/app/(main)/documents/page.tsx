@@ -113,7 +113,7 @@ export default function DocumentsPage() {
                     <RefreshCw className="h-4 w-4" /> Try again</button>} />
               ) : showTable ? (
                 <>
-                  <DocumentTable documents={items} loading={loading} refreshing={refreshing} />
+                  <DocumentTable documents={items} loading={loading} refreshing={refreshing} onDocumentsChanged={refresh} />
                   {!loading && (
                     <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} disabled={refreshing} />
                   )}

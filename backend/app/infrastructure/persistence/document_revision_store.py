@@ -55,6 +55,16 @@ class SQLDocumentRevisionStore(DocumentRevisionStore):
         ).scalars().all()
         return [_from_model(r) for r in rows]
 
+    def find_by_content_hash(self, content_hash: str) -> DocumentRevision | None:
+        """Find an existing revision with the same content hash (duplicate detection)."""
+        row = self._session.execute(
+            select(DocumentRevisionModel)
+            .where(DocumentRevisionModel.content_hash == content_hash)
+            .where(DocumentRevisionModel.quarantined == 0)
+            .order_by(DocumentRevisionModel.created_at.desc())
+        ).scalars().first()
+        return _from_model(row) if row else None
+
 
 def _from_model(row: DocumentRevisionModel) -> DocumentRevision:
     return DocumentRevision(

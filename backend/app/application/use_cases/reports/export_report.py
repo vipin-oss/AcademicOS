@@ -22,6 +22,7 @@ from app.application.use_cases.reports.publications_report import build_publicat
 from app.application.use_cases.reports.research_report import build_research_report
 from app.application.use_cases.reports.students_report import build_students_report
 from app.application.use_cases.reports.teaching_report import build_teaching_report
+from app.application.use_cases.reports.academic_cv import build_academic_cv
 from app.application.validators.reports import (
     assert_valid_export_format,
     assert_valid_report_kind,
@@ -50,6 +51,7 @@ def build_report_view(kind: str, repository: ObjectRepository, filters) -> Repor
         "events": lambda: build_events_report(snapshot, repository, filters),
         "committees": lambda: build_committees_report(repository, snapshot, filters),
         "analytics": lambda: build_analytics_report(snapshot, repository, filters),
+        "academic_cv": lambda: build_academic_cv(repository, filters),
     }
     return builders[kind]()
 

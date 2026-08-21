@@ -257,3 +257,65 @@ def analytics_report(
         GetAnalyticsReportUseCase(repo),
         GetAnalyticsReportQuery(filters=to_report_filters(params=params)),
     )
+
+
+@router.get("/academic-cv")
+def academic_cv_report(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    params: dict = Depends(_filter_params),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Generate a consolidated Academic CV pulling from all modules."""
+    from app.application.use_cases.reports.academic_cv import build_academic_cv
+    from app.api.mappers.reports_mapper import to_report_filters
+
+    filters = to_report_filters(params=params)
+    user_id = str(user.id)
+    try:
+        view = build_academic_cv(repo, filters, user_id=user_id)
+        return report_response(view)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/academic-cv/export")
+def export_academic_cv(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    format: str = Query("pdf"),
+    params: dict = Depends(_filter_params),
+    user: UniversalObject = Depends(get_current_user),
+):
+    """Export Academic CV as PDF, CSV, or XLSX."""
+    from app.application.use_cases.reports.academic_cv import build_academic_cv
+    from app.application.use_cases.reports.exporters import EXPORTERS
+    from app.api.mappers.reports_mapper import to_report_filters
+
+    fmt = format.strip().lower()
+    if fmt not in EXPORTERS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown format '{format}'. Expected: csv, xlsx, pdf",
+        )
+
+    filters = to_report_filters(params=params)
+    user_id = str(user.id)
+    try:
+        view = build_academic_cv(repo, filters, user_id=user_id)
+        exporter, media_type, extension = EXPORTERS[fmt]
+        content = exporter(view)
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"academic-cv-{stamp}.{extension}"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc

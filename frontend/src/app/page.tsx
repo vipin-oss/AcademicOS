@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle, AlertTriangle, Calendar, FlaskConical } from "lucide-react";
+import { Upload, Search, Sparkles, BookOpen, FileText, Clock, ArrowRight, AlertCircle, CheckCircle2, XCircle, AlertTriangle, Calendar, FlaskConical, Download } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { api } from "@/lib/api/client";
 import type { ListDocumentsResponse, DocumentResponse } from "@/types";
 import { friendlyFieldName } from "@/lib/fieldLabels";
+import { GenerateCVModal } from "@/components/features/reports/GenerateCVModal";
 
 interface PendingItem {
   id: string;
@@ -46,6 +47,7 @@ export default function HomePage() {
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [missingItems, setMissingItems] = useState<MissingItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cvModalOpen, setCvModalOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -150,6 +152,10 @@ export default function HomePage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><Search className="h-5 w-5" /></div>
               <div><p className="text-sm font-semibold text-[var(--text-primary)]">Search</p><p className="text-xs text-[var(--text-tertiary)]">Find anything</p></div>
             </Link>
+            <button type="button" onClick={() => setCvModalOpen(true)} className="group flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4 transition-all hover:border-purple-400 hover:shadow-sm text-left">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 text-purple-600"><Download className="h-5 w-5" /></div>
+              <div><p className="text-sm font-semibold text-purple-900">Generate CV</p><p className="text-xs text-purple-600">PDF, Excel, CSV</p></div>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -343,6 +349,7 @@ export default function HomePage() {
           </div>
         </main>
       </div>
+      <GenerateCVModal open={cvModalOpen} onClose={() => setCvModalOpen(false)} />
     </div>
   );
 }

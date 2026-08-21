@@ -19,6 +19,11 @@ class ObjectRepository(Repository[UniversalObject]):
     def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
         """All Objects of a given type (e.g. every Course in the Space)."""
 
+    def find_by_type_for_user(self, object_type: ObjectType, user_id: str) -> list[UniversalObject]:
+        """Objects of a type owned by a specific user (ACL enforcement)."""
+        # Default implementation: filter by created_by in metadata
+        return [obj for obj in self.find_by_type(object_type) if obj.created_by == user_id]
+
     @abc.abstractmethod
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
         """All Objects in a given lifecycle state."""

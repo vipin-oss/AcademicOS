@@ -33,3 +33,7 @@ class DocumentRevisionStore(abc.ABC):
     @abc.abstractmethod
     def for_document(self, document_id: str) -> list[DocumentRevision]:
         """All revisions of a document, oldest first."""
+
+    def find_by_content_hash(self, content_hash: str) -> DocumentRevision | None:
+        """Find an existing revision with the same content hash (duplicate detection)."""
+        return None

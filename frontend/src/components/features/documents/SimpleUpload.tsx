@@ -7,7 +7,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Upload, CheckCircle2, Loader2, ExternalLink, FileText, Sparkles } from "lucide-react";
+import { Upload, CheckCircle2, Loader2, ExternalLink, FileText, Sparkles, AlertTriangle } from "lucide-react";
 import { toErrorMessage } from "@/lib/api/client";
 import { uploadDocument, type UploadProgress } from "@/lib/api/documents";
 import { analyzeDocument, type DocumentAnalysisResponse } from "@/lib/api/documentIntake";
@@ -19,6 +19,7 @@ interface UploadResult {
   title: string;
   document_type: string;
   file_name: string;
+  duplicate_warning?: string | null;
 }
 
 type Step = "upload" | "analyzing" | "done";
@@ -87,7 +88,13 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
       setUploading(true); setError(null); setResult(null); setAnalysis(null); setProgress(0);
       try {
         const saved = await uploadDocument({ file }, { onProgress: (v: UploadProgress) => setProgress(v.percent) });
-        const uploadResult: UploadResult = { id: saved.id, title: saved.title, document_type: saved.document_type, file_name: saved.file_name };
+        const uploadResult: UploadResult = { 
+          id: saved.id, 
+          title: saved.title, 
+          document_type: saved.document_type, 
+          file_name: saved.file_name,
+          duplicate_warning: (saved as any).duplicate_warning,
+        };
         setResult(uploadResult);
         onUploaded?.(uploadResult);
         await runAnalysis(saved.id);
@@ -165,6 +172,19 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
               <ExternalLink className="h-3 w-3" /> View full document
             </Link>
           )}
+        </div>
+      )}
+
+      {/* Duplicate warning */}
+      {result?.duplicate_warning && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-amber-800">Similar document already exists</p>
+              <p className="text-xs text-amber-700 mt-1">{result.duplicate_warning}</p>
+            </div>
+          </div>
         </div>
       )}
 

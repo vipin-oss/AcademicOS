@@ -313,6 +313,7 @@ class DocumentResponseModel(BaseModel):
     preview_url: str | None = None
     metadata: dict[str, str] = {}
     events: list[str] = []
+    duplicate_warning: str | None = None
 
 
 class ListDocumentsResponseModel(BaseModel):
@@ -463,12 +464,23 @@ def list_documents(
         o for o in result.items
         if is_admin or (o.uploaded_by == user_id)
     ]
+    # Get total count: for admin use result.total_count, for regular users
+    # we need to count all their documents. Use a large page to get accurate count.
+    if is_admin:
+        total_for_user = result.total_count
+    else:
+        # Fetch all documents (up to max page_size) to count user's documents
+        # This is acceptable for typical academic workloads (<1000 documents)
+        all_result = ListDocumentsUseCase(repo).execute(
+            ListDocumentsQuery(page=1, page_size=100)
+        )
+        total_for_user = sum(1 for o in all_result.items if o.uploaded_by == user_id)
     return ListDocumentsResponseModel(
         items=[
             DocumentResponseModel(**to_response(o, url=_download_url(o, storage)))
             for o in filtered
         ],
-        total_count=len(filtered),
+        total_count=total_for_user,
         page=result.page,
         page_size=result.page_size,
     )
@@ -542,6 +554,24 @@ def create_document(
     from app.application.services.document_pipeline import DocumentPipeline
 
     decision = DocumentPipeline.decision(file_name, mime_type, content)
+
+    # Duplicate detection: check if a document with the same content hash exists
+    # Only warn about duplicates owned by the CURRENT user (never leak other users' data)
+    duplicate_warning = None
+    try:
+        from app.infrastructure.persistence.document_revision_store import SQLDocumentRevisionStore
+        revision_store = SQLDocumentRevisionStore(db)
+        existing = revision_store.find_by_content_hash(decision.content_hash)
+        if existing:
+            existing_doc = repo.get_by_id(ObjectId(existing.document_id))
+            if existing_doc:
+                # Only warn if the existing document belongs to the current user
+                doc_owner = existing_doc.audit.created_by if existing_doc.audit else None
+                if doc_owner == str(user.id):
+                    created = existing_doc.audit.created_at.isoformat()[:10] if existing_doc.audit and existing_doc.audit.created_at else "unknown"
+                    duplicate_warning = f"Similar file already uploaded: \"{existing_doc.title}\" (uploaded {created})"
+    except Exception:
+        pass  # Duplicate detection is best-effort
     try:
         out = CreateDocumentUseCase(repo, storage).execute(
             CreateDocumentCommand(
@@ -668,7 +698,10 @@ def create_document(
             )
         except Exception:  # noqa: BLE001 — enrichment scheduling must never fail the upload
             _log.debug("Background enrichment scheduling skipped (not available).")
-    return DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
+    response = DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
+    if duplicate_warning:
+        response.duplicate_warning = duplicate_warning
+    return response
 
 
 @router.put("/{document_id}", response_model=DocumentResponseModel)

@@ -26,53 +26,53 @@ export function listFolders(
 ): Promise<FolderListResponse> {
   const query: Record<string, string> = {};
   if (params.parentId) query.parent_id = params.parentId;
-  return api.get<FolderListResponse>("/documents/folders", { ...options, query });
+  return api.get<FolderListResponse>("/folders", { ...options, query });
 }
 
 export function listAllFolders(options?: RequestOptions): Promise<FolderListResponse> {
-  return api.get<FolderListResponse>("/documents/folders/all", options);
+  return api.get<FolderListResponse>("/folders/all", options);
 }
 
 export function createFolder(
   name: string,
   parentId?: string | null,
 ): Promise<Folder> {
-  return api.post<Folder>("/documents/folders", { name, parent_id: parentId ?? null });
+  return api.post<Folder>("/folders", { name, parent_id: parentId ?? null });
 }
 
 export function renameFolder(id: string, name: string): Promise<Folder> {
-  return api.put<Folder>(`/documents/folders/${id}`, { name });
+  return api.put<Folder>(`/folders/${id}`, { name });
 }
 
 export function deleteFolder(id: string): Promise<void> {
-  return api.delete(`/documents/folders/${id}`);
+  return api.delete(`/folders/${id}`);
 }
 
 export function moveFolder(id: string, newParentId: string | null): Promise<Folder> {
-  return api.put<Folder>(`/documents/folders/${id}/move`, { new_parent_id: newParentId });
+  return api.put<Folder>(`/folders/${id}/move`, { new_parent_id: newParentId });
 }
 
 export function addDocumentToFolder(folderId: string, documentId: string): Promise<{ status: string }> {
-  return api.post(`/documents/folders/${folderId}/documents/${documentId}`, {});
+  return api.post(`/folders/${folderId}/documents/${documentId}`, {});
 }
 
 export function removeDocumentFromFolder(folderId: string, documentId: string): Promise<void> {
-  return api.delete(`/documents/folders/${folderId}/documents/${documentId}`);
+  return api.delete(`/folders/${folderId}/documents/${documentId}`);
 }
 
 export function listDocumentsInFolder(
   folderId: string,
   params: { page?: number; pageSize?: number } = {},
 ): Promise<{ items: Array<{ id: string; title: string; object_type: string; status: string }>; total: number }> {
-  return api.get(`/documents/folders/${folderId}/documents`, {
+  return api.get(`/folders/${folderId}/documents`, {
     query: { page: params.page ?? 1, page_size: params.pageSize ?? 20 },
   });
 }
 
 export function setDocumentTags(documentId: string, tags: string[]): Promise<{ tags: string[] }> {
-  return api.put(`/documents/folders/tags/${documentId}`, { tags });
+  return api.put(`/folders/tags/${documentId}`, { tags });
 }
 
 export function toggleFavorite(documentId: string, favorite: boolean): Promise<{ favorite: boolean }> {
-  return api.put(`/documents/folders/favorite/${documentId}`, { favorite });
+  return api.put(`/folders/favorite/${documentId}`, { favorite });
 }

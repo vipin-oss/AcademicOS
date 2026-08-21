@@ -99,6 +99,8 @@ export interface DocumentResponse {
   metadata?: Record<string, string>;
   /** Audit/domain events, when the backend exposes them. */
   events?: string[];
+  /** Warning if a similar file was already uploaded. */
+  duplicate_warning?: string | null;
 }
 
 export interface ListDocumentsResponse {

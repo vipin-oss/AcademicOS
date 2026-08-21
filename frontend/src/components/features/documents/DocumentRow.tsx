@@ -11,7 +11,15 @@ import { DocumentStatusBadge, DocumentTypeBadge } from "./DocumentBadge";
 import { FileIcon } from "./FileIcon";
 import { formatFileSize } from "@/lib/documents/constants";
 
-export function DocumentRow({ document }: { document: DocumentResponse }) {
+export function DocumentRow({
+  document,
+  selected = false,
+  onToggleSelect,
+}: {
+  document: DocumentResponse;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
+}) {
   const router = useRouter();
   const { download, downloadingId, error } = useDocumentDownload();
 
@@ -38,6 +46,17 @@ export function DocumentRow({ document }: { document: DocumentResponse }) {
       onKeyDown={onKeyDown}
       className="cursor-pointer border-t border-[var(--border-subtle)] transition-colors hover:bg-[var(--bg-hover)] focus:bg-[var(--bg-hover)] focus:outline-none"
     >
+      {/* Selection checkbox */}
+      <td className="w-10 px-2 py-3" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect?.(document.id)}
+          aria-label={`Select ${document.title}`}
+          className="h-4 w-4 rounded border-[var(--border-subtle)] text-[var(--accent)] focus:ring-[var(--accent)]"
+        />
+      </td>
+
       {/* Document name */}
       <td className="max-w-[240px] px-4 py-3 sm:max-w-none">
         <div className="flex items-center gap-3">

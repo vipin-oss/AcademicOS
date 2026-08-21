@@ -36,6 +36,7 @@ REPORT_KINDS: tuple[str, ...] = (
     "events",
     "committees",
     "analytics",
+    "academic_cv",
 )
 REPORT_TITLES: dict[str, str] = {
     "publications": "Publications Report",
@@ -47,6 +48,7 @@ REPORT_TITLES: dict[str, str] = {
     "events": "Events Report",
     "committees": "Committee Report",
     "analytics": "Analytics",
+    "academic_cv": "Academic Curriculum Vitae",
 }
 
 EXPORT_FORMATS: tuple[str, ...] = ("csv", "xlsx", "pdf")
@@ -86,6 +88,7 @@ FILTER_KEYS_BY_KIND: dict[str, tuple[str, ...]] = {
     ),
     "committees": ("year", "date_from", "date_to", "faculty_id", "committee_id"),
     "analytics": (),
+    "academic_cv": ("year", "date_from", "date_to"),
 }
 
 DATE_FORMAT = "%Y-%m-%d"

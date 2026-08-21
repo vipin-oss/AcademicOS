@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2, Layout, Calendar, FlaskConical, Search } from "lucide-react";
+import { GraduationCap, Home, FileText, BookOpen, Sparkles, Settings, Menu, X, GripVertical, Eye, EyeOff, RotateCcw, Plus, Trash2, Layout, Calendar, FlaskConical, Search, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
@@ -17,6 +17,7 @@ const AVAILABLE_MODULES = [
   { id: "students", label: "Students", icon: GraduationCap, href: "/students" },
   { id: "finance", label: "Finance", icon: GraduationCap, href: "/finance" },
   { id: "faculty", label: "Faculty", icon: GraduationCap, href: "/faculty" },
+  { id: "reports", label: "Reports & CV", icon: BarChart3, href: "/reports" },
 ];
 
 const DEFAULT_NAV: NavItem[] = [
@@ -25,6 +26,7 @@ const DEFAULT_NAV: NavItem[] = [
   { id: "events", label: "Events", icon: Calendar, href: "/events", visible: true },
   { id: "publications", label: "Publications", icon: BookOpen, href: "/publications", visible: true },
   { id: "research", label: "Research", icon: FlaskConical, href: "/research", visible: true },
+  { id: "reports", label: "Reports & CV", icon: BarChart3, href: "/reports", visible: true },
   { id: "search", label: "Search", icon: Search, href: "/search", visible: true },
 ];
 

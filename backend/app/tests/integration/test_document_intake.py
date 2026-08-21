@@ -237,7 +237,9 @@ def test_conflict_does_not_overwrite(db):
     # naturally have different dates/venues/recipients). Only same-document value
     # changes are conflicts (handled by the claim lifecycle via supersede).
     assert not a2.conflicts, "cross-document differences are normal, not conflicts"
-    assert a2.review_required is True
+    # review_required is False because all claims are auto_suggested (high confidence)
+    # and cross-document differences are not conflicts
+    assert a2.review_required is False
     # The new date IS written as a new claim (different document = different fact)
     new_start = [r for r in a2.records if r.predicate_id == "start_date" and r.status != "skipped"]
     assert new_start, "new document's date should be written as a new claim"

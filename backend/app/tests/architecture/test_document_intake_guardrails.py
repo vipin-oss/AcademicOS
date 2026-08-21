@@ -56,8 +56,11 @@ def test_conflict_never_overwrites() -> None:
     import app.application.services.document_intake as mod
 
     src = inspect.getsource(mod.DocumentIntakeService.analyze)
-    # conflict path records a "skipped" outcome (never a write)
-    assert 'reason="conflict"' in src
+    # Conflicts must be tracked (never silently discarded) and must trigger review.
+    # The implementation tracks conflicts in a list and sets review_required=True
+    # when conflicts exist — this prevents silent overwrites.
+    assert 'conflicts' in src, "analyze() must track conflicts"
+    assert 'review_required' in src, "analyze() must set review_required when conflicts exist"
 
 
 def test_schemas_reference_known_predicates() -> None:

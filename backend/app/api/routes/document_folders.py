@@ -35,7 +35,7 @@ from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,
 )
 
-router = APIRouter(prefix="/documents/folders", tags=["document-folders"])
+router = APIRouter(prefix="/folders", tags=["document-folders"])
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +194,11 @@ def create_folder(
     folder_id = f"obj:folder:{uuid.uuid4().hex[:16].upper()}"
     cmd = CreateObjectCommand(
         input=CreateObjectInput(
-            object_type="folder",
+            object_type=ObjectType.FOLDER,
             title=body.name.strip(),
             created_by=str(user.id),
-            object_id=folder_id,
-            status="active",
+            object_id=ObjectId(folder_id),
+            status=ObjectStatus.ACTIVE,
         )
     )
     out = CreateObjectUseCase(repo).execute(cmd)

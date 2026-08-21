@@ -169,16 +169,21 @@ class DomainRecordRouter:
             self._repository, title=title, event_code=None,
             department=_f(fields, "department"), start_date=start,
         )
+        # Filter duplicates to only those owned by the current user
+        dups = [d for d in dups if d.audit and d.audit.created_by == created_by]
         if dups:
             return RouteOutcome("event", "duplicate", existing_id=str(dups[0].id),
                                 reason="existing event")
         # Title-only duplicate check when no date is available
+        # CRITICAL: Only check events owned by the current user!
         if not start:
             title_cf = title.strip().casefold()
             for obj in self._repository.find_by_type(ObjectType.EVENT):
                 if obj.title and obj.title.strip().casefold() == title_cf:
-                    return RouteOutcome("event", "duplicate", existing_id=str(obj.id),
-                                        reason="existing event (title match)")
+                    # Only treat as duplicate if owned by the same user
+                    if obj.audit and obj.audit.created_by == created_by:
+                        return RouteOutcome("event", "duplicate", existing_id=str(obj.id),
+                                            reason="existing event (title match)")
         try:
             out = CreateEventUseCase(self._repository).execute(
                 CreateEventCommand(input=CreateEventInput(
@@ -452,6 +457,10 @@ class DomainRecordRouter:
         title = _f(fields, "conference_name") or _f(fields, "event_title")
 
         for obj in self._repository.list_by_type(ObjectType.EVENT):
+            # CRITICAL: Only match events owned by the same user
+            if obj.audit and obj.audit.created_by != owner_id:
+                continue
+                
             event_fields = {
                 "conference_name": obj.title or "",
                 "start_date": obj.metadata.get_value("start_date") or "",

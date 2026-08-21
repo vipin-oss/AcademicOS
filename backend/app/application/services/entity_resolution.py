@@ -227,6 +227,10 @@ def match_entities(
         if jmatch > 0:
             signals.append(MatchSignal("journal", jmatch, f"Journal match: {journal1}"))
             has_journal = True
+        else:
+            # Conflicting journals — add signal with 0 confidence
+            signals.append(MatchSignal("journal", 0.0, f"Journal mismatch: {journal1} vs {journal2}"))
+            has_journal = True
 
     # 6. Year compatibility
     year1 = str(doc1_fields.get("publication_year", "")).strip() or None
@@ -235,6 +239,9 @@ def match_entities(
         ymatch = _year_match(year1, year2)
         if ymatch > 0:
             signals.append(MatchSignal("year", ymatch, f"Year compatible: {year1} vs {year2}"))
+        else:
+            # Conflicting years — add signal with 0 confidence
+            signals.append(MatchSignal("year", 0.0, f"Year mismatch: {year1} vs {year2}"))
 
     # --- DECISION POLICY ---
 
@@ -257,6 +264,23 @@ def match_entities(
     if mid_signal and mid_signal.confidence >= 0.9:
         return MatchResult(doc1_id, doc2_id, 0.95, tuple(signals), "high")
 
+    # Exact title match (>=0.95) with conflicting journal/year → still HIGH
+    # Title is the dominant signal for academic papers
+    if has_title:
+        title_sim = _title_similarity(title1, title2)
+        if title_sim >= 0.95:
+            # Check for conflicting journal/year (these lower confidence but title dominates)
+            has_journal_conflict = False
+            has_year_conflict = False
+            for s in signals:
+                if s.signal_type == "journal" and s.confidence == 0.0:
+                    has_journal_conflict = True
+                if s.signal_type == "year" and s.confidence == 0.0:
+                    has_year_conflict = True
+            if has_journal_conflict or has_year_conflict:
+                # Title exact match overrides journal/year conflicts
+                return MatchResult(doc1_id, doc2_id, 0.85, tuple(signals), "high")
+
     # Title + Authors + Journal → HIGH
     if has_title and has_authors and has_journal:
         title_sim = _title_similarity(title1, title2)
@@ -278,7 +302,18 @@ def match_entities(
         if title_sim >= 0.9:
             return MatchResult(doc1_id, doc2_id, 0.6, tuple(signals), "medium")
 
-    # Title only → LOW (insufficient for auto-link)
+    # Exact title match (>=0.95) → MEDIUM even without other signals
+    # This handles: minor punctuation, capitalization, similar titles
+    if has_title:
+        title_sim = _title_similarity(title1, title2)
+        if title_sim >= 0.95:
+            # Exact title match is strong evidence — MEDIUM for review
+            return MatchResult(doc1_id, doc2_id, 0.6, tuple(signals), "medium")
+        elif title_sim >= 0.85:
+            # Strong similarity — still MEDIUM but lower
+            return MatchResult(doc1_id, doc2_id, 0.5, tuple(signals), "medium")
+
+    # Title only with low similarity → LOW (insufficient for auto-link)
     if has_title and not has_authors and not has_journal:
         return MatchResult(doc1_id, doc2_id, 0.3, tuple(signals), "low")
 

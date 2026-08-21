@@ -42,6 +42,19 @@ from app.domain.value_objects.metadata import Metadata, MetadataEntry
 from app.domain.value_objects.object_id import ObjectId
 from app.infrastructure.db.models.document_content_model import DocumentContentModel
 from app.infrastructure.db.models.object_model import Base
+# Import all models so create_all creates all tables
+from app.infrastructure.db.models.document_revision_model import DocumentRevisionModel  # noqa: F401
+from app.infrastructure.db.models.claim_model import ClaimModel  # noqa: F401
+from app.infrastructure.db.models.claim_span_model import ClaimSpanModel  # noqa: F401
+from app.infrastructure.db.models.claim_decision_model import ClaimDecisionModel  # noqa: F401
+from app.infrastructure.db.models.object_relationship_model import ObjectRelationshipModel  # noqa: F401
+from app.infrastructure.db.models.object_version_model import ObjectVersionModel  # noqa: F401
+from app.infrastructure.db.models.outbox_model import OutboxEventModel  # noqa: F401
+from app.infrastructure.db.models.search_document_model import SearchDocumentModel  # noqa: F401
+from app.infrastructure.db.models.document_identity_model import DocumentIdentityModel  # noqa: F401
+from app.infrastructure.db.models.document_chunk_model import DocumentChunkModel  # noqa: F401
+from app.infrastructure.db.models.notification_model import NotificationModel  # noqa: F401
+from app.infrastructure.db.models.entity_match_model import EntityMatchModel  # noqa: F401
 from app.infrastructure.db.session import get_db
 from app.infrastructure.repositories.sqlalchemy_object_repository import (
     SQLAlchemyObjectRepository,

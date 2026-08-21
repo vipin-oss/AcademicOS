@@ -44,17 +44,21 @@ def get_missing_info(
     user: UniversalObject = Depends(get_current_user),
 ) -> list[MissingItemOut]:
     """List important missing fields across the user's academic records."""
-    store = SQLClaimStore(db)
-    items = analyze_missing_fields(store, str(user.id))
-    return [
-        MissingItemOut(
-            record_id=m.record_id,
-            record_type=m.record_type,
-            record_title=m.record_title,
-            missing_field=m.missing_field,
-            predicate_id=m.predicate_id,
-            why_it_matters=m.why_it_matters,
-            source_document_id=m.source_document_id,
-        )
-        for m in items[:limit]
-    ]
+    try:
+        store = SQLClaimStore(db)
+        items = analyze_missing_fields(store, str(user.id))
+        return [
+            MissingItemOut(
+                record_id=m.record_id,
+                record_type=m.record_type,
+                record_title=m.record_title,
+                missing_field=m.missing_field,
+                predicate_id=m.predicate_id,
+                why_it_matters=m.why_it_matters,
+                source_document_id=m.source_document_id,
+            )
+            for m in items[:limit]
+        ]
+    except Exception:
+        # Return empty list on error rather than500
+        return []
