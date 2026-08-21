@@ -240,33 +240,40 @@ def _route_records(
 def _auto_confirm_and_project(
     db: Session, document_id: str, user_id: str, repo: SQLAlchemyObjectRepository
 ) -> list[dict]:
-    """Auto-confirm all AUTO_SUGGESTED claims and project domain objects.
+    """Auto-confirm high-confidence claims and project domain objects.
 
-    When a document is analyzed and all claims are high-confidence (auto_suggested),
-    this automatically confirms them and creates the domain object (Event, Publication,
-    etc.) so the professor sees it immediately after upload — no manual review needed.
+    When a document is analyzed, this automatically confirms claims that are
+    confident enough and creates the domain object (Event, Publication, etc.)
+    so the professor sees it immediately after upload — no manual review needed.
+
+    Confirms BOTH auto_suggested AND proposed claims with confidence >= 0.85.
+    This ensures prose-extracted fields (confidence 0.85) are also confirmed,
+    not just label/regex fields (confidence 0.9).
     """
     from app.domain.value_objects.claim import ClaimStatus
     from app.application.services.claim_confirmation import ClaimConfirmationService
     from app.application.services.claim_service import ClaimService
     from app.infrastructure.persistence.claim_decision_store import SQLClaimDecisionStore
 
+    # Minimum confidence for auto-confirm (covers both label/regex at 0.9
+    # and prose-extracted fields at 0.85)
+    AUTO_CONFIRM_MIN_CONFIDENCE = 0.85
+
     store = SQLClaimStore(db)
     all_claims = store.by_source(document_id)
-    auto_suggested = [
-        c for c in all_claims if c.status == ClaimStatus.AUTO_SUGGESTED
-    ]
-    proposed = [
-        c for c in all_claims if c.status == ClaimStatus.PROPOSED
+
+    # Get all pending claims (auto_suggested OR proposed) with sufficient confidence
+    pending_high_conf = [
+        c for c in all_claims
+        if c.status in (ClaimStatus.AUTO_SUGGESTED, ClaimStatus.PROPOSED)
+        and (c.fact_confidence or 0) >= AUTO_CONFIRM_MIN_CONFIDENCE
     ]
 
-    # Auto-confirm all AUTO_SUGGESTED claims regardless of PROPOSED ones.
-    # PROPOSED claims remain for manual review but don't block auto-confirm.
-    if not auto_suggested:
+    if not pending_high_conf:
         return []
 
     confirm_svc = ClaimConfirmationService(ClaimService(store), SQLClaimDecisionStore(db))
-    for c in auto_suggested:
+    for c in pending_high_conf:
         try:
             confirm_svc.approve(c.claim_id, reviewer=user_id)
         except Exception:
