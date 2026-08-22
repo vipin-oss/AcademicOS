@@ -127,6 +127,20 @@ def _f(fields: dict[str, object], key: str) -> str | None:
     return str(v) if v not in (None, "") else None
 
 
+def _extract_year(date_str: str | None) -> int | None:
+    """Extract year from a date string (YYYY-MM-DD or YYYY)."""
+    if not date_str:
+        return None
+    text = str(date_str).strip()[:10]
+    try:
+        parts = text.split("-")
+        if len(parts) >= 1 and parts[0].isdigit() and len(parts[0]) == 4:
+            return int(parts[0])
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
 class DomainRecordRouter:
     """Create actual domain records from an extracted document."""
 
@@ -165,42 +179,92 @@ class DomainRecordRouter:
         # Clean title: stop before trailing metadata keywords
         title = _clean_event_title(title)
         start = _f(fields, "start_date")
-        dups = find_event_duplicates(
-            self._repository, title=title, event_code=None,
-            department=_f(fields, "department"), start_date=start,
-        )
-        # Filter duplicates to only those owned by the current user
-        dups = [d for d in dups if d.audit and d.audit.created_by == created_by]
-        if dups:
-            # Link document to existing event (so professor sees the connection)
-            self._link_source(dups[0].id, source_document_id, created_by)
-            return RouteOutcome("event", "duplicate", existing_id=str(dups[0].id),
-                                reason="existing event")
-        # Title-only duplicate check when no date is available
-        # CRITICAL: Only check events owned by the current user!
-        if not start:
-            title_cf = title.strip().casefold()
-            for obj in self._repository.find_by_type(ObjectType.EVENT):
-                if obj.title and obj.title.strip().casefold() == title_cf:
-                    # Only treat as duplicate if owned by the same user
-                    if obj.audit and obj.audit.created_by == created_by:
-                        # Link document to existing event
-                        self._link_source(obj.id, source_document_id, created_by)
-                        return RouteOutcome("event", "duplicate", existing_id=str(obj.id),
-                                            reason="existing event (title match)")
+        end = _f(fields, "end_date")
+
+        # Extract year from start_date for date-aware deduplication
+        extracted_year = _extract_year(start) if start else None
+
+        # Find potential duplicates owned by the current user
+        existing_events = self._repository.find_by_type(ObjectType.EVENT)
+        user_events = [e for e in existing_events if e.audit and e.audit.created_by == created_by]
+
+        # Check for duplicates with date-aware logic
+        for existing in user_events:
+            if not existing.title:
+                continue
+            existing_title_cf = existing.title.strip().casefold()
+            new_title_cf = title.strip().casefold()
+
+            # Title must match (exact, case-insensitive)
+            if existing_title_cf != new_title_cf:
+                continue
+
+            # Title matches! Now check date/year
+            existing_meta = {entry.key: entry.value for entry in existing.metadata.entries}
+            existing_start = existing_meta.get("start_date")
+            existing_year = _extract_year(existing_start) if existing_start else None
+
+            # CASE 1: Both have year → must match same year to be duplicate
+            if extracted_year and existing_year:
+                if extracted_year == existing_year:
+                    # Same title, same year → DUPLICATE
+                    self._link_source(existing.id, source_document_id, created_by)
+                    return RouteOutcome("event", "duplicate", existing_id=str(existing.id),
+                                        reason="existing event (same title + year)")
+                else:
+                    # Same title, DIFFERENT year → NOT a duplicate, continue searching
+                    continue
+
+            # CASE 2: Neither has year → title-only match (safe fallback)
+            if not extracted_year and not existing_year:
+                self._link_source(existing.id, source_document_id, created_by)
+                return RouteOutcome("event", "duplicate", existing_id=str(existing.id),
+                                    reason="existing event (title match, no date)")
+
+            # CASE 3: One has year, other doesn't → treat as potential duplicate
+            # (conservative: don't create a new event when we might be missing date info)
+            self._link_source(existing.id, source_document_id, created_by)
+            return RouteOutcome("event", "duplicate", existing_id=str(existing.id),
+                                reason="existing event (title match)")
+
+        # No duplicate found for THIS user → create new event
+        # We already verified no duplicate exists for this user, so create directly.
+        # We don't use CreateEventUseCase because it has a global duplicate check
+        # that doesn't filter by user — which would block legitimate cross-user events.
+        from app.domain.entities.object import UniversalObject
+        from app.domain.value_objects.enums import ObjectStatus, ObjectType as OT
+        from app.domain.value_objects.object_id import ObjectId as OID
+        import uuid
+
         try:
-            out = CreateEventUseCase(self._repository).execute(
-                CreateEventCommand(input=CreateEventInput(
-                    title=title, created_by=created_by,
-                    event_type="conference" if "conference" in fields.get("__types__", ()) else "custom",
-                    organizer=_f(fields, "conference_organizer"),
-                    venue=_f(fields, "venue"),
-                    start_date=start,
-                    end_date=_f(fields, "end_date"),
-                    department=_f(fields, "department"),
-                ))
+            event_id = f"obj:event:{uuid.uuid4().hex[:16].upper()}"
+            event = UniversalObject.create(
+                object_type=OT.EVENT,
+                title=title,
+                created_by=created_by,
+                object_id=OID(event_id),
+                status=ObjectStatus.ACTIVE,
             )
-        except (ValidationError, ObjectAlreadyExistsError, ValueError):
+            # Set metadata
+            from app.domain.value_objects.metadata import MetadataEntry, MetadataLayer
+            meta_fields = {
+                "event_type": "conference" if "conference" in fields.get("__types__", ()) else "custom",
+                "organizer": _f(fields, "conference_organizer"),
+                "venue": _f(fields, "venue"),
+                "start_date": start,
+                "end_date": end,
+                "department": _f(fields, "department"),
+            }
+            for key, val in meta_fields.items():
+                if val:
+                    event.set_metadata(
+                        MetadataEntry(key, val, MetadataLayer.L6_HUMAN_ASSERTED, Provenance.ASSERTED),
+                        actor=created_by,
+                    )
+            self._repository.save(event)
+            self._link_source(event_id, source_document_id, created_by)
+            return RouteOutcome("event", "created", object_id=event_id)
+        except Exception:
             return RouteOutcome("event", "skipped", reason="event creation failed")
         self._link_source(out.id, source_document_id, created_by)
         return RouteOutcome("event", "created", object_id=out.id)
@@ -470,7 +534,7 @@ class DomainRecordRouter:
             # CRITICAL: Only match events owned by the same user
             if obj.audit and obj.audit.created_by != owner_id:
                 continue
-                
+
             event_fields = {
                 "conference_name": obj.title or "",
                 "start_date": obj.metadata.get_value("start_date") or "",
