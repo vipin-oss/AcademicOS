@@ -44,13 +44,15 @@ function StepIndicator({ step }: { step: Step }) {
     { key: "done", label: "Done", icon: CheckCircle2 },
   ];
   const activeIndex = steps.findIndex((s) => s.key === step);
+  // When step === "done", ALL steps are complete
+  const allComplete = step === "done";
 
   return (
     <div className="flex items-center gap-2">
       {steps.map((s, i) => {
         const Icon = s.icon;
-        const active = i === activeIndex;
-        const done = i < activeIndex;
+        const active = !allComplete && i === activeIndex;
+        const done = allComplete || i < activeIndex;
         return (
           <div key={s.key} className="flex items-center gap-1.5">
             {i > 0 && <div className={cn("h-px w-6", done ? "bg-emerald-400" : "bg-[var(--border-subtle)]")} />}
