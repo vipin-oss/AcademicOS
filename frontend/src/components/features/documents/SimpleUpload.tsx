@@ -2,16 +2,17 @@
 
 /**
  * Simple drag-and-drop upload component with automatic document analysis.
- * Shows a progress stepper: Upload → Analyzing → Review
+ * Shows a progress stepper: Upload → Processing → Done
+ *
+ * Analysis happens ONCE during upload (POST /documents).
+ * No redundant second analysis call.
  */
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Upload, CheckCircle2, Loader2, ExternalLink, FileText, Sparkles, AlertTriangle } from "lucide-react";
+import { Upload, CheckCircle2, Loader2, ExternalLink, FileText, AlertTriangle, Calendar, BookOpen, FlaskConical } from "lucide-react";
 import { toErrorMessage } from "@/lib/api/client";
 import { uploadDocument, type UploadProgress } from "@/lib/api/documents";
-import { analyzeDocument, type DocumentAnalysisResponse } from "@/lib/api/documentIntake";
-import { DocumentAnalysisResult } from "./DocumentAnalysisResult";
 import { cn } from "@/lib/utils";
 
 interface UploadResult {
@@ -20,15 +21,27 @@ interface UploadResult {
   document_type: string;
   file_name: string;
   duplicate_warning?: string | null;
+  analysis?: {
+    document_type_id?: string | null;
+    confidence?: number;
+    fields_count?: number;
+    routing?: Array<{
+      module: string;
+      kind: string;
+      object_id?: string;
+      existing_id?: string;
+      reason?: string;
+    }>;
+  } | null;
 }
 
-type Step = "upload" | "analyzing" | "done";
+type Step = "upload" | "processing" | "done";
 
 function StepIndicator({ step }: { step: Step }) {
   const steps = [
     { key: "upload", label: "Upload", icon: Upload },
-    { key: "analyzing", label: "Analyze", icon: Sparkles },
-    { key: "done", label: "Review", icon: CheckCircle2 },
+    { key: "processing", label: "Process", icon: Loader2 },
+    { key: "done", label: "Done", icon: CheckCircle2 },
   ];
   const activeIndex = steps.findIndex((s) => s.key === step);
 
@@ -57,54 +70,101 @@ function StepIndicator({ step }: { step: Step }) {
   );
 }
 
+function RoutingOutcome({ routing }: { routing: UploadResult["analysis"] }) {
+  if (!routing?.routing || routing.routing.length === 0) return null;
+
+  const created = routing.routing.filter((r) => r.kind === "created");
+  const duplicates = routing.routing.filter((r) => r.kind === "duplicate");
+
+  return (
+    <div className="space-y-2">
+      {created.map((r) => (
+        <div key={r.object_id || r.module} className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <span className="text-sm font-semibold text-emerald-900">
+              {r.module === "event" ? "Conference recorded" :
+               r.module === "publication" ? "Publication recorded" :
+               r.module === "project" ? "Research project recorded" :
+               "Record created"}
+            </span>
+          </div>
+          {r.object_id && (
+            <Link
+              href={r.module === "event" ? `/events/${r.object_id}` :
+                    r.module === "publication" ? `/publications/${r.object_id}` :
+                    r.module === "project" ? `/research/projects/${r.object_id}` :
+                    `/objects/${r.object_id}`}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900 hover:underline"
+            >
+              View {r.module === "event" ? "Event" : "Record"} →
+            </Link>
+          )}
+        </div>
+      ))}
+
+      {duplicates.map((r) => (
+        <div key={r.existing_id || r.module} className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-semibold text-blue-900">
+              {r.module === "event" ? "Certificate linked to existing conference" :
+               r.module === "publication" ? "Certificate linked to existing publication" :
+               "Linked to existing record"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-blue-700">
+            This certificate matches an existing {r.module === "event" ? "conference" : "record"}, so AcademicOS linked it instead of creating a duplicate.
+          </p>
+          {r.existing_id && (
+            <Link
+              href={r.module === "event" ? `/events/${r.existing_id}` :
+                    r.module === "publication" ? `/publications/${r.existing_id}` :
+                    r.module === "project" ? `/research/projects/${r.existing_id}` :
+                    `/objects/${r.existing_id}`}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900 hover:underline"
+            >
+              View {r.module === "event" ? "Event" : "Record"} →
+            </Link>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResult) => void }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
-  const [analysis, setAnalysis] = useState<DocumentAnalysisResponse | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const step: Step = analyzing ? "analyzing" : (analysis || result) ? "done" : "upload";
-
-  const runAnalysis = useCallback(async (docId: string) => {
-    setAnalyzing(true);
-    try {
-      const analysisResult = await analyzeDocument(docId);
-      setAnalysis(analysisResult);
-    } catch {
-      setAnalysis(null);
-    } finally {
-      setAnalyzing(false);
-    }
-  }, []);
+  const step: Step = uploading ? "processing" : result ? "done" : "upload";
 
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const file = files[0];
       if (!file) return;
-      setUploading(true); setError(null); setResult(null); setAnalysis(null); setProgress(0);
+      setUploading(true); setError(null); setResult(null); setProgress(0);
       try {
         const saved = await uploadDocument({ file }, { onProgress: (v: UploadProgress) => setProgress(v.percent) });
-        const uploadResult: UploadResult = { 
-          id: saved.id, 
-          title: saved.title, 
-          document_type: saved.document_type, 
+        const uploadResult: UploadResult = {
+          id: saved.id,
+          title: saved.title,
+          document_type: saved.document_type,
           file_name: saved.file_name,
           duplicate_warning: (saved as any).duplicate_warning,
+          analysis: (saved as any).analysis,
         };
         setResult(uploadResult);
         onUploaded?.(uploadResult);
-        await runAnalysis(saved.id);
       } catch (err) { setError(toErrorMessage(err, "Upload failed. Please try again.")); }
       finally { setUploading(false); setProgress(null); }
     },
-    [onUploaded, runAnalysis],
+    [onUploaded],
   );
-
-  const handleRetry = useCallback(() => { if (result?.id) void runAnalysis(result.id); }, [result?.id, runAnalysis]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
@@ -114,7 +174,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
   return (
     <div className="space-y-3">
       {/* Progress stepper */}
-      {(uploading || analyzing || result) && (
+      {(uploading || result) && (
         <div className="flex justify-center py-2">
           <StepIndicator step={step} />
         </div>
@@ -137,7 +197,7 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         {uploading ? (
           <>
             <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
-            <p className="text-sm font-medium text-[var(--text-primary)]">Uploading{progress !== null ? ` (${progress}%)` : "..."}</p>
+            <p className="text-sm font-medium text-[var(--text-primary)]">Uploading &amp; analyzing{progress !== null ? ` (${progress}%)` : "..."}</p>
           </>
         ) : result ? (
           <>
@@ -163,15 +223,23 @@ export function SimpleUpload({ onUploaded }: { onUploaded?: (result: UploadResul
         </div>
       )}
 
-      {/* Analysis result */}
-      {(analysis || analyzing) && (
-        <div className="space-y-2">
-          <DocumentAnalysisResult analysis={analysis} analyzing={analyzing} fileName={result?.file_name} documentId={result?.id} onRetryEnrichment={handleRetry} />
-          {result && analysis && (
-            <Link href={`/documents/${result.id}`} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline">
-              <ExternalLink className="h-3 w-3" /> View full document
-            </Link>
-          )}
+      {/* Routing outcome from upload analysis */}
+      {result?.analysis?.routing && result.analysis.routing.length > 0 && (
+        <RoutingOutcome routing={result.analysis} />
+      )}
+
+      {/* Analysis summary (when no routing — generic document) */}
+      {result?.analysis && (!result.analysis.routing || result.analysis.routing.length === 0) && (result.analysis.fields_count ?? 0) > 0 && (
+        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
+          <p className="text-sm text-[var(--text-secondary)]">
+            AcademicOS found <span className="font-medium text-[var(--text-primary)]">{result.analysis.fields_count}</span> pieces of information.
+            {result.analysis.document_type_id && (
+              <span> Document type: <span className="font-medium capitalize">{result.analysis.document_type_id.replace(/_/g, " ")}</span></span>
+            )}
+          </p>
+          <Link href={`/documents/${result.id}`} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline">
+            <ExternalLink className="h-3 w-3" /> Review &amp; confirm
+          </Link>
         </div>
       )}
 

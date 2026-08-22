@@ -101,6 +101,19 @@ export interface DocumentResponse {
   events?: string[];
   /** Warning if a similar file was already uploaded. */
   duplicate_warning?: string | null;
+  /** Analysis/routing result from auto-analysis during upload. */
+  analysis?: {
+    document_type_id?: string | null;
+    confidence?: number;
+    fields_count?: number;
+    routing?: Array<{
+      module: string;
+      kind: string;
+      object_id?: string;
+      existing_id?: string;
+      reason?: string;
+    }>;
+  } | null;
 }
 
 export interface ListDocumentsResponse {

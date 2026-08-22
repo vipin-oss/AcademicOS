@@ -314,6 +314,8 @@ class DocumentResponseModel(BaseModel):
     metadata: dict[str, str] = {}
     events: list[str] = []
     duplicate_warning: str | None = None
+    # Analysis/routing result from auto-analysis during upload
+    analysis: dict | None = None
 
 
 class ListDocumentsResponseModel(BaseModel):
@@ -648,6 +650,7 @@ def create_document(
     # Auto-analyze: extract fields, create claims, route to domain objects.
     # This ensures every uploaded document is immediately processed and
     # the professor sees the Event/Publication right away.
+    upload_analysis = None
     if decision.quarantine == "clean":
         try:
             from app.api.routes.document_intake import _auto_confirm_and_project
@@ -674,10 +677,11 @@ def create_document(
                     document_id=str(out.id), version=out.version,
                     acl_scope=object_acl_scope(doc_obj) if doc_obj else None,
                 )
+                routing_outcomes = []
                 if analysis.document_type_id and not analysis.conflicts:
                     fields_dict = {f.predicate_id: f.value for f in analysis.fields}
                     fields_dict["__types__"] = analysis.all_types()
-                    DomainRecordRouter(repo).route(
+                    routing_outcomes = DomainRecordRouter(repo).route(
                         type_ids=analysis.all_types(), fields=fields_dict,
                         created_by=str(user.id),
                         source_document_id=str(out.id),
@@ -685,6 +689,17 @@ def create_document(
                     )
                 db.commit()
                 _auto_confirm_and_project(db, str(out.id), str(user.id), repo)
+                # Capture analysis result for frontend
+                upload_analysis = {
+                    "document_type_id": analysis.document_type_id,
+                    "confidence": analysis.confidence,
+                    "fields_count": len(analysis.fields),
+                    "routing": [
+                        {"module": r.module, "kind": r.kind, "object_id": r.object_id,
+                         "existing_id": r.existing_id, "reason": r.reason}
+                        for r in routing_outcomes
+                    ],
+                }
         except Exception:
             _log.debug("Auto-analysis after upload skipped (best-effort).")
 
@@ -701,6 +716,8 @@ def create_document(
     response = DocumentResponseModel(**to_response(out, url=_download_url(out, storage)))
     if duplicate_warning:
         response.duplicate_warning = duplicate_warning
+    if upload_analysis:
+        response.analysis = upload_analysis
     return response
 
 
