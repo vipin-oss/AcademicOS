@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   ArrowLeft,
   Clock,
@@ -11,6 +12,12 @@ import {
   Trash2,
   Loader2,
   AlertCircle,
+  Calendar,
+  BookOpen,
+  FlaskConical,
+  Users,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
@@ -62,6 +69,16 @@ export default function DocumentDetailsPage() {
   } = usePendingReview(documentId);
 
   const { analysis, enrichmentStatus, retry: retryEnrichment } = useAnalysisPolling({ documentId, enabled: !!document });
+
+  // Fetch related records (events, publications, etc. linked to this document)
+  const [relatedRecords, setRelatedRecords] = useState<Array<{ document_id: string; title: string; object_type: string; relationship_kind: string }>>([]);
+  useEffect(() => {
+    if (!documentId) return;
+    fetch(`/api/v1/documents/${documentId}/related`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : { related: [] })
+      .then((d) => setRelatedRecords(d.related || []))
+      .catch(() => setRelatedRecords([]));
+  }, [documentId]);
 
   useEffect(() => { if (downloadError) show("error", downloadError); }, [downloadError, show]);
 
@@ -190,15 +207,89 @@ export default function DocumentDetailsPage() {
                     )}
                   </Section>
 
-                  {/* Linked Object */}
-                  {document.object_id ? (
-                    <Section title="Linked Record">
-                      <a href={`/objects/${encodeURIComponent(document.object_id)}`}
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline">
-                        {document.object_title ?? document.object_id ?? "View"}
-                      </a>
-                    </Section>
-                  ) : null}
+                  {/* Linked Records */}
+                  <Section title="Linked Records">
+                    {(() => {
+                      // Combine direct link + relationship links
+                      const allLinks: Array<{ id: string; title: string; type: string }> = [];
+
+                      // Direct link (document.object_id)
+                      if (document.object_id) {
+                        allLinks.push({
+                          id: document.object_id,
+                          title: document.object_title || document.object_id,
+                          type: document.object_type || "record",
+                        });
+                      }
+
+                      // Relationship links
+                      for (const rel of relatedRecords) {
+                        if (!allLinks.some((l) => l.id === rel.document_id)) {
+                          allLinks.push({
+                            id: rel.document_id,
+                            title: rel.title || rel.document_id,
+                            type: rel.object_type || "record",
+                          });
+                        }
+                      }
+
+                      if (allLinks.length === 0) {
+                        return (
+                          <p className="text-sm text-[var(--text-tertiary)] italic">
+                            No academic record linked yet.
+                          </p>
+                        );
+                      }
+
+                      const typeIcons: Record<string, typeof FileText> = {
+                        event: Calendar,
+                        publication: BookOpen,
+                        research_project: FlaskConical,
+                        committee: Users,
+                        student: Users,
+                      };
+
+                      const typeLabels: Record<string, string> = {
+                        event: "Conference / Event",
+                        publication: "Publication",
+                        research_project: "Research Project",
+                        committee: "Committee",
+                        student: "Student",
+                      };
+
+                      const typePaths: Record<string, string> = {
+                        event: "/events/",
+                        publication: "/publications/",
+                        research_project: "/research/projects/",
+                        committee: "/committees/",
+                        student: "/students/",
+                      };
+
+                      return (
+                        <div className="space-y-2">
+                          {allLinks.map((link) => {
+                            const Icon = typeIcons[link.type] || FileText;
+                            const label = typeLabels[link.type] || link.type;
+                            const path = typePaths[link.type] || "/objects/";
+                            return (
+                              <Link
+                                key={link.id}
+                                href={`${path}${encodeURIComponent(link.id)}`}
+                                className="flex items-center gap-3 rounded-lg border border-[var(--border-subtle)] p-3 transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-hover)]"
+                              >
+                                <Icon className="h-4 w-4 text-[var(--text-tertiary)] shrink-0" />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs text-[var(--text-tertiary)]">{label}</p>
+                                  <p className="text-sm font-medium text-[var(--text-primary)] truncate">{link.title}</p>
+                                </div>
+                                <ExternalLink className="h-4 w-4 text-[var(--text-tertiary)] shrink-0" />
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </Section>
 
                   {/* Metadata */}
                   <Section title="Details" className="lg:col-span-2">

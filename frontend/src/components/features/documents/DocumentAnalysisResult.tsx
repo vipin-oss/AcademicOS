@@ -4,6 +4,7 @@
  * Document-intelligence result panel.
  * Shows what AcademicOS understood about a document in professor-friendly language.
  */
+import Link from "next/link";
 import { Loader2, CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles } from "lucide-react";
 
 import { ConflictResolution } from "./ConflictResolution";
@@ -241,23 +242,63 @@ export function DocumentAnalysisResult({
         </div>
       )}
 
-      {/* Records created */}
-      {created.length > 0 && (
-        <div className="text-[var(--text-secondary)]">
-          <span className="text-[var(--text-tertiary)]">Records created: </span>
-          {created.length}
-          <span className="ml-1 text-[var(--text-tertiary)]">
-            ({created.map((r) => MODULE_LABELS[r.module] ?? r.module).join(", ")})
-          </span>
+      {/* Records created — professor-friendly */}
+      {created.length > 0 && created.map((r) => (
+        <div key={r.module} className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <span className="text-sm font-semibold text-emerald-900">
+              {r.module === "event" ? "Conference recorded" :
+               r.module === "publication" ? "Publication recorded" :
+               r.module === "project" ? "Research project recorded" :
+               "Record created"}
+            </span>
+          </div>
+          {r.object_id && (
+            <div className="mt-2 flex items-center gap-2">
+              <Link
+                href={r.module === "event" ? `/events/${r.object_id}` :
+                      r.module === "publication" ? `/publications/${r.object_id}` :
+                      r.module === "project" ? `/research/projects/${r.object_id}` :
+                      `/objects/${r.object_id}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900 hover:underline"
+              >
+                View {r.module === "event" ? "Event" : "Record"} →
+              </Link>
+            </div>
+          )}
         </div>
-      )}
+      ))}
 
-      {/* Duplicates */}
-      {duplicates.length > 0 && (
-        <div className="text-emerald-700 bg-emerald-50 rounded px-2 py-1 text-xs">
-          ✓ Matched existing record — no duplicate created.
+      {/* Duplicates — professor-friendly */}
+      {duplicates.length > 0 && duplicates.map((r) => (
+        <div key={r.existing_id} className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-semibold text-blue-900">
+              {r.module === "event" ? "Certificate linked to existing conference" :
+               r.module === "publication" ? "Certificate linked to existing publication" :
+               "Linked to existing record"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-blue-700">
+            This certificate matches an existing {r.module === "event" ? "conference" : "record"}, so AcademicOS linked it instead of creating a duplicate.
+          </p>
+          {r.existing_id && (
+            <div className="mt-2 flex items-center gap-2">
+              <Link
+                href={r.module === "event" ? `/events/${r.existing_id}` :
+                      r.module === "publication" ? `/publications/${r.existing_id}` :
+                      r.module === "project" ? `/research/projects/${r.existing_id}` :
+                      `/objects/${r.existing_id}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900 hover:underline"
+              >
+                View {r.module === "event" ? "Event" : "Record"} →
+              </Link>
+            </div>
+          )}
         </div>
-      )}
+      ))}
 
       {/* Conflicts — interactive resolution */}
       {analysis.conflicts && analysis.conflicts.length > 0 && documentId && (
