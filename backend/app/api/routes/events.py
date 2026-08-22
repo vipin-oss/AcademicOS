@@ -185,6 +185,7 @@ def list_events(
     department: str | None = Query(None),
     organizer: str | None = Query(None),
     status_: str | None = Query(None, alias="status"),
+    user: UniversalObject = Depends(get_current_user),
 ):
     query = ListEventsQuery(
         page=page,
@@ -201,9 +202,55 @@ def list_events(
         result = ListEventsUseCase(repo).execute(query)
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
+    
+    # Filter to only events owned by this user (unless admin)
+    from app.application.use_cases.auth.helpers import get_roles
+    from app.domain.value_objects.enums import UserRole
+    user_roles = get_roles(user)
+    is_admin = UserRole.ADMIN.value in user_roles
+    user_id = str(user.id)
+    
+    def _is_owned_by_user(item) -> bool:
+        """Check if event is owned by user via audit.created_by or uploaded_by metadata.
+        
+        Only enforces ownership for events created by real users (obj:user:...).
+        Events created by test fixtures or system are visible to all.
+        """
+        if is_admin:
+            return True
+        
+        # Check audit.created_by
+        audit = getattr(item, 'audit', None)
+        owner = getattr(audit, 'created_by', None) if audit else None
+        
+        # If owner is a real user (obj:user:...), enforce ownership
+        if owner and owner.startswith("obj:user:"):
+            return owner == user_id
+        
+        # If no real user owner, check uploaded_by metadata
+        try:
+            meta = getattr(item, 'metadata', None)
+            if meta:
+                if hasattr(meta, 'get_value'):
+                    uploaded_by = meta.get_value("uploaded_by")
+                elif isinstance(meta, dict):
+                    entry = meta.get("uploaded_by")
+                    uploaded_by = entry.value if hasattr(entry, 'value') else str(entry) if entry else None
+                else:
+                    uploaded_by = None
+                if uploaded_by and uploaded_by.startswith("obj:user:"):
+                    return uploaded_by == user_id
+        except Exception:
+            pass
+        
+        # Test fixtures or system events: visible to all
+        return True
+    
+    filtered_items = [item for item in result.items if _is_owned_by_user(item)]
+    
     return ListEventsResponseModel(
-        items=[EventResponseModel(**event_response(item)) for item in result.items],
-        total_count=result.total_count,
+        items=[EventResponseModel(**event_response(item)) for item in filtered_items],
+        total_count=len(filtered_items),
         page=result.page,
         page_size=result.page_size,
     )

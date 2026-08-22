@@ -163,6 +163,9 @@ def search_objects(
     text: str | None = Query(None, max_length=200),
     object_type: str | None = Query(None, max_length=64),
     title: str | None = Query(None, max_length=200),
+    date_from: str | None = Query(None, description="ISO date YYYY-MM-DD (inclusive)"),
+    date_to: str | None = Query(None, description="ISO date YYYY-MM-DD (inclusive)"),
+    year: str | None = Query(None, description="Filter by year (YYYY)"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     user: UniversalObject = Depends(get_current_user),
@@ -194,6 +197,92 @@ def search_objects(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    
+    # Post-filter by date range if specified
+    if date_from or date_to or year:
+        from datetime import date as _date
+        from app.infrastructure.repositories.sqlalchemy_object_repository import (
+            SQLAlchemyObjectRepository as _Repo,
+        )
+        
+        # Parse date boundaries
+        d_from = None
+        d_to = None
+        if year:
+            try:
+                y = int(year)
+                d_from = _date(y, 1, 1)
+                d_to = _date(y, 12, 31)
+            except ValueError:
+                pass
+        if date_from:
+            try:
+                d_from = _date.fromisoformat(date_from)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                d_to = _date.fromisoformat(date_to)
+            except ValueError:
+                pass
+        
+        # Load objects to check metadata dates
+        from app.domain.value_objects.object_id import ObjectId
+        obj_ids = [ObjectId(h.object_id) for h in hits]
+        objects = SQLAlchemyObjectRepository(db).find_by_ids(obj_ids)
+        obj_map = {str(o.id): o for o in objects}
+        
+        # Date fields to check per object type
+        _DATE_FIELDS = {
+            "event": ("start_date", "end_date", "created_at"),
+            "publication": ("publication_year", "created_at"),
+            "project": ("start_date", "end_date", "created_at"),
+            "grant": ("start_date", "end_date", "created_at"),
+            "committee": ("start_date", "end_date", "created_at"),
+            "student": ("start_date", "admission_date", "created_at"),
+            "class": ("academic_year", "created_at"),
+            "document": ("created_at",),
+        }
+        
+        def _hit_in_range(hit) -> bool:
+            obj = obj_map.get(hit.object_id)
+            if not obj:
+                return True  # Keep if object not found
+            meta = {}
+            if obj.metadata:
+                try:
+                    meta = {k: (v.value if hasattr(v, 'value') else str(v)) 
+                            for k, v in obj.metadata.items()} if hasattr(obj.metadata, 'items') else {}
+                except Exception:
+                    pass
+            
+            fields = _DATE_FIELDS.get(hit.object_type, ("created_at",))
+            for field in fields:
+                val = meta.get(field)
+                if not val:
+                    continue
+                val_str = str(val)[:10]
+                try:
+                    if len(val_str) == 4 and val_str.isdigit():
+                        # Year-only field
+                        yr = int(val_str)
+                        if d_from and yr < d_from.year:
+                            continue
+                        if d_to and yr > d_to.year:
+                            continue
+                        return True
+                    d = _date.fromisoformat(val_str)
+                    if d_from and d < d_from:
+                        continue
+                    if d_to and d > d_to:
+                        continue
+                    return True
+                except (ValueError, TypeError):
+                    continue
+            return False  # No date matched
+        
+        hits = [h for h in hits if _hit_in_range(h)]
+    
     return SearchResponseModel(
         results=[
             SearchHitModel(

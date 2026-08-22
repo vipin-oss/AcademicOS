@@ -8,9 +8,14 @@ openpyxl, and a read-only reporting module must not grow it):
 - XLSX — minimal Office Open XML package written with ``zipfile`` (inline
   strings, one worksheet per table + a Summary sheet) — opens in Excel,
   LibreOffice and Google Sheets
-- PDF  — minimal PDF 1.4 writer (Helvetica-Bold titles + Courier tables,
-  fixed-width column layout with truncation, multi-page pagination); the
-  rupee sign becomes ``Rs`` (WinAnsi has no ₹ — documented here)
+- PDF  — professional PDF 1.4 writer with:
+  * Colored section headers with accent bars
+  * Alternating row backgrounds for tables
+  * Professional typography with proper spacing
+  * KPI cards with colored backgrounds
+  * Horizontal rules between sections
+  * Page headers and footers
+  * The rupee sign becomes ``Rs`` (WinAnsi has no ₹ — documented here)
 
 The exporters know only the uniform contract — zero module logic.
 """
@@ -207,127 +212,386 @@ def report_xlsx_bytes(view: ReportView) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# PDF (minimal PDF 1.4 writer)
+# PDF (professional PDF 1.4 writer)
 # ---------------------------------------------------------------------------
-_PAGE_WIDTH = 612.0   # Letter
-_PAGE_HEIGHT = 792.0
-_MARGIN = 40.0
-_TITLE_SIZE = 13.0
+# Page geometry — A4
+_PAGE_WIDTH = 595.28
+_PAGE_HEIGHT = 841.89
+_MARGIN = 50.0
+_CONTENT_WIDTH = _PAGE_WIDTH - 2 * _MARGIN
+
+# Typography
+_TITLE_SIZE = 22.0
+_SUBTITLE_SIZE = 11.0
+_SECTION_SIZE = 14.0
 _HEAD_SIZE = 9.0
-_BODY_SIZE = 8.0
-_LINE_H = 10.5
-_CHAR_W = _BODY_SIZE * 0.6  # Courier advance = 0.6 × size
-_MAX_COLS_CHARS = int((_PAGE_WIDTH - 2 * _MARGIN) / _CHAR_W)
+_BODY_SIZE = 8.5
+_SMALL_SIZE = 7.5
+_LINE_H = 12.0
+_SECTION_GAP = 18.0
+_TABLE_GAP = 8.0
+
+# Colors (RGB 0-1)
+_ACCENT = (0.18, 0.32, 0.65)
+_SECTION_BAR = (0.18, 0.32, 0.65)
+_ROW_ALT = (0.96, 0.97, 0.98)
+_ROW_WHITE = (1.0, 1.0, 1.0)
+_HEADER_BG = (0.18, 0.32, 0.65)
+_HEADER_TEXT = (1.0, 1.0, 1.0)
+_TEXT_PRIMARY = (0.13, 0.13, 0.13)
+_TEXT_SECONDARY = (0.40, 0.40, 0.40)
+_TEXT_TERTIARY = (0.55, 0.55, 0.55)
+_RULE_COLOR = (0.85, 0.85, 0.85)
+_KPI_BG = (0.95, 0.96, 0.98)
+_KPI_BORDER = (0.82, 0.85, 0.90)
+
+# Approximate Helvetica character widths (per-unit at size 1)
+_HELV_W: dict[str, float] = {}
+for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+    _HELV_W[ch] = 0.722
+for ch in "abcdefghijklmnopqrstuvwxyz":
+    _HELV_W[ch] = 0.556
+for ch in "0123456789":
+    _HELV_W[ch] = 0.556
+_HELV_W.update({
+    " ": 0.278, ".": 0.278, ",": 0.278, ":": 0.278, ";": 0.278,
+    "-": 0.333, "(": 0.333, ")": 0.333, "/": 0.278, "&": 0.667,
+    "@": 0.921, "#": 0.556, "%": 0.889, "+": 0.584, "=": 0.584,
+    "<": 0.584, ">": 0.584, "!": 0.278, "?": 0.556, "*": 0.389,
+    "_": 0.500, "|": 0.260, "~": 0.584, "'": 0.278, '"': 0.355,
+})
+_DEFAULT_CHAR_W = 0.556
+
+
+def _text_width(text: str, size: float) -> float:
+    """Estimate text width in points using Helvetica metrics."""
+    return sum(_HELV_W.get(ch, _DEFAULT_CHAR_W) for ch in text) * size
+
+
+def _pdf_color(rgb: tuple[float, float, float]) -> str:
+    return f"{rgb[0]:.3f} {rgb[1]:.3f} {rgb[2]:.3f}"
 
 
 def _pdf_text(raw: str) -> str:
     """WinAnsi-safe text: ₹ → Rs, everything else cp1252-replaced, escaped."""
-    text = str(raw).replace("₹", "Rs ")
+    text = str(raw).replace("\u20b9", "Rs ")
     text = text.encode("cp1252", errors="replace").decode("cp1252")
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def _truncate(raw: str, width: int) -> str:
-    text = str(raw)
-    if len(text) <= width:
-        return text
-    if width <= 3:
-        return text[:width]
-    return text[: width - 3] + "..."
+def _truncate_to_width(raw: str, max_width: float, size: float) -> str:
+    """Truncate text to fit within max_width points."""
+    if _text_width(raw, size) <= max_width:
+        return raw
+    ellipsis_w = _text_width("...", size)
+    result: list[str] = []
+    current_w = 0.0
+    for ch in raw:
+        ch_w = _HELV_W.get(ch, _DEFAULT_CHAR_W) * size
+        if current_w + ch_w + ellipsis_w > max_width:
+            break
+        result.append(ch)
+        current_w += ch_w
+    return "".join(result) + "..."
 
 
-def _table_lines(view: ReportView) -> list[tuple[str, str]]:
-    """(style, text) logical lines for the whole report:
-    style in {title, head, rule, row, blank, section}."""
-    lines: list[tuple[str, str]] = []
-    lines.append(("title", view.title))
-    for extra in _filter_lines(view) + [f"Generated: {view.generated_at}"]:
-        lines.append(("section", extra))
-    lines.append(("blank", ""))
-    if view.kpis:
-        lines.append(("section", "Key Figures"))
-        for kpi in view.kpis:
-            lines.append(("row", f"{kpi.label}: {kpi.value}"))
-        lines.append(("blank", ""))
-    for table in view.tables:
-        lines.append(("section", table.title))
-        columns = list(table.columns)
-        if not columns:
-            lines.append(("blank", ""))
-            continue
-        width = max(8, _MAX_COLS_CHARS // len(columns))
-        header = " ".join(_truncate(col, width).ljust(width) for col in columns).rstrip()
-        lines.append(("head", header))
-        lines.append(("rule", "-" * min(len(header), _MAX_COLS_CHARS)))
-        for row in table.rows:
-            line = " ".join(
-                _truncate(cell, width).ljust(width)
-                for cell, _ in zip(row, columns, strict=False)
-            ).rstrip()
-            lines.append(("row", line))
-        lines.append(("blank", ""))
-    return lines
+class _PdfPage:
+    """Accumulates drawing commands for a single page."""
 
+    def __init__(self) -> None:
+        self.ops: list[str] = []
+        self.y: float = _PAGE_HEIGHT - _MARGIN
 
-def _paginate(lines: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
-    usable = _PAGE_HEIGHT - 2 * _MARGIN
-    per_page = int(usable / _LINE_H)
-    pages: list[list[tuple[str, str]]] = []
-    current: list[tuple[str, str]] = []
-    for line in lines:
-        current.append(line)
-        if len(current) >= per_page:
-            pages.append(current)
-            current = []
-    if current:
-        pages.append(current)
-    return pages or [[("blank", "")]]
+    @property
+    def remaining(self) -> float:
+        return self.y - _MARGIN
 
-
-def _content_stream(page: list[tuple[str, str]], page_no: int, total_pages: int) -> bytes:
-    parts: list[str] = []
-    y = _PAGE_HEIGHT - _MARGIN
-    for style, text in page:
-        if style == "blank":
-            y -= _LINE_H * 0.6
-            continue
-        if style == "title":
-            parts.append(f"BT /F1 {_TITLE_SIZE} Tf {_MARGIN} {y:.2f} Td ({_pdf_text(text)}) Tj ET")
-        elif style == "section":
-            parts.append(f"BT /F1 {_HEAD_SIZE} Tf {_MARGIN} {y:.2f} Td ({_pdf_text(text)}) Tj ET")
+    def rect(self, x: float, y: float, w: float, h: float,
+             fill: tuple[float, float, float], stroke: bool = False) -> None:
+        self.ops.append(f"{_pdf_color(fill)} rg")
+        if stroke:
+            self.ops.append(f"{_pdf_color(fill)} RG")
+            self.ops.append(f"{x:.2f} {y:.2f} {w:.2f} {h:.2f} re f S")
         else:
-            parts.append(f"BT /F2 {_BODY_SIZE} Tf {_MARGIN} {y:.2f} Td ({_pdf_text(text)}) Tj ET")
-        y -= _LINE_H
-    footer = f"Page {page_no} of {total_pages}"
-    parts.append(f"BT /F2 {_BODY_SIZE} Tf {_PAGE_WIDTH / 2 - 24:.2f} {_MARGIN / 2:.2f} Td ({footer}) Tj ET")
-    return ("\n".join(parts)).encode("cp1252", errors="replace")
+            self.ops.append(f"{x:.2f} {y:.2f} {w:.2f} {h:.2f} re f")
+
+    def hrule(self, y: float, color: tuple[float, float, float] = _RULE_COLOR,
+              thickness: float = 0.5) -> None:
+        self.ops.append(f"{_pdf_color(color)} RG")
+        self.ops.append(f"{thickness:.1f} w")
+        self.ops.append(
+            f"{_MARGIN:.2f} {y:.2f} m {(_PAGE_WIDTH - _MARGIN):.2f} {y:.2f} l S"
+        )
+
+    def text(self, x: float, y: float, txt: str, size: float,
+             font: str, color: tuple[float, float, float] = _TEXT_PRIMARY) -> None:
+        self.ops.append(
+            f"BT /{font} {size:.1f} Tf {_pdf_color(color)} rg "
+            f"{x:.2f} {y:.2f} Td ({_pdf_text(txt)}) Tj ET"
+        )
+
+    def draw_page_header_footer(self, page_no: int, total_pages: int,
+                                title: str) -> None:
+        # Header line
+        self.hrule(_PAGE_HEIGHT - _MARGIN + 15, _ACCENT, 1.0)
+        # Footer
+        footer = f"Page {page_no} of {total_pages}"
+        self.text(
+            _PAGE_WIDTH / 2 - _text_width(footer, _SMALL_SIZE) / 2,
+            _MARGIN / 2, footer, _SMALL_SIZE, "F2", _TEXT_TERTIARY,
+        )
+        self.hrule(_MARGIN - 10, _RULE_COLOR, 0.3)
+
+    def to_bytes(self) -> bytes:
+        return "\n".join(self.ops).encode("cp1252", errors="replace")
+
+
+def _draw_title(page: _PdfPage, title: str, subtitle: str | None = None) -> None:
+    """Draw the report title with accent bar."""
+    bar_h = 4.0
+    page.rect(_MARGIN, page.y - bar_h, 60, bar_h, _ACCENT)
+    page.y -= bar_h + 8
+
+    page.text(_MARGIN, page.y, title, _TITLE_SIZE, "F1", _ACCENT)
+    page.y -= _TITLE_SIZE + 4
+
+    if subtitle:
+        page.text(_MARGIN, page.y, subtitle, _SUBTITLE_SIZE, "F2", _TEXT_SECONDARY)
+        page.y -= _SUBTITLE_SIZE + 2
+
+
+def _draw_section_header(page: _PdfPage, title: str) -> None:
+    """Draw a section header with accent bar."""
+    if page.remaining < 40:
+        return
+    bar_w = 4.0
+    page.rect(_MARGIN, page.y - _SECTION_SIZE + 2, bar_w, _SECTION_SIZE, _SECTION_BAR)
+    page.text(_MARGIN + bar_w + 8, page.y, title, _SECTION_SIZE, "F1", _ACCENT)
+    page.y -= _SECTION_SIZE + 6
+    page.hrule(page.y, _ACCENT, 0.8)
+    page.y -= 8
+
+
+def _draw_kpi_cards(page: _PdfPage, kpis: list) -> None:
+    """Draw KPI cards in a grid layout."""
+    if not kpis:
+        return
+
+    profile_labels = {"Name", "Designation", "Department", "Institution", "Email", "ORCID"}
+    profile_kpis = [k for k in kpis if k.label in profile_labels]
+    summary_kpis = [k for k in kpis if k.label not in profile_labels]
+
+    if profile_kpis:
+        if page.remaining < 60:
+            return
+        _draw_section_header(page, "Profile")
+        for kpi in profile_kpis:
+            if page.remaining < 20:
+                break
+            label_text = f"{kpi.label}:"
+            page.text(_MARGIN + 10, page.y, label_text, _BODY_SIZE, "F1", _TEXT_SECONDARY)
+            page.text(
+                _MARGIN + 10 + _text_width(label_text, _BODY_SIZE) + 6,
+                page.y, kpi.value, _BODY_SIZE, "F2", _TEXT_PRIMARY,
+            )
+            page.y -= _LINE_H
+        page.y -= 6
+
+    if summary_kpis:
+        if page.remaining < 80:
+            return
+        _draw_section_header(page, "Summary")
+
+        n = len(summary_kpis)
+        cols = min(n, 3)
+        card_w = (_CONTENT_WIDTH - (cols - 1) * 10) / cols
+        card_h = 42.0
+
+        for i, kpi in enumerate(summary_kpis):
+            col = i % cols
+            row = i // cols
+
+            if row > 0 and col == 0:
+                page.y -= card_h + 8
+
+            if page.remaining < card_h:
+                break
+
+            x = _MARGIN + col * (card_w + 10)
+            y = page.y - card_h
+
+            page.rect(x, y, card_w, card_h, _KPI_BG)
+            page.ops.append(f"{_pdf_color(_KPI_BORDER)} RG")
+            page.ops.append("0.5 w")
+            page.ops.append(f"{x:.2f} {y:.2f} {card_w:.2f} {card_h:.2f} re S")
+
+            value_w = _text_width(kpi.value, _SECTION_SIZE)
+            page.text(
+                x + (card_w - value_w) / 2, y + card_h - 18,
+                kpi.value, _SECTION_SIZE, "F1", _ACCENT,
+            )
+            label_w = _text_width(kpi.label, _SMALL_SIZE)
+            page.text(
+                x + (card_w - label_w) / 2, y + 8,
+                kpi.label, _SMALL_SIZE, "F2", _TEXT_SECONDARY,
+            )
+
+        rows_needed = (len(summary_kpis) + cols - 1) // cols
+        page.y -= rows_needed * (card_h + 8)
+
+
+def _draw_table_header(page: _PdfPage, columns: list[str],
+                       col_widths: list[float], row_h: float) -> None:
+    """Draw table header row."""
+    page.rect(_MARGIN, page.y - row_h, _CONTENT_WIDTH, row_h, _HEADER_BG)
+    x = _MARGIN
+    for ci, col in enumerate(columns):
+        truncated = _truncate_to_width(col, col_widths[ci] - 8, _HEAD_SIZE)
+        page.text(x + 6, page.y - row_h + 4, truncated, _HEAD_SIZE, "F1", _HEADER_TEXT)
+        x += col_widths[ci]
+    page.y -= row_h
+
+
+def _draw_table(page: _PdfPage, table: object, pages: list[_PdfPage]) -> None:
+    """Draw a table with professional formatting."""
+    columns = list(table.columns)  # type: ignore[union-attr]
+    if not columns:
+        return
+
+    n_cols = len(columns)
+    available_w = _CONTENT_WIDTH
+
+    # Calculate column widths based on content
+    col_widths: list[float] = []
+    for ci, col in enumerate(columns):
+        max_w = _text_width(col, _HEAD_SIZE) + 16
+        for row in table.rows[:50]:  # type: ignore[union-attr]
+            if ci < len(row):
+                cell_w = _text_width(str(row[ci]), _BODY_SIZE) + 16
+                max_w = max(max_w, cell_w)
+        col_widths.append(max_w)
+
+    # Scale to fit
+    total_w = sum(col_widths)
+    if total_w > available_w:
+        scale = available_w / total_w
+        col_widths = [w * scale for w in col_widths]
+
+    min_col_w = 40.0
+    col_widths = [max(w, min_col_w) for w in col_widths]
+    total_w = sum(col_widths)
+    if total_w > available_w:
+        scale = available_w / total_w
+        col_widths = [w * scale for w in col_widths]
+
+    row_h = _LINE_H + 2
+
+    # Section title
+    if page.remaining < 50:
+        new_page = _PdfPage()
+        pages.append(new_page)
+        page = new_page
+
+    _draw_section_header(page, table.title)  # type: ignore[union-attr]
+
+    # Table header
+    if page.remaining < row_h + 10:
+        new_page = _PdfPage()
+        pages.append(new_page)
+        page = new_page
+
+    _draw_table_header(page, columns, col_widths, row_h)
+
+    # Data rows
+    for ri, row in enumerate(table.rows):  # type: ignore[union-attr]
+        if page.remaining < row_h:
+            new_page = _PdfPage()
+            pages.append(new_page)
+            page = new_page
+            _draw_table_header(page, columns, col_widths, row_h)
+
+        bg = _ROW_ALT if ri % 2 == 0 else _ROW_WHITE
+        page.rect(_MARGIN, page.y - row_h, _CONTENT_WIDTH, row_h, bg)
+
+        x = _MARGIN
+        for ci in range(min(len(row), n_cols)):
+            cell_text = str(row[ci]) if ci < len(row) else ""
+            truncated = _truncate_to_width(cell_text, col_widths[ci] - 8, _BODY_SIZE)
+            page.text(x + 6, page.y - row_h + 4, truncated, _BODY_SIZE, "F2", _TEXT_PRIMARY)
+            x += col_widths[ci]
+
+        page.y -= row_h
+
+    # Bottom border
+    page.hrule(page.y, _ACCENT, 0.5)
+    page.y -= _TABLE_GAP
 
 
 def report_pdf_bytes(view: ReportView) -> bytes:
-    pages = _paginate(_table_lines(view))
+    """Generate a professional PDF report."""
+    pages: list[_PdfPage] = [_PdfPage()]
+    page = pages[0]
+
+    # Title
+    _draw_title(page, view.title, f"Generated: {view.generated_at}")
+
+    # Applied filters
+    if view.applied_filters:
+        filter_text = "Filters: " + ", ".join(f"{k}={v}" for k, v in view.applied_filters.items())
+    else:
+        filter_text = "Filters: none"
+    page.text(_MARGIN, page.y, filter_text, _SUBTITLE_SIZE, "F2", _TEXT_TERTIARY)
+    page.y -= _SUBTITLE_SIZE + 4
+    page.y -= 8
+    page.hrule(page.y, _RULE_COLOR, 0.5)
+    page.y -= 12
+
+    # KPIs
+    if view.kpis:
+        _draw_kpi_cards(page, view.kpis)
+        page.y -= 8
+
+    # Tables
+    for table in view.tables:
+        if page.remaining < 60:
+            new_page = _PdfPage()
+            pages.append(new_page)
+            page = new_page
+        _draw_table(page, table, pages)
+        page = pages[-1]
+
+    # Page headers and footers
+    for i, p in enumerate(pages):
+        p.draw_page_header_footer(i + 1, len(pages), view.title)
+
+    # Build PDF
     objects: list[bytes] = []
 
     def add(body: bytes) -> int:
         objects.append(body)
-        return len(objects)  # 1-based object number
+        return len(objects)
 
-    add(b"<< /Type /Catalog /Pages 2 0 R >>")  # object 1
-    pages_kids = " ".join(f"{3 + i} 0 R" for i in range(len(pages)))
-    add(f"<< /Type /Pages /Kids [{pages_kids}] /Count {len(pages)} >>".encode())  # object 2
+    add(b"<< /Type /Catalog /Pages 2 0 R >>")
+    kids = " ".join(f"{3 + i} 0 R" for i in range(len(pages)))
+    add(f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode())
 
     font_base = 3 + len(pages) * 2
-    for index, _page in enumerate(pages):
-        page_body = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PAGE_WIDTH:.0f} {_PAGE_HEIGHT:.0f}] "
+    for i in range(len(pages)):
+        content_ref = 3 + len(pages) + i
+        page_dict = (
+            f"<< /Type /Page /Parent 2 0 R "
+            f"/MediaBox [0 0 {_PAGE_WIDTH:.2f} {_PAGE_HEIGHT:.2f}] "
             f"/Resources << /Font << /F1 {font_base} 0 R /F2 {font_base + 1} 0 R >> >> "
-            f"/Contents {3 + len(pages) + index} 0 R >>"
-        ).encode()
-        add(page_body)
-    for index, page in enumerate(pages):
-        content = _content_stream(page, index + 1, len(pages))
+            f"/Contents {content_ref} 0 R >>"
+        )
+        add(page_dict.encode())
+
+    for p in pages:
+        content = p.to_bytes()
         add(b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream")
+
     add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
-    add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>")
+    add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
 
     buffer = io.BytesIO()
     buffer.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
@@ -337,6 +601,7 @@ def report_pdf_bytes(view: ReportView) -> bytes:
         buffer.write(f"{number} 0 obj\n".encode())
         buffer.write(body)
         buffer.write(b"\nendobj\n")
+
     xref_pos = buffer.tell()
     buffer.write(f"xref\n0 {len(objects) + 1}\n".encode())
     buffer.write(b"0000000000 65535 f \n")

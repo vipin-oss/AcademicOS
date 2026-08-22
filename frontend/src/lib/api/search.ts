@@ -25,6 +25,9 @@ export interface SearchParams {
   text?: string;
   object_type?: string;
   title?: string;
+  date_from?: string;
+  date_to?: string;
+  year?: string;
   limit?: number;
 }
 
@@ -38,6 +41,9 @@ export function searchObjects(
       ...(params.text ? { text: params.text } : {}),
       ...(params.object_type ? { object_type: params.object_type } : {}),
       ...(params.title ? { title: params.title } : {}),
+      ...(params.date_from ? { date_from: params.date_from } : {}),
+      ...(params.date_to ? { date_to: params.date_to } : {}),
+      ...(params.year ? { year: params.year } : {}),
       ...(params.limit !== undefined ? { limit: String(params.limit) } : {}),
     },
   });

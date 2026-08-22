@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { Trash2, FolderInput, Tag, Loader2, X, AlertTriangle } from "lucide-react";
+import { Trash2, FolderInput, Tag, Loader2, X, AlertTriangle, Download, Move } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DocumentResponse } from "@/types";
 import { DocumentRow } from "./DocumentRow";
@@ -19,10 +19,12 @@ interface BulkActionsBarProps {
   selectedCount: number;
   onClear: () => void;
   onDelete: () => void;
+  onExport: () => void;
   deleting: boolean;
+  exporting: boolean;
 }
 
-function BulkActionsBar({ selectedCount, onClear, onDelete, deleting }: BulkActionsBarProps) {
+function BulkActionsBar({ selectedCount, onClear, onDelete, onExport, deleting, exporting }: BulkActionsBarProps) {
   if (selectedCount === 0) return null;
 
   return (
@@ -31,6 +33,15 @@ function BulkActionsBar({ selectedCount, onClear, onDelete, deleting }: BulkActi
         {selectedCount} selected
       </span>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={exporting}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+        >
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          {exporting ? "Exporting..." : "Export"}
+        </button>
         <button
           type="button"
           onClick={onDelete}
@@ -143,6 +154,7 @@ export function DocumentTable({
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteResult, setDeleteResult] = useState<{ success: number; failed: number } | null>(null);
 
@@ -193,6 +205,41 @@ export function DocumentTable({
     }
   }, [selectedIds, clearSelection, onDocumentsChanged]);
 
+  const handleBulkExport = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setExporting(true);
+    
+    try {
+      const ids = Array.from(selectedIds);
+      const selectedDocs = documents.filter(d => selectedIds.has(d.id));
+      
+      // Create a CSV with document metadata
+      const headers = ["Name", "Type", "Size", "Upload Date", "Status"];
+      const rows = selectedDocs.map(doc => [
+        doc.title || doc.file_name,
+        doc.document_type || "",
+        doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : "",
+        doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "",
+        doc.status || "",
+      ]);
+      
+      const csv = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `documents-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedIds, documents]);
+
   const handleConfirmClose = useCallback(() => {
     setConfirmOpen(false);
     setDeleteResult(null);
@@ -207,7 +254,9 @@ export function DocumentTable({
         selectedCount={selectedIds.size}
         onClear={clearSelection}
         onDelete={() => setConfirmOpen(true)}
+        onExport={() => void handleBulkExport()}
         deleting={deleting}
+        exporting={exporting}
       />
       
       {/* Delete confirmation dialog */}

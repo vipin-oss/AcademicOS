@@ -3,12 +3,13 @@
 /**
  * Global search (Sprint-5 M2 + M26) — now with:
  * - Entity type filter chips (Events, Publications, Research, etc.)
+ * - Date range and year filters
  * - Rich result cards with professor-friendly metadata
  * - Keyboard shortcut hints
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Search, Calendar, BookOpen, FlaskConical, FileText, Users, GraduationCap, Filter, X } from "lucide-react";
+import { Search, Calendar, BookOpen, FlaskConical, FileText, Users, GraduationCap, Filter, X, ChevronDown } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 import { SearchBar } from "@/components/features/objects/SearchBar";
@@ -37,6 +38,9 @@ function typeFilterInfo(type: string): TypeFilter {
   return TYPE_FILTERS.find((f) => f.value === type) ?? { value: type, label: type, icon: FileText, color: "text-gray-600 bg-gray-50 border-gray-200" };
 }
 
+const currentYear = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 10 }, (_, i) => String(currentYear - i));
+
 /**
  * Global search (Sprint-5 M2 + M26). Queries the hybrid search API and
  * renders typed hits with provenance (lexical / semantic / both) and the
@@ -50,6 +54,10 @@ export default function SearchPage() {
   const [query, setQuery] = useState(urlQuery);
   const [debounced, setDebounced] = useState(urlQuery);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [yearFilter, setYearFilter] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [showDateFilters, setShowDateFilters] = useState(false);
 
   // Sync with the URL when the header search navigates here again.
   useEffect(() => {
@@ -68,7 +76,7 @@ export default function SearchPage() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const run = useCallback(async (text: string, objectType?: string | null) => {
+  const run = useCallback(async (text: string, objectType?: string | null, year?: string | null, df?: string, dt?: string) => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -76,53 +84,69 @@ export default function SearchPage() {
     setError(null);
     try {
       const response = await searchObjects(
-        { text, object_type: objectType ?? undefined, limit: 50 },
+        { 
+          text, 
+          object_type: objectType ?? undefined, 
+          year: year ?? undefined,
+          date_from: df || undefined,
+          date_to: dt || undefined,
+          limit: 50 
+        },
         { signal: controller.signal },
       );
-      // A newer request may have superseded this one while it was in flight
-      // (rapid typing). Only the LATEST request is allowed to publish results.
       if (controllerRef.current !== controller) return;
       setHits(response.results);
       setSearched(true);
     } catch (err) {
-      // A superseded/unmounted request is aborted by the client as an
-      // ApiError("Request cancelled.", { kind: "aborted" }) — or, when the
-      // fetch itself is interrupted, a DOMException named "AbortError". Both
-      // are INTENTIONAL cancellations, not failures: they must stay silent and
-      // must never surface "Request cancelled." to the user.
       if (isAbortError(err)) return;
       if (controllerRef.current !== controller) return;
       setError(toErrorMessage(err, "Search failed."));
     } finally {
-      // Only the latest request clears the loading spinner — a superseded
-      // request's finally must not clobber the active request's loading state.
       if (controllerRef.current === controller) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (debounced.trim()) {
-      void run(debounced.trim(), typeFilter);
+      void run(debounced.trim(), typeFilter, yearFilter, dateFrom, dateTo);
     } else {
       setHits([]);
       setSearched(false);
     }
-  }, [debounced, typeFilter, run]);
+  }, [debounced, typeFilter, yearFilter, dateFrom, dateTo, run]);
 
   const handleTypeFilter = (value: string) => {
     const newFilter = typeFilter === value ? null : value;
     setTypeFilter(newFilter);
     if (debounced.trim()) {
-      void run(debounced.trim(), newFilter);
+      void run(debounced.trim(), newFilter, yearFilter, dateFrom, dateTo);
+    }
+  };
+
+  const handleYearFilter = (value: string) => {
+    const newYear = yearFilter === value ? null : value;
+    setYearFilter(newYear);
+    // Clear date range when year is selected
+    if (newYear) {
+      setDateFrom("");
+      setDateTo("");
+    }
+    if (debounced.trim()) {
+      void run(debounced.trim(), typeFilter, newYear, newYear ? "" : dateFrom, newYear ? "" : dateTo);
     }
   };
 
   const clearAll = () => {
     setQuery("");
     setTypeFilter(null);
+    setYearFilter(null);
+    setDateFrom("");
+    setDateTo("");
     setHits([]);
     setSearched(false);
   };
+
+  const hasActiveFilters = typeFilter || yearFilter || dateFrom || dateTo;
 
   // Group hits by type for section headers
   const groupedHits = hits.reduce<Record<string, SearchHit[]>>((acc, hit) => {
@@ -173,16 +197,101 @@ export default function SearchPage() {
             </button>
           );
         })}
-        {(typeFilter || searched) && (
+      </div>
+
+      {/* Year filter chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5 text-sm text-[var(--text-tertiary)]">
+          <Calendar className="h-4 w-4" /> Year:
+        </div>
+        {YEAR_OPTIONS.slice(0, 6).map((year) => {
+          const active = yearFilter === year;
+          return (
+            <button
+              key={year}
+              type="button"
+              onClick={() => handleYearFilter(year)}
+              className={cn(
+                "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                active
+                  ? "text-indigo-600 bg-indigo-50 border-indigo-200"
+                  : "border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]",
+              )}
+            >
+              {year}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setShowDateFilters(!showDateFilters)}
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+        >
+          Custom Range <ChevronDown className={cn("h-3 w-3 transition-transform", showDateFilters && "rotate-180")} />
+        </button>
+      </div>
+
+      {/* Custom date range (expandable) */}
+      {showDateFilters && (
+        <div className="flex items-center gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-[var(--text-secondary)]">From:</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setYearFilter(null);
+              }}
+              className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-[var(--text-secondary)]">To:</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setYearFilter(null);
+              }}
+              className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-app)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              className="text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            >
+              Clear dates
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Clear all filters */}
+      {hasActiveFilters && (
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={clearAll}
             className="inline-flex items-center gap-1 rounded-full border border-[var(--border-subtle)] px-2.5 py-1 text-xs text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]"
           >
-            <X className="h-3 w-3" /> Clear
+            <X className="h-3 w-3" /> Clear all filters
           </button>
-        )}
-      </div>
+          {yearFilter && (
+            <span className="text-xs text-[var(--text-tertiary)]">
+              Filtered to {yearFilter}
+            </span>
+          )}
+          {(dateFrom || dateTo) && !yearFilter && (
+            <span className="text-xs text-[var(--text-tertiary)]">
+              {dateFrom && dateTo ? `${dateFrom} to ${dateTo}` : dateFrom ? `From ${dateFrom}` : `Until ${dateTo}`}
+            </span>
+          )}
+        </div>
+      )}
 
       {error ? (
         <p className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3 text-sm text-[var(--text-danger)]">
@@ -193,8 +302,8 @@ export default function SearchPage() {
       {searched && !loading && hits.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-[var(--text-tertiary)]">
           <Search className="h-10 w-10" />
-          <p className="text-sm">No results for &ldquo;{debounced}&rdquo;{typeFilter ? ` in ${typeFilterInfo(typeFilter).label}` : ""}.</p>
-          <p className="text-xs">Try different keywords or remove the type filter.</p>
+          <p className="text-sm">No results for &ldquo;{debounced}&rdquo;{typeFilter ? ` in ${typeFilterInfo(typeFilter).label}` : ""}{yearFilter ? ` (${yearFilter})` : ""}.</p>
+          <p className="text-xs">Try different keywords, remove filters, or change the date range.</p>
         </div>
       ) : null}
 
@@ -203,6 +312,8 @@ export default function SearchPage() {
         <div className="space-y-6">
           <p className="text-xs text-[var(--text-tertiary)]">
             {hits.length} result{hits.length === 1 ? "" : "s"} for &ldquo;{debounced}&rdquo;
+            {yearFilter ? ` in ${yearFilter}` : ""}
+            {(dateFrom || dateTo) && !yearFilter ? ` (${dateFrom || "..."} to ${dateTo || "..."})` : ""}
           </p>
 
           {Object.entries(groupedHits).map(([type, typeHits]) => {
