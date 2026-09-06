@@ -31,9 +31,12 @@ class ListDocumentsUseCase:
         # verbatim for queries that carry criteria the SQL projection cannot
         # express (the linked-object lens).
         if query.object_id is None:
-            total_count = self._repository.count(object_type=ObjectType.DOCUMENT)
+            total_count = self._repository.count(
+                object_type=ObjectType.DOCUMENT, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.DOCUMENT,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="id",
@@ -61,7 +64,9 @@ class ListDocumentsUseCase:
                 page_size=query.page_size,
             )
 
-        documents = self._repository.find_by_type(ObjectType.DOCUMENT)
+        documents = self._repository.find_by_type(
+            ObjectType.DOCUMENT, owner_user_id=query.owner_user_id
+        )
 
         if query.object_id is not None:
             target = str(query.object_id)

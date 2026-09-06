@@ -7,7 +7,7 @@ from app.application.dtos.object import ACL_MANAGERS, ACL_READERS, ACL_WRITERS
 from app.application.exceptions import ObjectNotFoundError, ValidationError
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
-from app.domain.value_objects.enums import UserRole
+from app.domain.value_objects.enums import ObjectType, UserRole
 from app.domain.value_objects.metadata import MetadataEntry, MetadataLayer, Provenance
 from app.domain.value_objects.object_id import ObjectId
 
@@ -86,8 +86,20 @@ def _acl_of(obj: UniversalObject) -> dict:
             return []
         return [str(e) for e in parsed if isinstance(e, str)]
 
+    # Security hardening (Phase 1): a USER object always owns itself for
+    # ACL purposes, regardless of audit.created_by. Self-registration
+    # stamps created_by="system" (there is no authenticated actor yet at
+    # signup), so under a fail-closed default that literal creator would
+    # be the only "owner" — locking every user out of their own profile
+    # object on ACL-gated routes. A user's identity object is
+    # conceptually self-owned from the moment it exists.
+    owner = (
+        str(obj.id)
+        if obj.object_type is ObjectType.USER
+        else (obj.audit.created_by if obj.audit else "")
+    )
     return {
-        "owner": obj.audit.created_by if obj.audit else "",
+        "owner": owner,
         "readers": _list(ACL_READERS),
         "writers": _list(ACL_WRITERS),
         "managers": _list(ACL_MANAGERS),

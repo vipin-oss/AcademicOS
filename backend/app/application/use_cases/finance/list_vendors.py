@@ -41,9 +41,12 @@ class ListVendorsUseCase:
         # path below is preserved for the q haystack filter.
         plain = not (query.q or "").strip()
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.VENDOR)
+            total_count = self._repository.count(
+                object_type=ObjectType.VENDOR, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.VENDOR,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -61,7 +64,9 @@ class ListVendorsUseCase:
                 page_size=query.page_size,
             )
 
-        objects = self._repository.find_by_type(ObjectType.VENDOR)
+        objects = self._repository.find_by_type(
+            ObjectType.VENDOR, owner_user_id=query.owner_user_id
+        )
 
         tokens = (query.q or "").strip().casefold().split()
         matched: list[VendorOutput] = []

@@ -53,9 +53,12 @@ class ListFacultyUseCase:
             and query.employment_type is None
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.FACULTY)
+            total_count = self._repository.count(
+                object_type=ObjectType.FACULTY, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.FACULTY,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -70,7 +73,9 @@ class ListFacultyUseCase:
 
         rows = [
             FacultyOutput.from_domain(obj, [])
-            for obj in self._repository.find_by_type(ObjectType.FACULTY)
+            for obj in self._repository.find_by_type(
+                ObjectType.FACULTY, owner_user_id=query.owner_user_id
+            )
         ]
 
         def matches(out: FacultyOutput) -> bool:

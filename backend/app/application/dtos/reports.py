@@ -108,6 +108,7 @@ class ReportFilters:
     department: str | None = None
     event_id: str | None = None
     committee_id: str | None = None
+    owner_user_id: str | None = None
 
 
 @dataclass(frozen=True)

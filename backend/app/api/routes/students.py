@@ -156,6 +156,7 @@ def _list_query(
     section: str | None,
     student_status: str | None,
     object_id: str | None,
+    owner_user_id: str | None = None,
 ) -> ListStudentsQuery:
     return ListStudentsQuery(
         page=page,
@@ -167,6 +168,7 @@ def _list_query(
         section=section or None,
         status=student_status or None,
         object_id=ObjectId.parse(object_id) if object_id else None,
+        owner_user_id=owner_user_id,
     )
 
 
@@ -186,11 +188,12 @@ def list_students(
         None, description="restrict to students linked to this Object id"
     ),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListStudentsResponseModel:
     try:
         result = ListStudentsUseCase(repo).execute(
             _list_query(page, page_size, q, student_type, programme, semester,
-                        section, student_status, object_id)
+                        section, student_status, object_id, str(user.id))
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -215,6 +218,7 @@ def export_students(
     student_status: str | None = Query(None, alias="status"),
     object_id: str | None = None,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     """CSV download of the SAME filtered query (ERP/Google-Sheets round-trip)."""
     use_case = ListStudentsUseCase(repo)
@@ -224,7 +228,7 @@ def export_students(
         while True:  # walk every page of the same filtered query
             result = use_case.execute(
                 _list_query(page, 100, q, student_type, programme, semester,
-                            section, student_status, object_id)
+                            section, student_status, object_id, str(user.id))
             )
             records.extend(o.to_record() for o in result.items)
             if len(records) >= result.total_count or not result.items:

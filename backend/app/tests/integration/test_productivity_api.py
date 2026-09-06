@@ -417,3 +417,84 @@ def test_unified_search(client: TestClient, world: dict):
     assert "events" in sources and "committee_meetings" in sources
     r = client.get(f"{API}/productivity/search", params={"date_from": d(9), "date_to": d(1)})
     assert r.status_code == 422
+
+
+def test_list_tasks_calendar_notifications_never_leak_across_users(client: TestClient):
+    """2026-09 audit follow-up (P0-1): GET /productivity/tasks,
+    /calendar-entries and /notifications must all be scoped to the caller.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-prod-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-prod-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    task_a = client.post(f"{API}/productivity/tasks", json={
+        "title": "Alice's private task", "uploaded_by": "me", "due_date": TODAY,
+    })
+    assert task_a.status_code == 201, task_a.text
+    task_a_id = task_a.json()["id"]
+    entry_a = client.post(f"{API}/productivity/calendar-entries", json={
+        "title": "Alice's private entry", "uploaded_by": "me", "start_date": TODAY,
+    })
+    assert entry_a.status_code == 201, entry_a.text
+    entry_a_id = entry_a.json()["id"]
+    note_a = client.post(f"{API}/productivity/notifications", json={
+        "title": "Alice's private note", "uploaded_by": "me", "body": "b",
+    })
+    assert note_a.status_code == 201, note_a.text
+    note_a_id = note_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    task_b = client.post(f"{API}/productivity/tasks", json={
+        "title": "Bob's private task", "uploaded_by": "me", "due_date": TODAY,
+    })
+    assert task_b.status_code == 201, task_b.text
+    task_b_id = task_b.json()["id"]
+    entry_b = client.post(f"{API}/productivity/calendar-entries", json={
+        "title": "Bob's private entry", "uploaded_by": "me", "start_date": TODAY,
+    })
+    assert entry_b.status_code == 201, entry_b.text
+    entry_b_id = entry_b.json()["id"]
+    note_b = client.post(f"{API}/productivity/notifications", json={
+        "title": "Bob's private note", "uploaded_by": "me", "body": "b",
+    })
+    assert note_b.status_code == 201, note_b.text
+    note_b_id = note_b.json()["id"]
+
+    # Bob's lists: only Bob's rows.
+    tasks_b = client.get(f"{API}/productivity/tasks").json()
+    ids = {i["id"] for i in tasks_b["items"]}
+    assert task_b_id in ids and task_a_id not in ids
+
+    entries_b = client.get(f"{API}/productivity/calendar-entries").json()
+    ids = {i["id"] for i in entries_b["items"]}
+    assert entry_b_id in ids and entry_a_id not in ids
+
+    notes_b = client.get(f"{API}/productivity/notifications", params={"state": "all"}).json()
+    ids = {i["id"] for i in notes_b["items"]}
+    assert note_b_id in ids and note_a_id not in ids
+
+    # Alice's lists: only Alice's rows.
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    tasks_a = client.get(f"{API}/productivity/tasks").json()
+    ids = {i["id"] for i in tasks_a["items"]}
+    assert task_a_id in ids and task_b_id not in ids
+
+    entries_a = client.get(f"{API}/productivity/calendar-entries").json()
+    ids = {i["id"] for i in entries_a["items"]}
+    assert entry_a_id in ids and entry_b_id not in ids
+
+    notes_a = client.get(f"{API}/productivity/notifications", params={"state": "all"}).json()
+    ids = {i["id"] for i in notes_a["items"]}
+    assert note_a_id in ids and note_b_id not in ids

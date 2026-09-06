@@ -21,3 +21,4 @@ class ListGrantsQuery:
     project_id: ObjectId | None = None
     agency_id: ObjectId | None = None
     status: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

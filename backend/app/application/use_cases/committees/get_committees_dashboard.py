@@ -38,7 +38,7 @@ class GetCommitteesDashboardUseCase:
         today = _dt.datetime.now(_dt.UTC).date().isoformat()
         this_month = today[:7]  # YYYY-MM
 
-        committees = self._repository.find_by_type(ObjectType.COMMITTEE)
+        committees = self._repository.find_by_type(ObjectType.COMMITTEE, owner_user_id=query.owner_user_id)
         total = len(committees)
         active = sum(1 for obj in committees if obj.status is ObjectStatus.ACTIVE)
 

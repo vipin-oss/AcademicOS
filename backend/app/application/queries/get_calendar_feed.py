@@ -9,3 +9,4 @@ class GetCalendarFeedQuery:
     date_from: str
     date_to: str
     sources: tuple[str, ...] | None = None  # None = every PART 2 source
+    owner_user_id: str | None = None

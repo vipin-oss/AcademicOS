@@ -246,6 +246,15 @@ def test_propose_skips_candidates_the_principal_cannot_read(harness):
 def test_approve_requires_write_on_target(harness):
     pub = harness.create("publication", "Pub D", {"authors": "Eve"})
     other = harness.create("faculty", "Eve", {"name": "Eve"}, as_user=harness.user_b)
+    # 2026-09 audit follow-up (P0-2): "other" is owner-only ACL (owned by
+    # user_b) by default now, so user_a needs an explicit READ grant just
+    # to see it as a link-propose candidate — the WRITE restriction this
+    # test is actually about is layered on top of that a few lines below.
+    harness.set_user(harness.user_b)
+    harness.client.put(
+        f"{API}/objects/{other}/acl",
+        json={"readers": [str(harness.user_a.id)], "writers": [], "managers": []},
+    )
     harness.set_user(harness.user_a)
     resp = harness.client.post(f"{API}/objects/{pub}/links/propose")
     assert resp.json()["created"] == 1

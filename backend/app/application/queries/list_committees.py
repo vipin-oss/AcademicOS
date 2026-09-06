@@ -14,3 +14,4 @@ class ListCommitteesQuery:
     status: str | None = None
     chairperson: str | None = None  # chairperson/leadership member names
     meeting_year: int | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

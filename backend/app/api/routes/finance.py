@@ -292,8 +292,13 @@ def finance_dashboard(repo: SQLAlchemyObjectRepository = Depends(_repository)):
 
 
 @router.get("/budgets", response_model=ListBudgetsResponseModel)
-def list_budget_lines(repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    result = ListBudgetLinesUseCase(repo).execute(ListBudgetLinesQuery())
+def list_budget_lines(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    result = ListBudgetLinesUseCase(repo).execute(
+        ListBudgetLinesQuery(owner_user_id=str(user.id))
+    )
     return ListBudgetsResponseModel(
         items=[BudgetLineModel(**vars(line)) for line in result.items]
     )
@@ -302,6 +307,7 @@ def list_budget_lines(repo: SQLAlchemyObjectRepository = Depends(_repository)):
 @router.get("/assets", response_model=ListAssetsResponseModel)
 def list_asset_register(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(None),
@@ -309,7 +315,8 @@ def list_asset_register(
     status_: str | None = Query(None, alias="status"),
 ):
     query = ListAssetRegisterQuery(
-        page=page, page_size=page_size, q=q, category=category, status=status_
+        page=page, page_size=page_size, q=q, category=category, status=status_,
+        owner_user_id=str(user.id),
     )
     try:
         result = ListAssetRegisterUseCase(repo).execute(query)
@@ -329,11 +336,12 @@ def list_asset_register(
 @router.get("/vendors", response_model=ListVendorsResponseModel)
 def list_vendors(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
 ):
-    query = ListVendorsQuery(page=page, page_size=page_size, q=q)
+    query = ListVendorsQuery(page=page, page_size=page_size, q=q, owner_user_id=str(user.id))
     try:
         result = ListVendorsUseCase(repo).execute(query)
     except ValidationError as exc:
@@ -408,6 +416,7 @@ def delete_vendor(vendor_id: str, repo: SQLAlchemyObjectRepository = Depends(_re
 @router.get("/proposals", response_model=ListProposalsResponseModel)
 def list_proposals(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
@@ -428,6 +437,7 @@ def list_proposals(
         status=status_,
         department=department,
         financial_year=financial_year,
+        owner_user_id=str(user.id),
     )
     try:
         result = ListProposalsUseCase(repo).execute(query)

@@ -218,7 +218,7 @@ def test_intake_commit_behavior_unchanged(harness):
     harness.set_user(harness.user_a)
     repo = SQLAlchemyObjectRepository(harness.session)
     session_obj = UniversalObject.create(
-        ObjectType.INTAKE_SESSION, "seed", created_by="intake",
+        ObjectType.INTAKE_SESSION, "seed", created_by=str(harness.user_a.id),
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(_entry(KEY_INTAKE_STATUS, IntakeSessionStatus.COMPLETED.value),)
@@ -227,7 +227,7 @@ def test_intake_commit_behavior_unchanged(harness):
     session_obj.pop_domain_events()
     repo.save(session_obj)
     item = UniversalObject.create(
-        ObjectType.INTAKE_ITEM, "report.pdf", created_by="intake",
+        ObjectType.INTAKE_ITEM, "report.pdf", created_by=str(harness.user_a.id),
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(

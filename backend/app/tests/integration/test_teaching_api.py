@@ -161,6 +161,137 @@ def test_class_full_lifecycle(client):
     assert client.get(f"/api/v1/teaching/classes/{cid}").status_code == 404
 
 
+def test_list_classes_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /teaching/classes must be scoped
+    to the caller. Classes has no SQL fast path — every listing goes
+    through find_by_type, the branch that used to leak unconditionally.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-class-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-class-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    class_a = _create_class(
+        client, title="Alice's private class", course_code="ALC-101"
+    )
+    class_a_id = class_a["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    class_b = _create_class(
+        client, title="Bob's private class", course_code="BOB-101"
+    )
+    class_b_id = class_b["id"]
+
+    listing_b = client.get("/api/v1/teaching/classes").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert class_b_id in ids_b
+    assert class_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get("/api/v1/teaching/classes").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert class_a_id in ids_a
+    assert class_b_id not in ids_a
+
+
+def test_list_assignments_and_submissions_never_leak_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /teaching/assignments and
+    GET /teaching/submissions must be scoped to the caller. Also exercises
+    the fix for the sibling bug this surfaced: create_assignment_for_class
+    and submit_to_assignment now stamp created_by/actor from the
+    authenticated session instead of trusting client-supplied values.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-assign-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-assign-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    class_a = _create_class(client, title="Alice's class", course_code="ALC-201")
+    assignment_a = _create_assignment(client, class_a["id"], title="Alice's assignment")
+    assignment_a_id = assignment_a["id"]
+    _import_students(
+        client,
+        text="Roll No,Name,Email,Section,Programme,Semester\n"
+             "A1,Alice Student,alicestu@univ.edu,A,BSc Mathematics,1\n",
+    )
+    student_a_id = _student_ids(client)[0]
+    sub_a = client.post(
+        f"/api/v1/teaching/assignments/{assignment_a_id}/submit",
+        data={"student_id": student_a_id},
+    )
+    assert sub_a.status_code == 201, sub_a.text
+    submission_a_id = sub_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    class_b = _create_class(client, title="Bob's class", course_code="BOB-201")
+    assignment_b = _create_assignment(client, class_b["id"], title="Bob's assignment")
+    assignment_b_id = assignment_b["id"]
+    _import_students(
+        client,
+        text="Roll No,Name,Email,Section,Programme,Semester\n"
+             "B1,Bob Student,bobstu@univ.edu,A,BSc Mathematics,1\n",
+    )
+    student_b_id = [
+        sid for sid in _student_ids(client) if sid != student_a_id
+    ][0]
+    sub_b = client.post(
+        f"/api/v1/teaching/assignments/{assignment_b_id}/submit",
+        data={"student_id": student_b_id},
+    )
+    assert sub_b.status_code == 201, sub_b.text
+    submission_b_id = sub_b.json()["id"]
+
+    # Assignments listing.
+    listing_b = client.get("/api/v1/teaching/assignments").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert assignment_b_id in ids_b
+    assert assignment_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get("/api/v1/teaching/assignments").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert assignment_a_id in ids_a
+    assert assignment_b_id not in ids_a
+
+    # Submissions listing (assignment_id lens).
+    subs_a = client.get(
+        "/api/v1/teaching/submissions", params={"assignment_id": assignment_a_id}
+    ).json()
+    sub_ids_a = {item["id"] for item in subs_a["items"]}
+    assert submission_a_id in sub_ids_a
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    # Bob querying by Alice's assignment_id must see nothing of Alice's,
+    # even though he supplied a real (but not his) assignment_id.
+    subs_cross = client.get(
+        "/api/v1/teaching/submissions", params={"assignment_id": assignment_a_id}
+    ).json()
+    sub_ids_cross = {item["id"] for item in subs_cross["items"]}
+    assert submission_a_id not in sub_ids_cross
+
+
 def test_class_validation_and_404s(client):
     bad_mode = client.post("/api/v1/teaching/classes", json={
         "title": "X", "uploaded_by": "f", "class_mode": "hybrid-ish"})

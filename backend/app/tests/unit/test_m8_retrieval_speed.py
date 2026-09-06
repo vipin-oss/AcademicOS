@@ -70,7 +70,7 @@ def _seed(db, repo, embedder, *objects) -> FakeVectorRepository:
 
 def _use_case(db, repo, vectors, embedder, *, parallel) -> SearchObjectsUseCase:
     return SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors, embedder=embedder, parallel=parallel,
     )
 
@@ -158,7 +158,7 @@ class TestRung0Cache:
         service.confirm(claim.claim_id)
         db.commit()
 
-        answerer = Rung0ClaimAnswerer(claim_store, permission_evaluator=ObjectPermissionEvaluator())
+        answerer = Rung0ClaimAnswerer(claim_store, permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False))
         principal = {"sub": "obj:user:alice-0001", "roles": []}
         assert answerer.answer("sanctioned amount?", principal=principal) is not None
         # cache is warm; a reject invalidates and the next answer falls through

@@ -61,7 +61,9 @@ class ListStudentsUseCase:
     def execute(self, query: ListStudentsQuery) -> ListStudentsResult:
         assert_valid_list_students_query(query)
 
-        students = self._repository.find_by_type(ObjectType.STUDENT)
+        students = self._repository.find_by_type(
+            ObjectType.STUDENT, owner_user_id=query.owner_user_id
+        )
 
         if query.object_id is not None:
             target = str(query.object_id)

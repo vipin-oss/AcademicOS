@@ -268,6 +268,7 @@ class ListFacultyResponseModel(BaseModel):
 @router.get("", response_model=ListFacultyResponseModel)
 def list_faculty(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     *,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -287,6 +288,7 @@ def list_faculty(
                 designation=designation,
                 employment_type=employment_type,
                 status=status,
+                owner_user_id=str(user.id),
             )
         )
     except ValidationError as exc:
@@ -322,6 +324,7 @@ def create_faculty(
 @router.get("/export")
 def export_faculty(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     """Export faculty as CSV."""
     import csv
@@ -329,7 +332,7 @@ def export_faculty(
 
     from app.domain.value_objects.enums import ObjectType
 
-    faculty = repo.find_by_type(ObjectType.FACULTY)
+    faculty = repo.find_by_type(ObjectType.FACULTY, owner_user_id=str(user.id))
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["name", "designation", "department", "email", "phone", "created_at"])

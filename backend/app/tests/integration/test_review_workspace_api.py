@@ -86,7 +86,7 @@ def harness():
 
 def _pending_conversation(repo) -> str:
     """A conversation with an assistant answer, awaiting review."""
-    conv = create_conversation_object(repo, "New conversation", "u:1", title_auto=True)
+    conv = create_conversation_object(repo, "New conversation", "obj:user:test-user-0001", title_auto=True)
     append_message(conv, "user", "find quantum", None)
     append_message(
         conv,

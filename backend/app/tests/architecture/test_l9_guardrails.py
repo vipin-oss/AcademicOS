@@ -51,8 +51,12 @@ def test_l9_reuses_existing_eval_framework():
 def test_l9_no_new_migration():
     migrations = REPO / "backend" / "alembic" / "versions"
     names = [p.name for p in migrations.glob("*.py")]
-    # Migration head is 0027 (entity_matches, Rev19). L9 itself adds none.
-    assert not any("0028" in n for n in names), names
+    # Migration head was 0027 (entity_matches, Rev19) as of L9;
+    # L9 itself added none. 0028_search_year (2026-09
+    # security/performance hardening phase) is later, unrelated
+    # work, explicitly exempted — this guardrail is about L9 not
+    # touching the schema, not a permanent migration freeze.
+    assert not any("0028" in n and n != "0028_search_year.py" for n in names), names
 
 
 def test_l9_does_not_touch_frozen_production():

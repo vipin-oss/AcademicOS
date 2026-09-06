@@ -244,14 +244,14 @@ def test_indexed_conversation_never_retrieved_but_global_search_still_finds_it(w
     search_uc = SearchObjectsUseCase(
         search_repository=SQLAlchemySearchRepository(session),
         object_repository=repo,
-        permission_evaluator=ObjectPermissionEvaluator(),
+        permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=None,
         embedder=None,
     )
     from app.application.services.graph_runtime import GraphRuntimeService
 
     service = AssistantRetrievalService(
-        search_uc, GraphRuntimeService(repo, ObjectPermissionEvaluator()),
+        search_uc, GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False)),
         repository=repo,
     )
     result = service.retrieve("hello", user)

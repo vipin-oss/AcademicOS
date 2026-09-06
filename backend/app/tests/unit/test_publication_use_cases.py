@@ -72,8 +72,18 @@ class InMemoryObjectRepository(ObjectRepository):
     def delete(self, id: ObjectId) -> None:
         self._store.pop(id, None)
 
-    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
-        return [o for o in self._store.values() if o.object_type == object_type]
+    def find_by_type(
+        self, object_type: ObjectType, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            o
+            for o in self._store.values()
+            if o.object_type == object_type
+            and (
+                owner_user_id is None
+                or (o.audit is not None and o.audit.created_by == owner_user_id)
+            )
+        ]
 
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
         return [o for o in self._store.values() if o.status == status]
@@ -105,6 +115,8 @@ class InMemoryObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
+        search_year: int | None = None,
         page: int = 1,
         page_size: int = 0,
         sort_by: str | None = None,
@@ -121,6 +133,12 @@ class InMemoryObjectRepository(ObjectRepository):
         if order not in ("asc", "desc"):
             raise ValueError(f"Unsupported order: {order!r}")
 
+        def _year_matches(o) -> bool:
+            if search_year is None:
+                return True
+            raw = o.metadata.get_value("year") or ""
+            return raw[:4].isdigit() and int(raw[:4]) == search_year
+
         items = [
             o
             for o in self._store.values()
@@ -133,6 +151,11 @@ class InMemoryObjectRepository(ObjectRepository):
                     and (metadata_value is None or value == metadata_value)
                 )
             )
+            and (
+                owner_user_id is None
+                or (o.audit is not None and o.audit.created_by == owner_user_id)
+            )
+            and _year_matches(o)
         ]
         effective_sort = sort_by if sort_by is not None else ("id" if page_size > 0 else None)
         if effective_sort is not None:
@@ -159,6 +182,8 @@ class InMemoryObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
+        search_year: int | None = None,
     ) -> int:
         return len(
             self.find(
@@ -166,6 +191,8 @@ class InMemoryObjectRepository(ObjectRepository):
                 status=status,
                 metadata_key=metadata_key,
                 metadata_value=metadata_value,
+                owner_user_id=owner_user_id,
+                search_year=search_year,
             )
         )
 

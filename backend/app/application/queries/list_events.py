@@ -15,3 +15,4 @@ class ListEventsQuery:
     department: str | None = None
     organizer: str | None = None    # organizer / co-organizer fragment
     status: str | None = None       # event_status vocab
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

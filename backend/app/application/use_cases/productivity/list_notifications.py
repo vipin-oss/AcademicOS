@@ -43,7 +43,9 @@ class ListNotificationsUseCase:
         if query.page < 1 or query.page_size < 1 or query.page_size > 100:
             raise ValidationError("Invalid pagination (page >= 1, 1 <= page_size <= 100).")
         today = today_iso()
-        rows = self._repository.find_by_type(ObjectType.NOTIFICATION)
+        rows = self._repository.find_by_type(
+            ObjectType.NOTIFICATION, owner_user_id=query.owner_user_id
+        )
 
         def keep(obj) -> bool:
             meta = _meta(obj)
@@ -83,7 +85,12 @@ class ListNotificationsUseCase:
             total_count=total,
             page=query.page,
             page_size=query.page_size,
-            unread_count=unread_count(self._repository.find_by_type(ObjectType.NOTIFICATION), today),
+            unread_count=unread_count(
+                self._repository.find_by_type(
+                    ObjectType.NOTIFICATION, owner_user_id=query.owner_user_id
+                ),
+                today,
+            ),
         )
 
 

@@ -15,3 +15,4 @@ class ListProposalsQuery:
     status: str | None = None          # proposal_status vocab
     department: str | None = None
     financial_year: str | None = None  # Indian FY, e.g. "2026-27" (Apr-Mar)
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

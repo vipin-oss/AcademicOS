@@ -64,15 +64,15 @@ def world():
     repo.save(owner)
     repo.save(other)
     grant = UniversalObject.create(
-        ObjectType.GRANT, "HSRF Grant", created_by="system", status=ObjectStatus.ACTIVE,
+        ObjectType.GRANT, "HSRF Grant", created_by="obj:user:l8g-owner", status=ObjectStatus.ACTIVE,
         object_id=ObjectId("obj:grant:l8g-1"),
     )
     pub = UniversalObject.create(
-        ObjectType.PUBLICATION, "Catalyst Paper", created_by="system", status=ObjectStatus.ACTIVE,
+        ObjectType.PUBLICATION, "Catalyst Paper", created_by="obj:user:l8g-owner", status=ObjectStatus.ACTIVE,
         object_id=ObjectId("obj:publication:l8g-1"),
     )
     course = UniversalObject.create(
-        ObjectType.COURSE, "CS-301", created_by="system", status=ObjectStatus.ACTIVE,
+        ObjectType.COURSE, "CS-301", created_by="obj:user:l8g-owner", status=ObjectStatus.ACTIVE,
         object_id=ObjectId("obj:course:l8g-1"),
     )
     for o in (grant, pub, course):

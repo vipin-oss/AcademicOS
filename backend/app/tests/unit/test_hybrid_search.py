@@ -111,7 +111,7 @@ def _use_case(db, repo, vectors=None, embedder=None) -> SearchObjectsUseCase:
     return SearchObjectsUseCase(
         SQLAlchemySearchRepository(db),
         repo,
-        ObjectPermissionEvaluator(),
+        ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors,
         embedder=embedder,
     )
@@ -226,7 +226,7 @@ def test_no_semantic_layer_is_exactly_m1(db, repo):
     _seed(db, repo, HashingEmbedder(), *docs)  # lexical only is enough
 
     use_case = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator()
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False)
     )
     hits = use_case.execute(user=_user(), text="doc")
     assert [h.object_id for h in hits] == [str(d.id) for d in sorted(docs, key=lambda d: str(d.id))]

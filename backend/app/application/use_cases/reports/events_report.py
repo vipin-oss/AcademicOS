@@ -204,5 +204,5 @@ class GetEventsReportUseCase:
 
     def execute(self, query: GetEventsReportQuery) -> ReportView:
         return build_events_report(
-            Snapshot(self._repository), self._repository, query.filters
+            Snapshot(self._repository, user_id=query.filters.owner_user_id), self._repository, query.filters
         )

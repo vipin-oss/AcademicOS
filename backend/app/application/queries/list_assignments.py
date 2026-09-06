@@ -24,3 +24,4 @@ class ListAssignmentsQuery:
     visibility: str | None = None
     status: str | None = None
     object_id: ObjectId | None = None  # lens: assignments of this Class
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

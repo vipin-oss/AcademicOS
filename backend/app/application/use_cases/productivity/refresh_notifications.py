@@ -47,7 +47,14 @@ class RefreshNotificationsUseCase:
 
     def execute(self, actor: str = "system") -> RefreshNotificationsResult:
         actor = (actor or "system").strip() or "system"
-        snapshot = ProductivitySnapshot(self._repository)
+        # Security hardening (Phase 1): this use case is invoked per-request
+        # for the calling user (see api/routes/productivity.py — always
+        # actor=str(user.id)), so the reminder scan itself must be scoped
+        # to that same user. Unscoped, this would generate notifications
+        # from OTHER users' overdue tasks/events, titled with their private
+        # data, and attribute them to the calling actor — a content leak,
+        # not just a functional bug.
+        snapshot = ProductivitySnapshot(self._repository, owner_user_id=actor)
         today = today_iso()
         candidates = engine_candidates(snapshot, today)
         existing_keys: set[str] = set()

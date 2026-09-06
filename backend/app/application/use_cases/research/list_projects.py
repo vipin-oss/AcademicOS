@@ -76,9 +76,12 @@ class ListProjectsUseCase:
             and query.object_id is None
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.RESEARCH_PROJECT)
+            total_count = self._repository.count(
+                object_type=ObjectType.RESEARCH_PROJECT, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.RESEARCH_PROJECT,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -100,7 +103,53 @@ class ListProjectsUseCase:
                 page_size=query.page_size,
             )
 
-        projects = self._repository.find_by_type(ObjectType.RESEARCH_PROJECT)
+        # 2026-09 audit follow-up (P1): a year-only filter is backed by the
+        # materialized, indexed search_year column — same SQL-paginated
+        # shape as the plain path above, instead of loading every
+        # RESEARCH_PROJECT row to filter in Python. Falls through to the
+        # general slow path for any other filter combination.
+        year_only = (
+            query.year is not None
+            and not (query.q or "").strip()
+            and not (query.pi or "").strip()
+            and not (query.agency or "").strip()
+            and query.status is None
+            and query.department is None
+            and query.object_id is None
+        )
+        if year_only:
+            total_count = self._repository.count(
+                object_type=ObjectType.RESEARCH_PROJECT, owner_user_id=query.owner_user_id,
+                search_year=query.year,
+            )
+            page = self._repository.find(
+                object_type=ObjectType.RESEARCH_PROJECT,
+                owner_user_id=query.owner_user_id,
+                search_year=query.year,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            all_ids = []
+            for project in page:
+                all_ids.extend(linked_target_ids(project))
+            linked_by_id = {
+                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+            }
+            return ListProjectsResult(
+                items=[
+                    ProjectOutput.from_domain(project, [], linked_by_id=linked_by_id)
+                    for project in page
+                ],
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
+        projects = self._repository.find_by_type(
+            ObjectType.RESEARCH_PROJECT, owner_user_id=query.owner_user_id
+        )
 
         if query.object_id is not None:
             target = str(query.object_id)

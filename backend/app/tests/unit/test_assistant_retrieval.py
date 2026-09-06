@@ -102,11 +102,11 @@ def _service(db, repo, vectors, embedder) -> AssistantRetrievalService:
     search = SearchObjectsUseCase(
         SQLAlchemySearchRepository(db),
         repo,
-        ObjectPermissionEvaluator(),
+        ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors,
         embedder=embedder,
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     return AssistantRetrievalService(search, graph)
 
 

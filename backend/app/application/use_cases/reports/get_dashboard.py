@@ -15,14 +15,14 @@ from app.application.use_cases.reports.helpers import Snapshot
 from app.domain.repositories.object_repository import ObjectRepository
 
 
-def reports_dashboard(repository: ObjectRepository) -> ReportsDashboard:
+def reports_dashboard(repository: ObjectRepository, *, owner_user_id: str | None = None) -> ReportsDashboard:
     """Shared builder (the ``events_dashboard`` precedent) — the route's use
     case and the tests both consume this one composition."""
-    snapshot = Snapshot(repository)
+    snapshot = Snapshot(repository, user_id=owner_user_id)
     approved = utilized = remaining = 0.0
     seen = False
     for project in snapshot["projects"]:
-        line = budget_line_for_project(repository, project)
+        line = budget_line_for_project(repository, project, owner_user_id=owner_user_id)
         if line["approved"] is None and line["utilized"] is None:
             continue
         seen = True
@@ -51,4 +51,4 @@ class GetReportsDashboardUseCase:
         self._repository = repository
 
     def execute(self, query: GetReportsDashboardQuery) -> ReportsDashboard:
-        return reports_dashboard(self._repository)
+        return reports_dashboard(self._repository, owner_user_id=query.owner_user_id)

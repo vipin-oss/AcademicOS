@@ -13,3 +13,4 @@ class ListNotificationsQuery:
     priority: str | None = None
     category: str | None = None
     source_module: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

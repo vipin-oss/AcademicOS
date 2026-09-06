@@ -135,6 +135,54 @@ def test_create_duplicate_enrollment_is_409(client):
     assert dup.status_code == 409
 
 
+def test_list_students_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /students must be scoped to the
+    caller. Students has no SQL fast path — every listing goes through
+    find_by_type, the branch that used to leak unconditionally.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-student-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-student-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = client.post(
+        "/api/v1/students",
+        json=_payload(name="Alice's private student", roll_number="ALC-001"),
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    student_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = client.post(
+        "/api/v1/students",
+        json=_payload(name="Bob's private student", roll_number="BOB-001"),
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    student_b_id = resp_b.json()["id"]
+
+    listing_b = client.get("/api/v1/students").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert student_b_id in ids_b
+    assert student_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get("/api/v1/students").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert student_a_id in ids_a
+    assert student_b_id not in ids_a
+
+
 def test_create_validation_errors(client):
     assert client.post(
         "/api/v1/students", json=_payload(student_type="kindergarten")

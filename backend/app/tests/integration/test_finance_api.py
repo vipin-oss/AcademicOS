@@ -195,6 +195,120 @@ def test_vendor_crud_with_duplicates_and_validation(client):
     assert client.get(f"{API}/finance/vendors/{vendor_id}").status_code == 404
 
 
+def test_list_vendors_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /finance/vendors must be scoped
+    to the caller, on both the plain (SQL fast-path) and q-filtered
+    (slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-vendor-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-vendor-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _vendor(client, name="Alice's Private Vendor", gst="07AAAAA0000A1Z1")
+    assert resp_a.status_code == 201, resp_a.text
+    vendor_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _vendor(client, name="Bob's Private Vendor", gst="07BBBBB1111B1Z2")
+    assert resp_b.status_code == 201, resp_b.text
+    vendor_b_id = resp_b.json()["id"]
+
+    # Plain (unfiltered, SQL fast-path) listing.
+    listing_b = client.get(f"{API}/finance/vendors").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert vendor_b_id in ids_b
+    assert vendor_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/finance/vendors").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert vendor_a_id in ids_a
+    assert vendor_b_id not in ids_a
+
+    # Filtered (slow-path) listing — same guarantee under a query param.
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/finance/vendors", params={"q": "alice"}).json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert vendor_a_id not in filtered_ids_b
+
+
+def test_list_proposals_and_asset_register_never_leak_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /finance/proposals and
+    GET /finance/assets must be scoped to the caller. Asset register rows
+    are derived from proposals (PURCHASE objects) via all_proposals(), the
+    same helper proposals listing uses, so both guarantees are covered by
+    one fixture.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-proposal-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-proposal-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    vendor_a = _vendor(client, name="Alice's Vendor", gst="07AAAAA2222A1Z3").json()
+    resp_a = _proposal(
+        client, vendor_a["id"], title="Alice's private proposal",
+        proposal_number="PP-ALC-001",
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    proposal_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    vendor_b = _vendor(client, name="Bob's Vendor", gst="07BBBBB3333B1Z4").json()
+    resp_b = _proposal(
+        client, vendor_b["id"], title="Bob's private proposal",
+        proposal_number="PP-BOB-001",
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    proposal_b_id = resp_b.json()["id"]
+
+    # Proposals listing.
+    listing_b = client.get(f"{API}/finance/proposals").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert proposal_b_id in ids_b
+    assert proposal_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/finance/proposals").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert proposal_a_id in ids_a
+    assert proposal_b_id not in ids_a
+
+    # Asset register (derived from proposals' "assets" section).
+    assets_a = client.get(f"{API}/finance/assets").json()
+    proposal_ids_in_assets_a = {item["proposal_id"] for item in assets_a["items"]}
+    assert proposal_a_id in proposal_ids_in_assets_a
+    assert proposal_b_id not in proposal_ids_in_assets_a
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    assets_b = client.get(f"{API}/finance/assets").json()
+    proposal_ids_in_assets_b = {item["proposal_id"] for item in assets_b["items"]}
+    assert proposal_b_id in proposal_ids_in_assets_b
+    assert proposal_a_id not in proposal_ids_in_assets_b
+
+
 # ---------------------------------------------------------------------------
 # Proposal create + the 409/422 registry guards (PARTS 1/7)
 # ---------------------------------------------------------------------------

@@ -398,7 +398,7 @@ class TestPauseResumeRestart:
         session_obj = UniversalObject.create(
             object_type=ObjectType.INTAKE_SESSION,
             title="Crash victim",
-            created_by="intake",
+            created_by="obj:user:test-user-0001",
             object_id=ObjectId(sid),
             status=ObjectStatus.ACTIVE,
         )

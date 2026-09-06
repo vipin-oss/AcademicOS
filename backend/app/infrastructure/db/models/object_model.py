@@ -39,7 +39,22 @@ class TenantStampMixin:
     )
 
 
-class ObjectModel(TenantStampMixin, Base):
+class SearchYearMixin:
+    """2026-09 audit follow-up (P1): a materialized, indexed year column so
+    year-filtered listings can run as a real SQL predicate instead of
+    loading every row of a type and filtering in Python (measured 46x
+    slower at just 6,000 rows — see docs/architecture/adr/ for the
+    benchmark). Nullable: only object types that populate it (events, to
+    start) get the fast path; others keep the existing behaviour until
+    extended the same way. Populated by the repository's ``save()`` from a
+    per-object-type date/year metadata key — see
+    ``_extract_search_year`` in ``sqlalchemy_object_repository.py``.
+    """
+
+    search_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class ObjectModel(TenantStampMixin, SearchYearMixin, Base):
     __tablename__ = "objects"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)

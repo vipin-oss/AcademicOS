@@ -45,7 +45,7 @@ def client():
     repo.save(fake_user)
     # seed a grant for cross-domain invocation
     grant = UniversalObject.create(
-        ObjectType.GRANT, "HSRF Grant", created_by="system", status=ObjectStatus.ACTIVE,
+        ObjectType.GRANT, "HSRF Grant", created_by=str(fake_user.id), status=ObjectStatus.ACTIVE,
         object_id=ObjectId("obj:grant:l8a-1"),
     )
     repo.save(grant)

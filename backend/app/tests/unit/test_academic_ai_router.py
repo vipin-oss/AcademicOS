@@ -66,7 +66,7 @@ def _user(obj_id="obj:user:alice-0001") -> UniversalObject:
 
 
 def _router(db, budget=None, grounded=None):
-    rung0 = Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator())
+    rung0 = Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False))
     return AcademicAiRouter(
         rung0=rung0,
         budget_policy=budget or ModelBudgetPolicy(_FakeLedger(), ModelBudgetPolicyConfig()),
@@ -125,7 +125,7 @@ class _QAResult:
 def test_grounded_qa_records_spend_when_allowed(db):
     ledger = _FakeLedger()
     router = AcademicAiRouter(
-        rung0=Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator()),
+        rung0=Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False)),
         budget_policy=ModelBudgetPolicy(ledger, ModelBudgetPolicyConfig()),
         spend_ledger=ledger,
         grounded_qa=_FakeGrounded(_QAResult()),
@@ -152,7 +152,7 @@ def test_budget_block_denies_paid_path(db):
     db.commit()
 
     router = AcademicAiRouter(
-        rung0=Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator()),
+        rung0=Rung0ClaimAnswerer(SQLClaimStore(db), permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False)),
         budget_policy=policy,
         spend_ledger=SQLSpendLedger(db),
         grounded_qa=_FakeGrounded(_QAResult()),

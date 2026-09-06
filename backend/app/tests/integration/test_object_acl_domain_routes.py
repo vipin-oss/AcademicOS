@@ -198,8 +198,13 @@ def test_unauthenticated_request_still_gets_401(harness):
     assert resp.status_code == 401, resp.text
 
 
-def test_no_acl_metadata_preserves_open_status_quo(harness):
-    """Without ACL metadata any authenticated user can read — pre-M26 behavior."""
+def test_no_acl_metadata_denies_cross_user_read_by_default(harness):
+    """2026-09 audit follow-up (P0-2): without explicit ACL metadata, an
+    object is owner-only by default now (``security_deny_by_default``
+    flipped on — ADR-056), so a *different* authenticated user can no
+    longer read it. This replaces the old "pre-M26 open status quo"
+    assertion and is the direct-object-id half of the P0-1 fix (the list
+    endpoints were the other half)."""
     harness.set_user(harness.user_a)
     resp = harness.client.post(
         f"{API}/objects",
@@ -212,6 +217,11 @@ def test_no_acl_metadata_preserves_open_status_quo(harness):
     )
     assert resp.status_code == 201, resp.text
     oid = resp.json()["id"]
+
+    # The owner can still read their own object.
+    got_owner = harness.client.get(f"{API}/objects/{oid}")
+    assert got_owner.status_code == 200, got_owner.text
+
     harness.set_user(harness.user_b)
     got = harness.client.get(f"{API}/objects/{oid}")
-    assert got.status_code == 200, got.text
+    assert got.status_code == 403, got.text

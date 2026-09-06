@@ -34,7 +34,9 @@ class ListSubmissionsUseCase:
         student_id = str(query.student_id) if query.student_id else None
 
         outputs = []
-        for submission in self._repository.find_by_type(ObjectType.SUBMISSION):
+        for submission in self._repository.find_by_type(
+            ObjectType.SUBMISSION, owner_user_id=query.owner_user_id
+        ):
             if assignment_id is not None and assignment_id not in {
                 str(oid) for oid in submission.related_ids(RelationshipKind.BELONGS_TO)
             }:
@@ -58,7 +60,12 @@ class ListSubmissionsUseCase:
         page_items = outputs[start:start + query.page_size]
 
         # Denormalise students in ONE batch call (no N+1).
-        raw_by_id = {str(s.id): s for s in self._repository.find_by_type(ObjectType.SUBMISSION)}
+        raw_by_id = {
+            str(s.id): s
+            for s in self._repository.find_by_type(
+                ObjectType.SUBMISSION, owner_user_id=query.owner_user_id
+            )
+        }
         student_ids = []
         for out in page_items:
             raw = raw_by_id.get(out.id)

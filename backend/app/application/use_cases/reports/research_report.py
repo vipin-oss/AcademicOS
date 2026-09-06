@@ -242,5 +242,5 @@ class GetResearchReportUseCase:
 
     def execute(self, query: GetResearchReportQuery) -> ReportView:
         return build_research_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

@@ -64,10 +64,13 @@ class Settings(BaseSettings):
 
     # V3 M9 — security posture. Deny-by-default is OFF by default to preserve
     # the single-user M1-M5 status quo (objects without an ACL stay readable).
-    # Flip ON before admitting a second user (the blueprint's hard gate); the
-    # leak-matrix suite gates that flip. Security rollback must NEVER restore
-    # fail-open: these flags only move fail-open -> fail-closed.
-    security_deny_by_default: bool = False
+    # V3 M9 audit follow-up: registration has been open (multi-user) since
+    # before this flag existed, so the "single-user only" precondition for
+    # fail-open was already false in production. Flipped ON; the leak-matrix
+    # suite (test_m9_leak_matrix.py) passes in this posture. Security
+    # rollback must NEVER restore fail-open: this flag only moves
+    # fail-open -> fail-closed.
+    security_deny_by_default: bool = True
     security_tenant_enforcement: bool = False
 
     # V3 M10 — durable jobs + worker/relay processes. The in-process intake

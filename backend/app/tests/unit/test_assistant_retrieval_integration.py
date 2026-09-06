@@ -146,11 +146,11 @@ def _wired_use_case(db, repo, vectors, provider=None):
     search = SearchObjectsUseCase(
         SQLAlchemySearchRepository(db),
         repo,
-        ObjectPermissionEvaluator(),
+        ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors,
         embedder=HashingEmbedder(),
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
         repo, provider, retrieval=retrieval, context_builder=AssistantContextBuilder()
@@ -241,11 +241,11 @@ def test_rules_provider_knowledge_search_uses_context_cards(db, repo):
     search = SearchObjectsUseCase(
         SQLAlchemySearchRepository(db),
         repo,
-        ObjectPermissionEvaluator(),
+        ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors,
         embedder=HashingEmbedder(),
     )
-    retrieval = AssistantRetrievalService(search, GraphRuntimeService(repo, ObjectPermissionEvaluator()))
+    retrieval = AssistantRetrievalService(search, GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False)))
     use_case = AskQuestionUseCase(
         repo, provider, retrieval=retrieval, context_builder=AssistantContextBuilder()
     )

@@ -124,8 +124,8 @@ def test_full_workflow_new_and_follow_up(harness):
     from app.infrastructure.search.index_applier import SearchIndexApplier
     from app.domain.value_objects.vector import VectorDocument
 
-    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by="f:1")
-    neighbor = UniversalObject.create(ObjectType.DOCUMENT, "Neighbor Notes", created_by="f:1")
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
+    neighbor = UniversalObject.create(ObjectType.DOCUMENT, "Neighbor Notes", created_by=FAKE_USER)
     from app.domain.value_objects.enums import RelationshipKind
 
     doc.add_relationship(neighbor.id, RelationshipKind.BELONGS_TO, actor="f:1")
@@ -180,7 +180,7 @@ def test_restricted_objects_never_appear_over_http(harness):
     from app.infrastructure.search.index_applier import SearchIndexApplier
     from app.domain.value_objects.vector import VectorDocument
 
-    public = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Public", created_by="f:1")
+    public = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Public", created_by=FAKE_USER)
     secret = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Secret", created_by="f:2")
     secret.set_metadata(
         MetadataEntry(

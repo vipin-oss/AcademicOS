@@ -40,7 +40,7 @@ class ExportResult:
 def build_report_view(kind: str, repository: ObjectRepository, filters) -> ReportView:
     """The one dispatch — export and routes share it (no duplicate routing)."""
     kind = assert_valid_report_kind(kind)
-    snapshot = Snapshot(repository)
+    snapshot = Snapshot(repository, user_id=filters.owner_user_id)
     builders = {
         "publications": lambda: build_publications_report(snapshot, filters),
         "research": lambda: build_research_report(repository, snapshot, filters),
@@ -51,7 +51,7 @@ def build_report_view(kind: str, repository: ObjectRepository, filters) -> Repor
         "events": lambda: build_events_report(snapshot, repository, filters),
         "committees": lambda: build_committees_report(repository, snapshot, filters),
         "analytics": lambda: build_analytics_report(snapshot, repository, filters),
-        "academic_cv": lambda: build_academic_cv(repository, filters),
+        "academic_cv": lambda: build_academic_cv(repository, filters, user_id=filters.owner_user_id),
     }
     return builders[kind]()
 

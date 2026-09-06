@@ -15,7 +15,7 @@ class GetEventsDashboardUseCase:
         self._repository = repository
 
     def execute(self, query: GetEventsDashboardQuery) -> EventsDashboard:
-        cards = events_dashboard(self._repository)
+        cards = events_dashboard(self._repository, owner_user_id=query.owner_user_id)
         return EventsDashboard(
             upcoming_events=cards["upcoming_events"],
             completed_events=cards["completed_events"],

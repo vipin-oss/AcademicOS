@@ -125,17 +125,17 @@ def _llm_chain(repo, handler) -> FallbackAssistantProvider:
         retry_attempts=2, retry_backoff_seconds=0,
     )
     fallback = RuleBasedAssistantProvider(
-        repo, permission_evaluator=ObjectPermissionEvaluator()
+        repo, permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False)
     )
     return FallbackAssistantProvider(primary, fallback)
 
 
 def _wired_use_case(db, repo, vectors, provider):
     search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors, embedder=HashingEmbedder(),
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
         repo,
@@ -291,10 +291,10 @@ def _wired_with_citations(db, repo, vectors, provider):
     from app.application.assistant.verifier import AnswerVerifier
 
     search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors, embedder=HashingEmbedder(),
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
         repo,
@@ -303,7 +303,7 @@ def _wired_with_citations(db, repo, vectors, provider):
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(),
         citation_builder=CitationBuilder(),
-        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)),
     )
 
 
@@ -567,7 +567,7 @@ def test_stream_rules_provider_single_token_completion(db, repo):
     vectors = _index(db, repo, doc)
     from app.application.assistant.providers import RuleBasedAssistantProvider
 
-    rules = RuleBasedAssistantProvider(repo, permission_evaluator=ObjectPermissionEvaluator())
+    rules = RuleBasedAssistantProvider(repo, permission_evaluator=ObjectPermissionEvaluator(deny_by_default=False))
     use_case = _wired_with_citations(db, repo, vectors, rules)
 
     events = list(use_case.stream(
@@ -653,10 +653,10 @@ def _wired_with_registry(db, repo, vectors, handler):
         )
 
     search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors, embedder=HashingEmbedder(),
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     retrieval = AssistantRetrievalService(search, graph)
     return AskQuestionUseCase(
         repo,
@@ -665,7 +665,7 @@ def _wired_with_registry(db, repo, vectors, handler):
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(),
         citation_builder=CitationBuilder(),
-        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)),
         ai_core=ai_core,
         provider_factory=factory,
     )

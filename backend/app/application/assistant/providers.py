@@ -256,8 +256,8 @@ class RuleBasedAssistantProvider:
         href = module or "/assistant"
         return [dto.AssistantActionOutput(label="Open module", href=href, kind="module")]
 
-    def _snapshot(self) -> ProductivitySnapshot:
-        return ProductivitySnapshot(self._repository)
+    def _snapshot(self, asked_by: str) -> ProductivitySnapshot:
+        return ProductivitySnapshot(self._repository, owner_user_id=asked_by)
 
     def _feed_cards(self, snapshot: ProductivitySnapshot, sources: tuple[str, ...],
                     date_from: str, date_to: str, today: str) -> list[dto.AssistantCardOutput]:
@@ -280,7 +280,7 @@ class RuleBasedAssistantProvider:
 
     # ------------------------------------------------------------- dashboard
     def _answer_today_plan(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         dash = GetProductivityDashboardUseCase(self._repository).execute(
             GetProductivityDashboardQuery()
         )
@@ -316,7 +316,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Open Productivity Hub", "/productivity", "module")])
 
     def _answer_pending_items(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         buckets = build_reminders(snapshot, today)
         open_tasks = [t for t in personal_tasks(snapshot.tasks_all) if not task_is_done(t)]
@@ -340,7 +340,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Open Productivity Hub", "/productivity", "module")])
 
     def _answer_upcoming_deadlines(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         buckets = build_reminders(snapshot, today)
         rows = list(buckets["overdue"]) + list(buckets["due_today"]) + \
@@ -363,7 +363,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Calendar", "/productivity", "module")])
 
     def _answer_upcoming_meetings(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         cards = self._feed_cards(snapshot, ("events", "committee_meetings"),
                                  today, add_days(today, 7), today)
@@ -374,7 +374,7 @@ class RuleBasedAssistantProvider:
                                    dto.AssistantActionOutput("Go to Committees", "/committees", "module")])
 
     def _answer_pending_reports(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         cards = self._feed_cards(snapshot, ("reports_due",), add_days(today, -30), add_days(today, 30), today)
         summary = f"{len(cards)} report-linked action(s) still open (window: ±30 days)."
@@ -400,13 +400,13 @@ class RuleBasedAssistantProvider:
                           metrics={"Approved": _money(values["approved"]),
                                    "Utilized": _money(values["utilized"]),
                                    "Remaining": _money(values["remaining"])},
-                          cards=self._grant_cards(),
+                          cards=self._grant_cards(asked_by=asked_by),
                           actions=[dto.AssistantActionOutput("Go to Finance", "/finance", "module"),
                                    dto.AssistantActionOutput("Open Research grants", "/research/grants", "module")])
 
     # ------------------------------------------------------------- research
-    def _publications(self) -> list[UniversalObject]:
-        return self._repository.find_by_type(ObjectType.PUBLICATION)
+    def _publications(self, asked_by: str) -> list[UniversalObject]:
+        return self._repository.find_by_type(ObjectType.PUBLICATION, owner_user_id=asked_by)
 
     def _mine_or_all(self, objs: list[UniversalObject], asked_by: str) -> tuple[list[UniversalObject], str]:
         mine = [o for o in objs
@@ -423,7 +423,7 @@ class RuleBasedAssistantProvider:
         return _card(obj, subtitle=subtitle or None, badge=meta.get(KEY_PUBLICATION_TYPE) or None)
 
     def _answer_my_publications(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        pubs, scope = self._mine_or_all(self._publications(), asked_by)
+        pubs, scope = self._mine_or_all(self._publications(asked_by), asked_by)
         ordered = _sort_by_meta_date(pubs, KEY_PUB_DATE, KEY_PUB_YEAR)
         summary = f"{len(pubs)} publication(s) {scope}."
         return self._base(parsed, question, summary, ["publications"],
@@ -432,7 +432,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Open Publications", "/publications", "module")])
 
     def _answer_latest_publication(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        pubs, scope = self._mine_or_all(self._publications(), asked_by)
+        pubs, scope = self._mine_or_all(self._publications(asked_by), asked_by)
         ordered = _sort_by_meta_date(pubs, KEY_PUB_DATE, KEY_PUB_YEAR)
         if not ordered:
             summary = f"No publications found {scope}."
@@ -447,7 +447,7 @@ class RuleBasedAssistantProvider:
 
     def _answer_publications_this_year(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         year = today_iso()[:4]
-        pubs, scope = self._mine_or_all(self._publications(), asked_by)
+        pubs, scope = self._mine_or_all(self._publications(asked_by), asked_by)
         this_year = [o for o in pubs
                      if (_meta(o).get(KEY_PUB_YEAR) or (_meta(o).get(KEY_PUB_DATE) or "")[:4]) == year]
         ordered = _sort_by_meta_date(this_year, KEY_PUB_DATE, KEY_PUB_YEAR)
@@ -458,7 +458,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Open Publications", "/publications", "module")])
 
     def _answer_conference_papers(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        pubs, scope = self._mine_or_all(self._publications(), asked_by)
+        pubs, scope = self._mine_or_all(self._publications(asked_by), asked_by)
         conf = [o for o in pubs
                 if "conference" in (_meta(o).get(KEY_PUBLICATION_TYPE) or "").lower()
                 or (_meta(o).get(KEY_CONFERENCE) or "").strip()]
@@ -469,8 +469,8 @@ class RuleBasedAssistantProvider:
                           cards=_cap([self._pub_card(o) for o in ordered]),
                           actions=[dto.AssistantActionOutput("Open Publications", "/publications", "module")])
 
-    def _projects(self) -> list[UniversalObject]:
-        return self._repository.find_by_type(ObjectType.RESEARCH_PROJECT)
+    def _projects(self, asked_by: str) -> list[UniversalObject]:
+        return self._repository.find_by_type(ObjectType.RESEARCH_PROJECT, owner_user_id=asked_by)
 
     def _project_card(self, obj: UniversalObject, by_id: dict[str, UniversalObject] | None = None) -> dto.AssistantCardOutput:
         meta = _meta(obj)
@@ -485,7 +485,7 @@ class RuleBasedAssistantProvider:
         return _card(obj, subtitle=subtitle, badge=status)
 
     def _answer_active_projects(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        projects = self._projects()
+        projects = self._projects(asked_by)
         active = [o for o in projects
                   if (_meta(o).get(KEY_LIFECYCLE_STATUS) or "draft") in PROJECT_IN_FLIGHT_STATUSES]
         by_id = {str(o.id): o for o in self._repository.list()}
@@ -496,7 +496,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Open Research", "/research", "module")])
 
     def _answer_completed_projects(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        projects = self._projects()
+        projects = self._projects(asked_by)
         done = [o for o in projects
                 if (_meta(o).get(KEY_LIFECYCLE_STATUS) or "") in ("completed", "closed")]
         summary = f"{len(done)} completed research project(s)."
@@ -505,13 +505,13 @@ class RuleBasedAssistantProvider:
                           cards=_cap([self._project_card(o) for o in done]),
                           actions=[dto.AssistantActionOutput("Open Research", "/research", "module")])
 
-    def _funder_projects(self, keyword: str) -> list[UniversalObject]:
+    def _funder_projects(self, keyword: str, asked_by: str) -> list[UniversalObject]:
         agencies = {
-            str(o.id): o for o in self._repository.find_by_type(ObjectType.FUNDING_AGENCY)
+            str(o.id): o for o in self._repository.find_by_type(ObjectType.FUNDING_AGENCY, owner_user_id=asked_by)
             if not keyword or token_match(o.title, keyword)
         }
         projects = []
-        for obj in self._projects():
+        for obj in self._projects(asked_by):
             funded_ids = [str(rel.target) for rel in obj.relationships
                           if rel.kind is RelationshipKind.FUNDED_BY]
             if any(target in agencies for target in funded_ids):
@@ -520,7 +520,7 @@ class RuleBasedAssistantProvider:
 
     def _answer_projects_by_funder(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         keyword = str(parsed.params.get("keyword") or "").strip()
-        projects = self._funder_projects(keyword)
+        projects = self._funder_projects(keyword, asked_by)
         by_id = {str(o.id): o for o in self._repository.list()}
         label = f" funded by “{keyword}”" if keyword else " with a funding agency linked"
         summary = f"{len(projects)} project(s){label}."
@@ -529,12 +529,14 @@ class RuleBasedAssistantProvider:
                           cards=_cap([self._project_card(o, by_id) for o in projects]),
                           actions=[dto.AssistantActionOutput("Open Research", "/research", "module")])
 
-    def _grants(self) -> list[UniversalObject]:
-        return self._repository.find_by_type(ObjectType.GRANT)
+    def _grants(self, asked_by: str) -> list[UniversalObject]:
+        return self._repository.find_by_type(ObjectType.GRANT, owner_user_id=asked_by)
 
-    def _grant_cards(self, grants: list[UniversalObject] | None = None) -> list[dto.AssistantCardOutput]:
+    def _grant_cards(
+        self, grants: list[UniversalObject] | None = None, asked_by: str | None = None
+    ) -> list[dto.AssistantCardOutput]:
         by_id = None
-        rows = self._grants() if grants is None else grants
+        rows = self._grants(asked_by) if grants is None else grants
         cards: list[dto.AssistantCardOutput] = []
         for obj in rows:
             meta = _meta(obj)
@@ -555,7 +557,7 @@ class RuleBasedAssistantProvider:
         return cards
 
     def _answer_research_grants(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        grants = self._grants()
+        grants = self._grants(asked_by)
         total = sum(parse_amount(_meta(o).get(KEY_AMOUNT)) or 0.0 for o in grants)
         summary = f"{len(grants)} research grant(s), sanctioned total ≈ {_money(total)}."
         return self._base(parsed, question, summary, ["research"],
@@ -565,7 +567,7 @@ class RuleBasedAssistantProvider:
 
     def _answer_documents_by_keyword(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         keyword = str(parsed.params.get("keyword") or "").strip()
-        documents = self._repository.find_by_type(ObjectType.DOCUMENT)
+        documents = self._repository.find_by_type(ObjectType.DOCUMENT, owner_user_id=asked_by)
         by_id = {str(o.id): o for o in self._repository.list()}
         hits: list[UniversalObject] = []
         for obj in documents:
@@ -594,7 +596,7 @@ class RuleBasedAssistantProvider:
     # ------------------------------------------------------------- teaching
     def _answer_attendance_below(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         threshold = float(parsed.params.get("threshold") or 75)
-        classes = self._repository.find_by_type(ObjectType.COURSE)
+        classes = self._repository.find_by_type(ObjectType.COURSE, owner_user_id=asked_by)
         below_rows: list[tuple[UniversalObject, object]] = []
         for class_obj in classes:
             sessions = attendance_sessions_of_class(self._repository, str(class_obj.id))
@@ -627,7 +629,7 @@ class RuleBasedAssistantProvider:
 
     def _answer_pending_grading(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         submissions = [
-            o for o in self._repository.find_by_type(ObjectType.SUBMISSION)
+            o for o in self._repository.find_by_type(ObjectType.SUBMISSION, owner_user_id=asked_by)
             if not (_meta(o).get("graded_at") or "").strip()
         ]
         by_id = {str(o.id): o for o in self._repository.list()}
@@ -662,7 +664,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Teaching", "/teaching", "module")])
 
     def _answer_upcoming_classes(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         cards = self._feed_cards(snapshot, ("teaching", "attendance_sessions"),
                                  today, add_days(today, 7), today)
@@ -672,7 +674,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Teaching", "/teaching", "module")])
 
     def _answer_pending_assignments(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         cards = self._feed_cards(snapshot, ("assignments",), add_days(today, -7), add_days(today, 14), today)
         summary = f"{len(cards)} assignment deadline(s) in the −7…+14 day window."
@@ -681,8 +683,8 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Teaching", "/teaching", "module")])
 
     # ------------------------------------------------------------- finance
-    def _proposals(self) -> list[UniversalObject]:
-        return self._repository.find_by_type(ObjectType.PURCHASE)
+    def _proposals(self, asked_by: str) -> list[UniversalObject]:
+        return self._repository.find_by_type(ObjectType.PURCHASE, owner_user_id=asked_by)
 
     def _proposal_card(self, obj: UniversalObject) -> dto.AssistantCardOutput:
         meta = _meta(obj)
@@ -716,11 +718,11 @@ class RuleBasedAssistantProvider:
                                    "Utilized": _money(values["utilized"]),
                                    "Utilization": f"{utilized_pct:.0f}%",
                                    "Remaining": _money(values["remaining"])},
-                          cards=self._grant_cards(),
+                          cards=self._grant_cards(asked_by=asked_by),
                           actions=[dto.AssistantActionOutput("Go to Finance", "/finance", "module")])
 
     def _answer_pending_purchases(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        proposals = self._proposals()
+        proposals = self._proposals(asked_by)
         active = [o for o in proposals
                   if (_meta(o).get(KEY_PROPOSAL_STATUS) or "draft") in ACTIVE_PROPOSAL_STATUSES]
         pending_pos = self._count_pending_po_rows(proposals)
@@ -736,7 +738,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Finance", "/finance", "module")])
 
     def _answer_recent_procurements(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        proposals = self._proposals()
+        proposals = self._proposals(asked_by)
         done = [o for o in proposals
                 if (_meta(o).get(KEY_PROPOSAL_STATUS) or "") in ("completed", "ordered")]
         ordered = _sort_by_meta_date(done, "proposal_date")
@@ -756,8 +758,8 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Finance", "/finance", "module")])
 
     # ------------------------------------------------------------- events
-    def _events(self) -> list[UniversalObject]:
-        return self._repository.find_by_type(ObjectType.EVENT)
+    def _events(self, asked_by: str) -> list[UniversalObject]:
+        return self._repository.find_by_type(ObjectType.EVENT, owner_user_id=asked_by)
 
     def _event_card(self, obj: UniversalObject, context: str | None = None) -> dto.AssistantCardOutput:
         meta = _meta(obj)
@@ -773,9 +775,9 @@ class RuleBasedAssistantProvider:
             return [row for row in rows if isinstance(row, dict)]
         return _json_list(_meta(obj).get(KEY_PARTICIPATION))
 
-    def _events_with_role(self, roles: tuple[str, ...]) -> list[UniversalObject]:
+    def _events_with_role(self, roles: tuple[str, ...], asked_by: str) -> list[UniversalObject]:
         out = []
-        for obj in self._events():
+        for obj in self._events(asked_by):
             for row in self._participation_rows(obj):
                 if str(row.get("role") or "").lower() in roles:
                     out.append(obj)
@@ -786,7 +788,7 @@ class RuleBasedAssistantProvider:
         event_type = str(parsed.params.get("event_type") or "").strip().lower()
         today = today_iso()
         events = [
-            o for o in self._events()
+            o for o in self._events(asked_by)
             if (_meta(o).get(KEY_EVENT_STATUS) or "planned") in UPCOMING_EVENT_STATUSES
             and (_meta(o).get("end_date") or _meta(o).get("start_date") or "") >= today
         ]
@@ -803,7 +805,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Events", "/events", "module")])
 
     def _answer_events_attended(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        events = _sort_by_meta_date(self._events_with_role(ATTENDEE_ROLES), "end_date", "start_date")
+        events = _sort_by_meta_date(self._events_with_role(ATTENDEE_ROLES, asked_by), "end_date", "start_date")
         summary = f"{len(events)} event(s) you attended (participation role: attendee/participant)."
         return self._base(parsed, question, summary, ["events"],
                           metrics={"Attended": str(len(events))},
@@ -811,7 +813,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Events", "/events", "module")])
 
     def _answer_events_organized(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        events = _sort_by_meta_date(self._events_with_role(ORGANIZER_ROLES), "end_date", "start_date")
+        events = _sort_by_meta_date(self._events_with_role(ORGANIZER_ROLES, asked_by), "end_date", "start_date")
         summary = f"{len(events)} event(s) on your organising record (organizer/coordinator/convener)."
         return self._base(parsed, question, summary, ["events"],
                           metrics={"Organized": str(len(events))},
@@ -819,9 +821,9 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Events", "/events", "module")])
 
     def _answer_certificates(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        dash = events_dashboard(self._repository)
+        dash = events_dashboard(self._repository, owner_user_id=asked_by)
         cards: list[dto.AssistantCardOutput] = []
-        for obj in self._events():
+        for obj in self._events(asked_by):
             meta = _meta(obj)
             issued = parse_json_object(meta.get(KEY_REGISTRATION)).get("certificates_issued") \
                 if isinstance(parse_json_object(meta.get(KEY_REGISTRATION)), dict) else 0
@@ -846,7 +848,7 @@ class RuleBasedAssistantProvider:
 
     # ------------------------------------------------------------- committees
     def _answer_committee_meetings(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         today = today_iso()
         cards = self._feed_cards(snapshot, ("committee_meetings",),
                                  today, add_days(today, 30), today)
@@ -857,7 +859,7 @@ class RuleBasedAssistantProvider:
 
     def _answer_pending_actions(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
         from app.application.use_cases.productivity.helpers import committee_action_tasks
-        snapshot = self._snapshot()
+        snapshot = self._snapshot(asked_by)
         actions = [o for o in committee_action_tasks(snapshot.tasks_all) if not task_is_done(o)]
         ordered = _sort_by_meta_date(actions, "due_date", reverse=False)
         summary = f"{len(ordered)} committee action item(s) still open."
@@ -872,7 +874,7 @@ class RuleBasedAssistantProvider:
                           actions=[dto.AssistantActionOutput("Go to Committees", "/committees", "module")])
 
     def _answer_recent_decisions(self, parsed, question, asked_by) -> dto.AssistantAnswerOutput:
-        meetings = self._repository.find_by_type(ObjectType.MEETING)
+        meetings = self._repository.find_by_type(ObjectType.MEETING, owner_user_id=asked_by)
         by_id = {str(o.id): o for o in self._repository.list()}
         with_decisions = []
         for obj in meetings:

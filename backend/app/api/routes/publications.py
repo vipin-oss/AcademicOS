@@ -237,6 +237,7 @@ def _list_query(
     pipeline_stage: str | None,
     pub_status: str | None,
     object_id: str | None,
+    owner_user_id: str | None = None,
 ) -> ListPublicationsQuery:
     return ListPublicationsQuery(
         page=page,
@@ -248,6 +249,7 @@ def _list_query(
         pipeline_stage=pipeline_stage or None,
         status=pub_status or None,
         object_id=ObjectId.parse(object_id) if object_id else None,
+        owner_user_id=owner_user_id,
     )
 
 
@@ -266,11 +268,12 @@ def list_publications(
     ),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListPublicationsResponseModel:
     try:
         result = ListPublicationsUseCase(repo).execute(
             _list_query(page, page_size, q, publication_type, year, quartile,
-                        pipeline_stage, pub_status, object_id)
+                        pipeline_stage, pub_status, object_id, str(user.id))
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -299,6 +302,7 @@ def export_publications(
     pub_status: str | None = Query(None, alias="status"),
     object_id: str | None = Query(None),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     fmt = (fmt or "").lower()
     if fmt not in EXPORT_FORMATS:
@@ -313,7 +317,7 @@ def export_publications(
         while True:  # walk every page of the same filtered query
             result = use_case.execute(
                 _list_query(page, 100, q, publication_type, year, quartile,
-                            pipeline_stage, pub_status, object_id)
+                            pipeline_stage, pub_status, object_id, str(user.id))
             )
             records.extend(o.to_record() for o in result.items)
             if len(records) >= result.total_count or not result.items:

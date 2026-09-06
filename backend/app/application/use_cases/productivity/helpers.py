@@ -670,19 +670,19 @@ class ProductivitySnapshot:
     """One repository pass for every productivity read (the reports Snapshot
     precedent — all frozen objects fetched once, shared by aggregators)."""
 
-    def __init__(self, repository) -> None:  # ObjectRepository — structural
-        self.tasks_all = repository.find_by_type(ObjectType.TASK)
-        self.events = repository.find_by_type(ObjectType.EVENT)
-        self.meetings = repository.find_by_type(ObjectType.MEETING)
-        self.projects = repository.find_by_type(ObjectType.RESEARCH_PROJECT)
-        self.milestones = repository.find_by_type(ObjectType.PROJECT_MILESTONE)
-        self.installments = repository.find_by_type(ObjectType.GRANT_INSTALLMENT)
-        self.classes = repository.find_by_type(ObjectType.COURSE)
-        self.assignments = repository.find_by_type(ObjectType.ASSIGNMENT)
-        self.sessions = repository.find_by_type(ObjectType.ATTENDANCE_SESSION)
-        self.proposals = repository.find_by_type(ObjectType.PURCHASE)
-        self.entries = repository.find_by_type(ObjectType.CALENDAR_ENTRY)
-        self.notifications = repository.find_by_type(ObjectType.NOTIFICATION)
+    def __init__(self, repository, *, owner_user_id: str | None = None) -> None:  # ObjectRepository — structural
+        self.tasks_all = repository.find_by_type(ObjectType.TASK, owner_user_id=owner_user_id)
+        self.events = repository.find_by_type(ObjectType.EVENT, owner_user_id=owner_user_id)
+        self.meetings = repository.find_by_type(ObjectType.MEETING, owner_user_id=owner_user_id)
+        self.projects = repository.find_by_type(ObjectType.RESEARCH_PROJECT, owner_user_id=owner_user_id)
+        self.milestones = repository.find_by_type(ObjectType.PROJECT_MILESTONE, owner_user_id=owner_user_id)
+        self.installments = repository.find_by_type(ObjectType.GRANT_INSTALLMENT, owner_user_id=owner_user_id)
+        self.classes = repository.find_by_type(ObjectType.COURSE, owner_user_id=owner_user_id)
+        self.assignments = repository.find_by_type(ObjectType.ASSIGNMENT, owner_user_id=owner_user_id)
+        self.sessions = repository.find_by_type(ObjectType.ATTENDANCE_SESSION, owner_user_id=owner_user_id)
+        self.proposals = repository.find_by_type(ObjectType.PURCHASE, owner_user_id=owner_user_id)
+        self.entries = repository.find_by_type(ObjectType.CALENDAR_ENTRY, owner_user_id=owner_user_id)
+        self.notifications = repository.find_by_type(ObjectType.NOTIFICATION, owner_user_id=owner_user_id)
         self._by_id: dict[str, UniversalObject] = {}
         for group in (
             self.tasks_all,

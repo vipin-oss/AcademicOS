@@ -245,5 +245,5 @@ class GetTeachingReportUseCase:
 
     def execute(self, query: GetTeachingReportQuery) -> ReportView:
         return build_teaching_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

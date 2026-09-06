@@ -132,7 +132,7 @@ def _use_case(
     return RelatedDocumentsUseCase(
         _MockRepo(source=source, objects=objects),
         annotation if annotation is not None else _MockAnnotationService({"text": "source text"}),
-        evaluator if evaluator is not None else ObjectPermissionEvaluator(),
+        evaluator if evaluator is not None else ObjectPermissionEvaluator(deny_by_default=False),
         vector_repo if vector_repo is not None else _MockVectorRepository(vector_results),
         embedder if embedder is not None else _MockEmbedder(),
     )

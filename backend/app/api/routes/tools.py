@@ -83,9 +83,17 @@ def _registry(db: Session):
 
 
 def _executor(db: Session) -> ToolExecutor:
+    # 2026-09 audit follow-up (P0-2): tool specs carry a semantic category
+    # tag as acl_scope (e.g. "count", "inventory"), not a real per-object
+    # ACL JSON blob — there is no grant model behind it. Under
+    # security_deny_by_default this reads as a malformed scope and denies
+    # every call, which breaks all tool invocation for every user with no
+    # corresponding security benefit (nothing was ever actually gated here
+    # besides authentication, which get_current_user already enforces).
+    # Explicit opt-out until tool-level ACL is a real, implemented feature.
     return ToolExecutor(
         _registry(db),
-        permissions=ObjectPermissionEvaluator(),
+        permissions=ObjectPermissionEvaluator(deny_by_default=False),
         audit=SQLToolAuditStore(db),
     )
 

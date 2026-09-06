@@ -371,6 +371,150 @@ def test_grant_delete_cascades_children(client):
     assert client.delete(f"{API}/research/installments/{inst['id']}").status_code == 404
 
 
+def test_list_grants_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /research/grants must be scoped
+    to the caller. Grants has no SQL fast path — every listing goes through
+    find_by_type, the branch that used to leak unconditionally.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-grant-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-grant-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _grant(
+        client, title="Alice's private grant", grant_number="CRG/2026/A001"
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    grant_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _grant(
+        client, title="Bob's private grant", grant_number="CRG/2026/B001"
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    grant_b_id = resp_b.json()["id"]
+
+    listing_b = client.get(f"{API}/research/grants").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert grant_b_id in ids_b
+    assert grant_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/research/grants").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert grant_a_id in ids_a
+    assert grant_b_id not in ids_a
+
+
+def test_list_projects_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /research/projects must be
+    scoped to the caller, on both the plain (SQL fast-path) and filtered
+    (year-scoped, slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-project-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-project-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _project(
+        client, title="Alice's private project", project_code="ALC-PRJ-01"
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    project_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _project(
+        client, title="Bob's private project", project_code="BOB-PRJ-01"
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    project_b_id = resp_b.json()["id"]
+
+    listing_b = client.get(f"{API}/research/projects").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert project_b_id in ids_b
+    assert project_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/research/projects").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert project_a_id in ids_a
+    assert project_b_id not in ids_a
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/research/projects?year=2026").json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert project_a_id not in filtered_ids_b
+
+
+def test_list_agencies_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /research/agencies must be
+    scoped to the caller, on both the plain (SQL fast-path) and filtered
+    (q-scoped, slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-agency-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-agency-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _agency(client, name="Alice's Private Agency")
+    assert resp_a.status_code == 201, resp_a.text
+    agency_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _agency(client, name="Bob's Private Agency")
+    assert resp_b.status_code == 201, resp_b.text
+    agency_b_id = resp_b.json()["id"]
+
+    listing_b = client.get(f"{API}/research/agencies").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert agency_b_id in ids_b
+    assert agency_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/research/agencies").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert agency_a_id in ids_a
+    assert agency_b_id not in ids_a
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/research/agencies?q=alice").json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert agency_a_id not in filtered_ids_b
+
+
 # ---------------------------------------------------------------------------
 # Dashboard + 404s
 # ---------------------------------------------------------------------------

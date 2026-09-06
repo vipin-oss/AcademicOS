@@ -25,3 +25,4 @@ class ListProjectsQuery:
     year: int | None = None
     department: str | None = None
     object_id: ObjectId | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

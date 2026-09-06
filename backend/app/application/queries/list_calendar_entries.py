@@ -12,3 +12,4 @@ class ListCalendarEntriesQuery:
     category: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

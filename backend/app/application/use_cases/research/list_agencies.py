@@ -38,9 +38,12 @@ class ListAgenciesUseCase:
         # The slow path below is preserved for q/status filters.
         plain = not (query.q or "").strip() and query.status is None
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.FUNDING_AGENCY)
+            total_count = self._repository.count(
+                object_type=ObjectType.FUNDING_AGENCY, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.FUNDING_AGENCY,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -53,7 +56,9 @@ class ListAgenciesUseCase:
                 page_size=query.page_size,
             )
 
-        agencies = self._repository.find_by_type(ObjectType.FUNDING_AGENCY)
+        agencies = self._repository.find_by_type(
+            ObjectType.FUNDING_AGENCY, owner_user_id=query.owner_user_id
+        )
         outputs = [AgencyOutput.from_domain(a, []) for a in agencies]
         outputs = [
             out

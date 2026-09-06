@@ -472,7 +472,7 @@ def _seed_commit_item(session, storage, *, status="awaiting_review", session_obj
         session_obj = UniversalObject.create(
         ObjectType.INTAKE_SESSION,
         "seed",
-        created_by="intake",
+        created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(
@@ -490,7 +490,7 @@ def _seed_commit_item(session, storage, *, status="awaiting_review", session_obj
     item = UniversalObject.create(
         ObjectType.INTAKE_ITEM,
         "seed.pdf",
-        created_by="intake",
+        created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(
@@ -521,7 +521,7 @@ def _seed_commit_item(session, storage, *, status="awaiting_review", session_obj
             MetadataLayer.L1_SYSTEM,
             Provenance.SYSTEM,
         ),
-        actor="intake",
+        actor="obj:user:test-user-0001",
     )
     repo.save(item)
     return item
@@ -534,7 +534,7 @@ def test_proposal_generate_and_review_flow(harness):
 
     repo = SQLAlchemyObjectRepository(request_session)
     session_obj = UniversalObject.create(
-        ObjectType.INTAKE_SESSION, "pseed", created_by="intake",
+        ObjectType.INTAKE_SESSION, "pseed", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=(MetadataEntry(
             "intake.status", IntakeSessionStatus.COMPLETED.value,
@@ -542,7 +542,7 @@ def test_proposal_generate_and_review_flow(harness):
     )
     repo.save(session_obj)
     item = UniversalObject.create(
-        ObjectType.INTAKE_ITEM, "prop.pdf", created_by="intake",
+        ObjectType.INTAKE_ITEM, "prop.pdf", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=(
             MetadataEntry("intake.status", IntakeItemStatus.AWAITING_REVIEW.value,
@@ -645,7 +645,7 @@ def test_proposal_http_full_workflow(harness):
 
     item.set_metadata(
         MetadataEntry(KEY_PROPOSAL, "", MetadataLayer.L1_SYSTEM, Provenance.SYSTEM),
-        actor="intake",
+        actor="obj:user:test-user-0001",
     )
     repo = SQLAlchemyObjectRepository(request_session)
     repo.save(item)

@@ -370,5 +370,5 @@ class GetStudentsReportUseCase:
 
     def execute(self, query: GetStudentsReportQuery) -> ReportView:
         return build_students_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

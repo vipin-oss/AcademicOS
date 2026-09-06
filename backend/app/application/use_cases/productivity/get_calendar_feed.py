@@ -29,7 +29,7 @@ class GetCalendarFeedUseCase:
                     f"Unknown calendar source(s): {', '.join(unknown)} "
                     f"(allowed: {', '.join(CALENDAR_SOURCE_CODES)})."
                 )
-        snapshot = ProductivitySnapshot(self._repository)
+        snapshot = ProductivitySnapshot(self._repository, owner_user_id=query.owner_user_id)
         items = build_calendar_feed(
             snapshot, query.date_from, query.date_to, query.sources, today_iso()
         )

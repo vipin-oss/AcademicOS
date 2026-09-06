@@ -50,7 +50,9 @@ class ListClassesUseCase:
     def execute(self, query: ListClassesQuery) -> ListClassesResult:
         assert_valid_list_classes_query(query)
 
-        classes = self._repository.find_by_type(ObjectType.COURSE)
+        classes = self._repository.find_by_type(
+            ObjectType.COURSE, owner_user_id=query.owner_user_id
+        )
 
         if query.object_id is not None:
             target = str(query.object_id)

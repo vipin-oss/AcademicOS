@@ -19,7 +19,7 @@ class GetRemindersUseCase:
 
     def execute(self, query: GetRemindersQuery) -> RemindersResult:
         today = today_iso(query.as_of)
-        snapshot = ProductivitySnapshot(self._repository)
+        snapshot = ProductivitySnapshot(self._repository, owner_user_id=query.owner_user_id)
         buckets = build_reminders(snapshot, today)
         return RemindersResult(
             overdue=buckets["overdue"],

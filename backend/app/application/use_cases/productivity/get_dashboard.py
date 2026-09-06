@@ -29,7 +29,7 @@ class GetProductivityDashboardUseCase:
 
     def execute(self, query: GetProductivityDashboardQuery) -> ProductivityDashboardOutput:
         today = today_iso(query.as_of)
-        snapshot = ProductivitySnapshot(self._repository)
+        snapshot = ProductivitySnapshot(self._repository, owner_user_id=query.owner_user_id)
         week_end = add_days(today, 7)
 
         tasks = personal_tasks(snapshot.tasks_all)

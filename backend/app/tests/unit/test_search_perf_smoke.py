@@ -128,7 +128,7 @@ def test_search_perf_smoke_lexical_and_hybrid():
         use_case = SearchObjectsUseCase(
             SQLAlchemySearchRepository(db),
             SQLAlchemyObjectRepository(db),
-            ObjectPermissionEvaluator(),
+            ObjectPermissionEvaluator(deny_by_default=False),
             vector_repository=vectors,
             embedder=embedder,
         )

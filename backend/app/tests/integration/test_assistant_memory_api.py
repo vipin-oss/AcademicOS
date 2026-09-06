@@ -114,7 +114,7 @@ def _index(session, vectors, embedder, *objects: UniversalObject) -> None:
 
 def _conversation(repo, *, question="find quantum", answer="The quantum answer.",
                   citations=(), review=None) -> UniversalObject:
-    conv = create_conversation_object(repo, "New conversation", "u:1", title_auto=True)
+    conv = create_conversation_object(repo, "New conversation", "obj:user:test-user-0001", title_auto=True)
     append_message(conv, "user", question, None)
     append_message(
         conv,
@@ -206,7 +206,7 @@ def test_memory_recall_hides_pending_answers(harness):
 
 def test_memory_recall_graph_leg_returns_knowledge(harness):
     client, repo, session, vectors, embedder = harness
-    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Lab Notes", created_by="f:1")
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Lab Notes", created_by="obj:user:test-user-0001")
     conv = _conversation(repo)
     conv.add_relationship(
         ObjectId(str(doc.id)), RelationshipKind.RELATED_TO,

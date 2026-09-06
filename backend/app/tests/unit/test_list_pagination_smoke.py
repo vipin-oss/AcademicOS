@@ -37,16 +37,22 @@ class RecordingRepository(ObjectRepository):
         return rows[start : start + page_size]
 
     # --- ObjectRepository port (only the paths under test are needed) ---
-    def find_by_type(self, object_type):
+    def find_by_type(self, object_type, *, owner_user_id=None):
         self.calls.append(f"find_by_type:{object_type.value}")
-        return [o for o in self._objects if o.object_type is object_type]
+        return [
+            o
+            for o in self._objects
+            if o.object_type is object_type
+            and (owner_user_id is None or (o.audit and o.audit.created_by == owner_user_id))
+        ]
 
     def find(self, *, object_type=None, status=None, metadata_key=None,
-             metadata_value=None, page=1, page_size=0, sort_by=None, order="asc"):
+             metadata_value=None, owner_user_id=None, page=1, page_size=0,
+             sort_by=None, order="asc"):
         return self._canned(object_type, page, page_size, sort_by, order)
 
     def count(self, *, object_type=None, status=None, metadata_key=None,
-              metadata_value=None):
+              metadata_value=None, owner_user_id=None):
         self.calls.append("count")
         return sum(1 for o in self._objects if o.object_type is object_type)
 

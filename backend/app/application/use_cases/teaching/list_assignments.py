@@ -51,7 +51,9 @@ class ListAssignmentsUseCase:
     def execute(self, query: ListAssignmentsQuery) -> ListAssignmentsResult:
         _validate(query)
 
-        assignments = self._repository.find_by_type(ObjectType.ASSIGNMENT)
+        assignments = self._repository.find_by_type(
+            ObjectType.ASSIGNMENT, owner_user_id=query.owner_user_id
+        )
         wanted_class = str(query.class_id) if query.class_id is not None else None
         lens = str(query.object_id) if query.object_id is not None else None
 

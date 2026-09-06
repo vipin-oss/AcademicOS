@@ -276,17 +276,19 @@ def vendor_stats(repository: ObjectRepository, vendor_id: str) -> dict[str, int 
 # ---------------------------------------------------------------------------
 # Proposal collectors used by the budget lens / dashboards
 # ---------------------------------------------------------------------------
-def all_proposals(repository: ObjectRepository) -> list[UniversalObject]:
-    return repository.find_by_type(ObjectType.PURCHASE)
+def all_proposals(
+    repository: ObjectRepository, *, owner_user_id: str | None = None
+) -> list[UniversalObject]:
+    return repository.find_by_type(ObjectType.PURCHASE, owner_user_id=owner_user_id)
 
 
 def proposals_linked_to(
-    repository: ObjectRepository, target_id: str
+    repository: ObjectRepository, target_id: str, *, owner_user_id: str | None = None
 ) -> list[UniversalObject]:
     """Proposals carrying a RELATED_TO edge to the given link target."""
     return [
         obj
-        for obj in all_proposals(repository)
+        for obj in all_proposals(repository, owner_user_id=owner_user_id)
         if any(
             rel.kind is RelationshipKind.RELATED_TO and str(rel.target) == target_id
             for rel in obj.relationships
@@ -298,13 +300,13 @@ def proposals_linked_to(
 # PART 9 — Budget tracking (project lens, composed read)
 # ---------------------------------------------------------------------------
 def budget_line_for_project(
-    repository: ObjectRepository, project: UniversalObject
+    repository: ObjectRepository, project: UniversalObject, *, owner_user_id: str | None = None
 ) -> dict:
     """Approved/released from the frozen research helpers; procurement spend
     (PAID bills on proposals linked to this project) is added into utilized —
     a composed read, nothing stored."""
     budget = project_budget(repository, project)
-    linked = proposals_linked_to(repository, str(project.id))
+    linked = proposals_linked_to(repository, str(project.id), owner_user_id=owner_user_id)
     spent = round(sum(proposal_spent(_meta(obj)) for obj in linked), 2)
     base_utilized = budget["utilized"] or 0.0
     utilized = round(base_utilized + spent, 2)
@@ -325,9 +327,11 @@ def budget_line_for_project(
 # ---------------------------------------------------------------------------
 # PART 8 — Asset register collector
 # ---------------------------------------------------------------------------
-def asset_register_rows(repository: ObjectRepository) -> list[AssetRegisterRow]:
+def asset_register_rows(
+    repository: ObjectRepository, *, owner_user_id: str | None = None
+) -> list[AssetRegisterRow]:
     rows: list[AssetRegisterRow] = []
-    for obj in all_proposals(repository):
+    for obj in all_proposals(repository, owner_user_id=owner_user_id):
         meta = _meta(obj)
         for row in section_rows(meta, KEY_ASSETS):
             rows.append(

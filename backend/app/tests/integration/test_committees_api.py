@@ -244,6 +244,59 @@ def test_list_search_and_part9_filters(client):
     assert client.get(f"{API}/committees", params={"page": 0}).status_code == 422
 
 
+def test_list_committees_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /committees must be scoped to
+    the caller, on both the plain (SQL fast-path) and filtered (q-scoped,
+    slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-committee-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-committee-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _committee(
+        client, name="Alice's private committee", code="ALC-COM-01"
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    committee_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _committee(
+        client, name="Bob's private committee", code="BOB-COM-01"
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    committee_b_id = resp_b.json()["id"]
+
+    # Plain (unfiltered, SQL fast-path) listing.
+    listing_b = client.get(f"{API}/committees").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert committee_b_id in ids_b
+    assert committee_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/committees").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert committee_a_id in ids_a
+    assert committee_b_id not in ids_a
+
+    # Filtered (slow-path) listing — same guarantee under a query param.
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/committees", params={"q": "alice"}).json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert committee_a_id not in filtered_ids_b
+
+
 # ---------------------------------------------------------------------------
 # Meetings (PART 3) + update/get/delete + cascade
 # ---------------------------------------------------------------------------

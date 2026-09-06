@@ -170,7 +170,7 @@ def _fake_llm_chain(repo, answer_text: str) -> FallbackAssistantProvider:
 def _seed_world(db, repo) -> FakeVectorRepository:
     """One document + the eval asker; both indexed (the asker must be a
     real, readable user for the pipeline to retrieve)."""
-    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Mechanics Notes", created_by="f:1")
+    doc = UniversalObject.create(ObjectType.DOCUMENT, "Quantum Mechanics Notes", created_by="obj:user:eval-0001")
     asker = UniversalObject.create(
         ObjectType.USER, "eval", created_by="system",
         status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:eval-0001"),

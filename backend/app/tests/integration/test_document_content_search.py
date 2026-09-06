@@ -126,7 +126,7 @@ class _Harness:
         self.set_user(self.user_a)
         repo = SQLAlchemyObjectRepository(self.session)
         session_obj = UniversalObject.create(
-            ObjectType.INTAKE_SESSION, "seed", created_by="intake",
+            ObjectType.INTAKE_SESSION, "seed", created_by=str(self.user_a.id),
             status=ObjectStatus.ACTIVE,
             metadata=Metadata(
                 entries=(_entry(KEY_INTAKE_STATUS, IntakeSessionStatus.COMPLETED.value),)
@@ -135,7 +135,7 @@ class _Harness:
         session_obj.pop_domain_events()
         repo.save(session_obj)
         item = UniversalObject.create(
-            ObjectType.INTAKE_ITEM, "report.pdf", created_by="intake",
+            ObjectType.INTAKE_ITEM, "report.pdf", created_by=str(self.user_a.id),
             status=ObjectStatus.ACTIVE,
             metadata=Metadata(
                 entries=(

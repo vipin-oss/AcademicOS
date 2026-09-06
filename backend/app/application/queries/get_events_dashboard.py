@@ -6,4 +6,4 @@ from dataclasses import dataclass
 
 @dataclass
 class GetEventsDashboardQuery:
-    pass
+    owner_user_id: str | None = None

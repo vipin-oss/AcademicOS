@@ -68,7 +68,7 @@ def harness(tmp_path):
     app.dependency_overrides[get_storage] = lambda: storage
     repo = SQLAlchemyObjectRepository(session)
     doc = UniversalObject.create(
-        ObjectType.DOCUMENT, "paper.pdf", created_by="test.user",
+        ObjectType.DOCUMENT, "paper.pdf", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
     )
     doc.pop_domain_events()
@@ -165,13 +165,13 @@ def test_annotation_validation_and_404s(harness):
 def test_extracted_text_returns_the_linked_item_text(harness):
     client, repo, storage, doc = harness
     session_obj = UniversalObject.create(
-        ObjectType.INTAKE_SESSION, "session", created_by="intake",
+        ObjectType.INTAKE_SESSION, "session", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=(_entry("intake.status", "completed"),)),
     )
     repo.save(session_obj)
     item = UniversalObject.create(
-        ObjectType.INTAKE_ITEM, "paper.pdf", created_by="intake",
+        ObjectType.INTAKE_ITEM, "paper.pdf", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(

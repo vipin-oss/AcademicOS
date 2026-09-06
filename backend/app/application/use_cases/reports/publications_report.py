@@ -210,4 +210,4 @@ class GetPublicationsReportUseCase:
         self._repository = repository
 
     def execute(self, query: GetPublicationsReportQuery) -> ReportView:
-        return build_publications_report(Snapshot(self._repository), query.filters)
+        return build_publications_report(Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters)

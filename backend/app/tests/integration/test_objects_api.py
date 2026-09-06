@@ -210,10 +210,16 @@ def test_object_acl_grants_and_enforces(client):
     assert created.status_code == 201
     oid = created.json()["id"]
 
-    # Before any ACL: everyone can read (status quo).
+    # 2026-09 audit follow-up (P0-2): before any explicit ACL grant, the
+    # object is owner-only by default now — the owner can read, a stranger
+    # cannot. (Previously any authenticated user could read here.)
+    assert (
+        client.get(f"/api/v1/objects/{oid}", headers={"Authorization": f"Bearer {owner_token}"}).status_code
+        == 200
+    )
     assert (
         client.get(f"/api/v1/objects/{oid}", headers={"Authorization": f"Bearer {stranger_token}"}).status_code
-        == 200
+        == 403
     )
 
     # Owner grants READ to the insider.
@@ -338,13 +344,32 @@ def test_object_graph_traversal_with_acl_filtering(client):
     assert {i["id"] for i in incoming.json()["items"]} == {a}
 
     # Grant B to a third party; the outsider's traversal of A must not leak
-    # B, while the grantee sees it.
+    # B, while the grantee sees it. (2026-09 audit follow-up, P0-2: reading
+    # the traversal root A itself now requires a grant too, since A is
+    # owner-only ACL by default — grant both outsider and grantee READ on
+    # A so the test isolates the *edge-filtering* behaviour it's actually
+    # exercising, not the root-object gate.)
+    outsider_id = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {outsider_token}"}).json()["id"]
     grantee_token = _register_login(client, "graph.grantee")
     grantee_id = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {grantee_token}"}).json()["id"]
+    client.put(
+        f"/api/v1/objects/{a}/acl",
+        headers=H,
+        json={"readers": [outsider_id, grantee_id], "writers": [], "managers": []},
+    )
     client.put(
         f"/api/v1/objects/{b}/acl",
         headers=H,
         json={"readers": [grantee_id], "writers": [], "managers": []},
+    )
+    # C represents the "unrestricted" (to everyone but the grant-holders
+    # under test) node in this fixture — give both outsider and grantee
+    # READ on it too, so the assertions below isolate B's restriction
+    # specifically, not C's now-default owner-only gate.
+    client.put(
+        f"/api/v1/objects/{c}/acl",
+        headers=H,
+        json={"readers": [outsider_id, grantee_id], "writers": [], "managers": []},
     )
     outsider_graph = client.get(
         f"/api/v1/objects/{a}/graph", headers={"Authorization": f"Bearer {outsider_token}"}

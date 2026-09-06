@@ -197,6 +197,7 @@ def list_events(
         department=department,
         organizer=organizer,
         status=status_,
+        owner_user_id=str(user.id),
     )
     try:
         result = ListEventsUseCase(repo).execute(query)
@@ -274,13 +275,19 @@ def create_event(
 
 
 @router.get("/dashboard", response_model=EventsDashboardModel)
-def events_dashboard(repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return GetEventsDashboardUseCase(repo).execute(GetEventsDashboardQuery())
+def events_dashboard(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return GetEventsDashboardUseCase(repo).execute(
+        GetEventsDashboardQuery(owner_user_id=str(user.id))
+    )
 
 
 @router.get("/export")
 def export_events(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     """Export events as CSV."""
     import csv
@@ -288,7 +295,7 @@ def export_events(
 
     from app.domain.value_objects.enums import ObjectType
 
-    events = repo.find_by_type(ObjectType.EVENT)
+    events = repo.find_by_type(ObjectType.EVENT, owner_user_id=str(user.id))
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["title", "event_type", "start_date", "end_date", "venue", "created_at"])

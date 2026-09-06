@@ -239,11 +239,12 @@ def _unprocessable(exc: Exception) -> HTTPException:
 @router.get("/dashboard")
 def productivity_dashboard(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     as_of: str | None = Query(None),
 ):
     try:
         out = GetProductivityDashboardUseCase(repo).execute(
-            GetProductivityDashboardQuery(as_of=as_of)
+            GetProductivityDashboardQuery(as_of=as_of, owner_user_id=str(user.id))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -253,6 +254,7 @@ def productivity_dashboard(
 @router.get("/calendar")
 def calendar_feed(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     date_from: str = Query(...),
     date_to: str = Query(...),
     sources: str | None = Query(None, description="CSV of source codes"),
@@ -260,7 +262,7 @@ def calendar_feed(
     source_tuple = tuple(s.strip() for s in sources.split(",") if s.strip()) if sources else None
     try:
         out = GetCalendarFeedUseCase(repo).execute(
-            GetCalendarFeedQuery(date_from=date_from, date_to=date_to, sources=source_tuple)
+            GetCalendarFeedQuery(date_from=date_from, date_to=date_to, sources=source_tuple, owner_user_id=str(user.id))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -270,15 +272,17 @@ def calendar_feed(
 @router.get("/reminders")
 def reminders(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     as_of: str | None = Query(None),
 ):
-    out = GetRemindersUseCase(repo).execute(GetRemindersQuery(as_of=as_of))
+    out = GetRemindersUseCase(repo).execute(GetRemindersQuery(as_of=as_of, owner_user_id=str(user.id)))
     return output_dict(out)
 
 
 @router.get("/search")
 def productivity_search(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     q: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
@@ -297,6 +301,7 @@ def productivity_search(
                 category=category,
                 source=source,
                 limit=limit,
+                owner_user_id=str(user.id),
             )
         )
     except ValidationError as exc:
@@ -323,6 +328,7 @@ def refresh_notifications(
 @router.get("/tasks")
 def list_tasks(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
@@ -347,6 +353,7 @@ def list_tasks(
                 overdue=overdue,
                 due_from=due_from,
                 due_to=due_to,
+                owner_user_id=str(user.id),
             )
         )
     except ValidationError as exc:
@@ -416,6 +423,7 @@ def delete_task(task_id: str, repo: SQLAlchemyObjectRepository = Depends(_reposi
 @router.get("/calendar-entries")
 def list_calendar_entries(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
@@ -432,6 +440,7 @@ def list_calendar_entries(
                 category=category,
                 date_from=date_from,
                 date_to=date_to,
+                owner_user_id=str(user.id),
             )
         )
     except ValidationError as exc:
@@ -503,6 +512,7 @@ def delete_calendar_entry(entry_id: str, repo: SQLAlchemyObjectRepository = Depe
 @router.get("/notifications")
 def list_notifications(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
@@ -521,6 +531,7 @@ def list_notifications(
                 priority=priority,
                 category=category,
                 source_module=source_module,
+                owner_user_id=str(user.id),
             )
         )
     except ValidationError as exc:

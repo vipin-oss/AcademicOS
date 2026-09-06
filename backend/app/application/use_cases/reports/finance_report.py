@@ -235,5 +235,5 @@ class GetFinanceReportUseCase:
 
     def execute(self, query: GetFinanceReportQuery) -> ReportView:
         return build_finance_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

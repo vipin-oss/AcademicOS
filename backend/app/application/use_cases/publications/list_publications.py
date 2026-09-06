@@ -83,9 +83,12 @@ class ListPublicationsUseCase:
             and query.status is None
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.PUBLICATION)
+            total_count = self._repository.count(
+                object_type=ObjectType.PUBLICATION, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.PUBLICATION,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="id",
@@ -108,7 +111,54 @@ class ListPublicationsUseCase:
                 page_size=query.page_size,
             )
 
-        publications = self._repository.find_by_type(ObjectType.PUBLICATION)
+        # 2026-09 audit follow-up (P1): a year-only filter is backed by the
+        # materialized, indexed search_year column — same SQL-paginated
+        # shape as the plain path above, instead of loading every
+        # PUBLICATION row to filter in Python. Falls through to the
+        # general slow path for any other filter combination.
+        year_only = (
+            query.year is not None
+            and not (query.q or "").strip()
+            and query.object_id is None
+            and query.publication_type is None
+            and query.quartile is None
+            and query.pipeline_stage is None
+            and query.status is None
+        )
+        if year_only:
+            total_count = self._repository.count(
+                object_type=ObjectType.PUBLICATION, owner_user_id=query.owner_user_id,
+                search_year=query.year,
+            )
+            page = self._repository.find(
+                object_type=ObjectType.PUBLICATION,
+                owner_user_id=query.owner_user_id,
+                search_year=query.year,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="id",
+                order="asc",
+            )
+            all_ids = []
+            for pub in page:
+                all_ids.extend(linked_target_ids(pub))
+            linked_by_id = {
+                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+            }
+            items = [
+                PublicationOutput.from_domain(pub, [], linked_by_id=linked_by_id)
+                for pub in page
+            ]
+            return ListPublicationsResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
+        publications = self._repository.find_by_type(
+            ObjectType.PUBLICATION, owner_user_id=query.owner_user_id
+        )
 
         if query.object_id is not None:
             target = str(query.object_id)

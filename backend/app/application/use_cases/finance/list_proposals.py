@@ -59,9 +59,12 @@ class ListProposalsUseCase:
             and not (query.financial_year or "").strip()
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.PURCHASE)
+            total_count = self._repository.count(
+                object_type=ObjectType.PURCHASE, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.PURCHASE,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -87,7 +90,9 @@ class ListProposalsUseCase:
                 page_size=query.page_size,
             )
 
-        objects = self._repository.find_by_type(ObjectType.PURCHASE)
+        objects = self._repository.find_by_type(
+            ObjectType.PURCHASE, owner_user_id=query.owner_user_id
+        )
 
         tokens = (query.q or "").strip().casefold().split()
         vendor_tokens = (query.vendor or "").strip().casefold().split()

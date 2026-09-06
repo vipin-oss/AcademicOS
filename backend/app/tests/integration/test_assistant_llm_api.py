@@ -163,7 +163,7 @@ def test_llm_success_flow_over_http(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
 
     captured = _install_llm_chain(
@@ -190,7 +190,7 @@ def test_llm_failure_falls_back_over_http(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
 
     def failing_handler(request: httpx.Request) -> httpx.Response:
@@ -214,7 +214,7 @@ def test_restricted_object_never_reaches_the_llm_over_http(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    public = U.create(OT.DOCUMENT, "Quantum Public", created_by="f:1")
+    public = U.create(OT.DOCUMENT, "Quantum Public", created_by=FAKE_USER)
     secret = U.create(OT.DOCUMENT, "Quantum Secret", created_by="f:2")
     secret.set_metadata(
         MetadataEntry(
@@ -244,7 +244,7 @@ def test_citations_over_http_reload_and_follow_up(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
 
     captured = _install_llm_chain(
@@ -279,7 +279,7 @@ def test_restricted_object_never_cited_over_http(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    public = U.create(OT.DOCUMENT, "Quantum Public", created_by="f:1")
+    public = U.create(OT.DOCUMENT, "Quantum Public", created_by=FAKE_USER)
     secret = U.create(OT.DOCUMENT, "Quantum Secret", created_by="f:2")
     secret.set_metadata(
         MetadataEntry(
@@ -311,7 +311,7 @@ def test_ask_stream_sse_over_http(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
     _install_llm_chain(
         lambda request: httpx.Response(
@@ -384,7 +384,7 @@ def test_review_workflow_sync_and_stream(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
 
     # Enable the review gate for this test (the route reads settings).
@@ -469,7 +469,7 @@ def test_review_duplicate_actions_and_unknown_404(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
     original = config_mod.settings.assistant_review_enabled
     config_mod.settings.assistant_review_enabled = True
@@ -535,7 +535,7 @@ def test_model_selection_over_http_pin_override_invalid(harness):
     from app.domain.entities.object import UniversalObject as U
     from app.domain.value_objects.enums import ObjectType as OT
 
-    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by="f:1")
+    doc = U.create(OT.DOCUMENT, "Quantum Paper", created_by=FAKE_USER)
     _seed(harness, doc)
 
     captured = {"models": []}

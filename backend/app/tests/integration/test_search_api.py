@@ -162,7 +162,7 @@ def test_commit_to_searchable_and_delete_to_unsearchable(harness):
 
     # A COMPLETED session + one awaiting item with a reviewed proposal.
     session_obj = UniversalObject.create(
-        ObjectType.INTAKE_SESSION, "seed", created_by="intake",
+        ObjectType.INTAKE_SESSION, "seed", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(_entry(KEY_INTAKE_STATUS, IntakeSessionStatus.COMPLETED.value),)
@@ -173,7 +173,7 @@ def test_commit_to_searchable_and_delete_to_unsearchable(harness):
     session_obj.pop_domain_events()
     repo.save(session_obj)
     item = UniversalObject.create(
-        ObjectType.INTAKE_ITEM, "seed.pdf", created_by="intake",
+        ObjectType.INTAKE_ITEM, "seed.pdf", created_by="obj:user:test-user-0001",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=(

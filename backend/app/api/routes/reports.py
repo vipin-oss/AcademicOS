@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.domain.entities.object import UniversalObject
 from app.api.mappers.reports_mapper import (
     catalogue_response,
     dashboard_response,
@@ -127,10 +128,13 @@ def reports_catalogue():
 
 
 @router.get("/dashboard")
-def reports_dashboard(repo: SQLAlchemyObjectRepository = Depends(_repository)):
+def reports_dashboard(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
     try:
         return dashboard_response(
-            GetReportsDashboardUseCase(repo).execute(GetReportsDashboardQuery())
+            GetReportsDashboardUseCase(repo).execute(GetReportsDashboardQuery(owner_user_id=str(user.id)))
         )
     except ValidationError as exc:
         raise _unprocessable(exc) from exc
@@ -139,11 +143,12 @@ def reports_dashboard(repo: SQLAlchemyObjectRepository = Depends(_repository)):
 @router.get("/export")
 def export_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     kind: str = Query(...),
     format: str = Query(...),
     params: dict = Depends(_filter_params),
 ):
-    query = to_export_query(kind=kind, format=format, params=params)
+    query = to_export_query(kind=kind, format=format, params=params, owner_user_id=str(user.id))
     try:
         result = ExportReportUseCase(repo).execute(query)
     except ObjectNotFoundError as exc:
@@ -163,99 +168,108 @@ def export_report(
 @router.get("/publications")
 def publications_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetPublicationsReportUseCase(repo),
-        GetPublicationsReportQuery(filters=to_report_filters(params=params)),
+        GetPublicationsReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/research")
 def research_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetResearchReportUseCase(repo),
-        GetResearchReportQuery(filters=to_report_filters(params=params)),
+        GetResearchReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/faculty")
 def faculty_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetFacultyReportUseCase(repo),
-        GetFacultyReportQuery(filters=to_report_filters(params=params)),
+        GetFacultyReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/students")
 def students_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetStudentsReportUseCase(repo),
-        GetStudentsReportQuery(filters=to_report_filters(params=params)),
+        GetStudentsReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/teaching")
 def teaching_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetTeachingReportUseCase(repo),
-        GetTeachingReportQuery(filters=to_report_filters(params=params)),
+        GetTeachingReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/finance")
 def finance_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetFinanceReportUseCase(repo),
-        GetFinanceReportQuery(filters=to_report_filters(params=params)),
+        GetFinanceReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/events")
 def events_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetEventsReportUseCase(repo),
-        GetEventsReportQuery(filters=to_report_filters(params=params)),
+        GetEventsReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/committees")
 def committees_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetCommitteesReportUseCase(repo),
-        GetCommitteesReportQuery(filters=to_report_filters(params=params)),
+        GetCommitteesReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
 @router.get("/analytics")
 def analytics_report(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     params: dict = Depends(_filter_params),
 ):
     return _run(
         GetAnalyticsReportUseCase(repo),
-        GetAnalyticsReportQuery(filters=to_report_filters(params=params)),
+        GetAnalyticsReportQuery(filters=to_report_filters(params=params, owner_user_id=str(user.id))),
     )
 
 
@@ -269,8 +283,8 @@ def academic_cv_report(
     from app.application.use_cases.reports.academic_cv import build_academic_cv
     from app.api.mappers.reports_mapper import to_report_filters
 
-    filters = to_report_filters(params=params)
     user_id = str(user.id)
+    filters = to_report_filters(params=params, owner_user_id=user_id)
     try:
         view = build_academic_cv(repo, filters, user_id=user_id)
         return report_response(view)
@@ -300,8 +314,8 @@ def export_academic_cv(
             detail=f"Unknown format '{format}'. Expected: csv, xlsx, pdf",
         )
 
-    filters = to_report_filters(params=params)
     user_id = str(user.id)
+    filters = to_report_filters(params=params, owner_user_id=user_id)
     try:
         view = build_academic_cv(repo, filters, user_id=user_id)
         exporter, media_type, extension = EXPORTERS[fmt]

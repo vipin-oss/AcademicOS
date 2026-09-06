@@ -66,8 +66,18 @@ class InMemoryObjectRepository(ObjectRepository):
     def list(self) -> list[UniversalObject]:
         return list(self._store.values())
 
-    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
-        return [o for o in self._store.values() if o.object_type == object_type]
+    def find_by_type(
+        self, object_type: ObjectType, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            o
+            for o in self._store.values()
+            if o.object_type == object_type
+            and (
+                owner_user_id is None
+                or (o.audit is not None and o.audit.created_by == owner_user_id)
+            )
+        ]
 
     def find_by_status(self, status):
         return [o for o in self._store.values() if o.status == status]

@@ -165,6 +165,38 @@ def test_object_save_stamps_defaults(db) -> None:
             "SELECT tenant_id, owner_user_id FROM objects WHERE id = 'obj:document:m3save'"
         )
     ).fetchone()
+    # tenant_id enforcement is still deferred to M15 (multi-tenancy), so it
+    # stays at the column default. owner_user_id is no longer a dead
+    # tenancy-stamp column, though: the 2026-09 audit follow-up (P0-1, the
+    # cross-user list-endpoint leak) wires save() to stamp it from
+    # audit.created_by, since list/count/find_by_type now filter on it for
+    # per-user isolation. A row created with no audit trail at all (no
+    # created_by) still falls back to the "default" column default —
+    # covered by test_object_save_without_audit_keeps_default below.
+    assert row is not None and row[0] == "default" and row[1] == "u:1"
+
+
+def test_object_save_without_audit_keeps_default(db) -> None:
+    """An object saved with no audit trail keeps the tenancy-stamp default
+    rather than writing an empty/None owner_user_id (never a silent NULL)."""
+    from app.domain.entities.object import UniversalObject
+    from app.domain.value_objects.enums import ObjectStatus, ObjectType
+    from app.domain.value_objects.object_id import ObjectId
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    obj = UniversalObject.create(
+        ObjectType.DOCUMENT, "No Audit Doc", created_by="", status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:document:m3noaudit"),
+    )
+    SQLAlchemyObjectRepository(db).save(obj)
+
+    row = db.execute(
+        sqlalchemy.text(
+            "SELECT tenant_id, owner_user_id FROM objects WHERE id = 'obj:document:m3noaudit'"
+        )
+    ).fetchone()
     assert row is not None and row[0] == "default" and row[1] == "default"
 
 

@@ -11,3 +11,4 @@ class ListAssetRegisterQuery:
     q: str | None = None          # token-AND over item_name/asset_id/serial/location
     category: str | None = None
     status: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

@@ -291,5 +291,5 @@ class GetFacultyReportUseCase:
 
     def execute(self, query: GetFacultyReportQuery) -> ReportView:
         return build_faculty_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

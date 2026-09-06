@@ -157,6 +157,59 @@ def test_list_search_and_filters(client):
     assert client.get(f"{API}/faculty", params={"page": 0}).status_code == 422
 
 
+def test_list_faculty_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /faculty must be scoped to the
+    caller, on both the plain (SQL fast-path) and filtered (department
+    -scoped, slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-faculty-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-faculty-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _faculty(
+        client, name="Alice's private record", employee_id="EMP-ALC-01",
+        faculty_code="ALC-CODE-01",
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    faculty_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _faculty(
+        client, name="Bob's private record", employee_id="EMP-BOB-01",
+        faculty_code="BOB-CODE-01",
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    faculty_b_id = resp_b.json()["id"]
+
+    listing_b = client.get(f"{API}/faculty").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert faculty_b_id in ids_b
+    assert faculty_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/faculty").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert faculty_a_id in ids_a
+    assert faculty_b_id not in ids_a
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/faculty", params={"department": "physics"}).json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert faculty_a_id not in filtered_ids_b
+
+
 def test_get_enriched_workspace_and_cross_module_lenses(client):
     """The money test: build the graph through FROZEN modules' own APIs."""
     faculty = _faculty(client).json()

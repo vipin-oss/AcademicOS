@@ -20,12 +20,16 @@ from app.application.dtos.reports import (
 from app.application.queries.export_report import ExportReportQuery
 
 
-def to_report_filters(*, params: dict) -> ReportFilters:
+def to_report_filters(*, params: dict, owner_user_id: str | None = None) -> ReportFilters:
     """Translate raw query params to the boundary ``ReportFilters``.
 
     ``year`` arrives as a string; non-integer values surface as ValidationError
     on the boundary validator (422), so only the int-or-None normalisation
     happens here — consistent with the events list year param.
+
+    ``owner_user_id`` is the requesting principal (security hardening,
+    Phase 1) — never client-suppliable via ``params``; every route passes
+    it explicitly from the authenticated session.
     """
     year_raw = params.get("year")
     year: int | None = None
@@ -45,11 +49,14 @@ def to_report_filters(*, params: dict) -> ReportFilters:
         department=params.get("department"),
         event_id=params.get("event_id"),
         committee_id=params.get("committee_id"),
+        owner_user_id=owner_user_id,
     )
 
 
-def to_export_query(*, kind: str, format: str, params: dict) -> ExportReportQuery:
-    return ExportReportQuery(kind=kind, format=format, filters=to_report_filters(params=params))
+def to_export_query(*, kind: str, format: str, params: dict, owner_user_id: str | None = None) -> ExportReportQuery:
+    return ExportReportQuery(
+        kind=kind, format=format, filters=to_report_filters(params=params, owner_user_id=owner_user_id)
+    )
 
 
 def dashboard_response(out: ReportsDashboard) -> dict:

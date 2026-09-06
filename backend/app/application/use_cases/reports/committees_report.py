@@ -239,5 +239,5 @@ class GetCommitteesReportUseCase:
 
     def execute(self, query: GetCommitteesReportQuery) -> ReportView:
         return build_committees_report(
-            self._repository, Snapshot(self._repository), query.filters
+            self._repository, Snapshot(self._repository, user_id=query.filters.owner_user_id), query.filters
         )

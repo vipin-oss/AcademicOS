@@ -13,3 +13,4 @@ class ProductivitySearchQuery:
     category: str | None = None
     source: str | None = None  # tasks | notifications | calendar
     limit: int = 30
+    owner_user_id: str | None = None

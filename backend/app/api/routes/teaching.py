@@ -399,10 +399,11 @@ def _handle_common(exc: Exception) -> HTTPException:
 def teaching_dashboard(
     attendance_threshold: float = Query(75.0, ge=0, le=100),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         dashboard = GetTeachingDashboardUseCase(repo).execute(
-            GetTeachingDashboardQuery(attendance_threshold=attendance_threshold)
+            GetTeachingDashboardQuery(attendance_threshold=attendance_threshold, owner_user_id=str(user.id))
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -424,6 +425,7 @@ def list_classes(
         None, description="lens: classes this Object is linked to (student/faculty)"
     ),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListClassesResponseModel:
     try:
         result = ListClassesUseCase(repo).execute(
@@ -435,6 +437,7 @@ def list_classes(
                 session=session or None,
                 status=class_status or None,
                 object_id=ObjectId.parse(object_id) if object_id else None,
+                owner_user_id=str(user.id),
             )
         )
     except (ValidationError, ValueError) as exc:
@@ -663,6 +666,7 @@ def record_attendance(
     class_id: str,
     req: RecordAttendanceRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         out = RecordAttendanceUseCase(repo).execute(
@@ -670,7 +674,7 @@ def record_attendance(
                 class_id=ObjectId.parse(class_id),
                 session_date=req.session_date,
                 records=req.records,
-                actor=req.actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -683,6 +687,7 @@ def import_attendance_csv(
     class_id: str,
     req: ImportAttendanceRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         result = ImportAttendanceCsvUseCase(repo).execute(
@@ -690,7 +695,7 @@ def import_attendance_csv(
                 class_id=ObjectId.parse(class_id),
                 session_date=req.session_date,
                 text=req.text,
-                actor=req.actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -728,12 +733,14 @@ def create_assignment_for_class(
     req: CreateAssignmentRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> AssignmentResponseModel:
     try:
         out = CreateAssignmentUseCase(repo).execute(
             CreateAssignmentCommand(
                 input=m.to_create_assignment_input(
-                    body=req.model_dump(), class_id=ObjectId.parse(class_id)
+                    body={**req.model_dump(), "uploaded_by": str(user.id)},
+                    class_id=ObjectId.parse(class_id),
                 )
             )
         )
@@ -778,6 +785,7 @@ def list_assignments(
     object_id: str | None = Query(None, description="lens: assignments of this Class"),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListAssignmentsResponseModel:
     try:
         result = ListAssignmentsUseCase(repo).execute(
@@ -790,6 +798,7 @@ def list_assignments(
                 visibility=visibility or None,
                 status=assignment_status or None,
                 object_id=ObjectId.parse(object_id) if object_id else None,
+                owner_user_id=str(user.id),
             )
         )
     except (ValidationError, ValueError) as exc:
@@ -962,11 +971,11 @@ def submit_to_assignment(
     assignment_id: str,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
     *,
     student_id: str = Form(...),
     comments: str | None = Form(None),
     submitted_at: str | None = Form(None),
-    actor: str = Form("system"),
     file: UploadFile | None = File(None),
 ) -> SubmissionResponseModel:
     content = file.file.read() if file is not None else None
@@ -986,7 +995,7 @@ def submit_to_assignment(
                 mime_type=mime_type,
                 comments=comments,
                 submitted_at=submitted_at,
-                actor=actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -1022,6 +1031,7 @@ def list_submissions(
     page_size: int = Query(50, ge=1, le=100),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListSubmissionsResponseModel:
     try:
         result = ListSubmissionsUseCase(repo).execute(
@@ -1031,6 +1041,7 @@ def list_submissions(
                 state=state or None,
                 page=page,
                 page_size=page_size,
+                owner_user_id=str(user.id),
             )
         )
     except (ValidationError, ValueError) as exc:

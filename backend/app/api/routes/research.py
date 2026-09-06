@@ -406,10 +406,11 @@ def _conflict(exc: Exception) -> HTTPException:
 def research_dashboard(
     upcoming_limit: int = Query(10, ge=1, le=50),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ResearchDashboardModel:
     try:
         out = GetResearchDashboardUseCase(repo).execute(
-            GetResearchDashboardQuery(upcoming_limit=upcoming_limit)
+            GetResearchDashboardQuery(upcoming_limit=upcoming_limit, owner_user_id=str(user.id))
         )
     except (ValidationError, ValueError) as exc:
         raise _unprocessable(exc)
@@ -426,11 +427,12 @@ def list_agencies(
     q: str | None = None,
     agency_status: str | None = Query(None, alias="status"),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListAgenciesResponseModel:
     try:
         result = ListAgenciesUseCase(repo).execute(
             ListAgenciesQuery(page=page, page_size=page_size, q=q or None,
-                              status=agency_status or None)
+                              status=agency_status or None, owner_user_id=str(user.id))
         )
     except (ValidationError, ValueError) as exc:
         raise _unprocessable(exc)
@@ -527,6 +529,7 @@ def list_projects(
         None, description="restrict to projects linked to this Object id"
     ),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListProjectsResponseModel:
     try:
         result = ListProjectsUseCase(repo).execute(
@@ -540,6 +543,7 @@ def list_projects(
                 year=year,
                 department=department or None,
                 object_id=ObjectId.parse(object_id) if object_id else None,
+                owner_user_id=str(user.id),
             )
         )
     except (ValidationError, ValueError) as exc:
@@ -729,6 +733,7 @@ def list_grants(
     agency_id: str | None = Query(None, description="grants of this agency"),
     grant_status: str | None = Query(None, alias="status"),
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> ListGrantsResponseModel:
     try:
         result = ListGrantsUseCase(repo).execute(
@@ -739,6 +744,7 @@ def list_grants(
                 project_id=ObjectId.parse(project_id) if project_id else None,
                 agency_id=ObjectId.parse(agency_id) if agency_id else None,
                 status=grant_status or None,
+                owner_user_id=str(user.id),
             )
         )
     except (ValidationError, ValueError) as exc:
@@ -910,6 +916,7 @@ def delete_expenditure(
 @router.get("/export")
 def export_projects(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     """Export research projects as CSV."""
     import csv
@@ -917,7 +924,7 @@ def export_projects(
 
     from app.domain.value_objects.enums import ObjectType
 
-    projects = repo.find_by_type(ObjectType.RESEARCH_PROJECT)
+    projects = repo.find_by_type(ObjectType.RESEARCH_PROJECT, owner_user_id=str(user.id))
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["title", "status", "start_date", "end_date", "budget", "created_at"])

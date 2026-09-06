@@ -302,6 +302,7 @@ def _unprocessable(exc: Exception) -> HTTPException:
 @router.get("", response_model=ListCommitteesResponseModel)
 def list_committees(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
@@ -320,6 +321,7 @@ def list_committees(
         status=status_,
         chairperson=chairperson,
         meeting_year=meeting_year,
+        owner_user_id=str(user.id),
     )
     try:
         result = ListCommitteesUseCase(repo).execute(query)
@@ -358,10 +360,11 @@ def create_committee(
 @router.get("/dashboard", response_model=CommitteesDashboardModel)
 def committees_dashboard(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
     upcoming_limit: int = Query(10, ge=1, le=50),
 ):
     dashboard = GetCommitteesDashboardUseCase(repo).execute(
-        GetCommitteesDashboardQuery(upcoming_limit=upcoming_limit)
+        GetCommitteesDashboardQuery(upcoming_limit=upcoming_limit, owner_user_id=str(user.id))
     )
     return CommitteesDashboardModel(**dashboard.__dict__)
 
@@ -510,6 +513,7 @@ def delete_action_item(
 @router.get("/export")
 def export_committees(
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> Response:
     """Export committees as CSV."""
     import csv
@@ -517,7 +521,7 @@ def export_committees(
 
     from app.domain.value_objects.enums import ObjectType
 
-    committees = repo.find_by_type(ObjectType.COMMITTEE)
+    committees = repo.find_by_type(ObjectType.COMMITTEE, owner_user_id=str(user.id))
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["name", "description", "department", "constitution_date", "created_at"])

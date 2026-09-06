@@ -71,7 +71,7 @@ def world():
     repo.save(pub)
     grant.add_relationship(pub.id, RelationshipKind.PRODUCES, actor="system")
     repo.save(grant)
-    svc = CrossDomainService(repo, GraphRuntimeService(repo, ObjectPermissionEvaluator()), ObjectPermissionEvaluator())
+    svc = CrossDomainService(repo, GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False)), ObjectPermissionEvaluator(deny_by_default=False))
     try:
         yield {"repo": repo, "svc": svc, "user": user, "grant": grant, "pub": pub}
     finally:

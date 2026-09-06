@@ -35,7 +35,7 @@ class ProductivitySearchUseCase:
         if source is not None and source not in ("tasks", "notifications", "calendar"):
             raise ValidationError("source must be one of: tasks, notifications, calendar.")
         today = today_iso()
-        snapshot = ProductivitySnapshot(self._repository)
+        snapshot = ProductivitySnapshot(self._repository, owner_user_id=query.owner_user_id)
         hits: list[SearchHitOutput] = []
 
         priority = (query.priority or "").strip().lower() or None

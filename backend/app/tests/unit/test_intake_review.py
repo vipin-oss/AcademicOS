@@ -63,8 +63,18 @@ class InMemoryObjectRepository(ObjectRepository):
     def delete(self, id: ObjectId) -> None:
         self._store.pop(id, None)
 
-    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
-        return [o for o in self._store.values() if o.object_type == object_type]
+    def find_by_type(
+        self, object_type: ObjectType, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            o
+            for o in self._store.values()
+            if o.object_type == object_type
+            and (
+                owner_user_id is None
+                or (o.audit is not None and o.audit.created_by == owner_user_id)
+            )
+        ]
 
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
         return [o for o in self._store.values() if o.status == status]
@@ -114,6 +124,7 @@ class InMemoryObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
     ) -> int:
         return len(
             self.find(
@@ -121,6 +132,7 @@ class InMemoryObjectRepository(ObjectRepository):
                 status=status,
                 metadata_key=metadata_key,
                 metadata_value=metadata_value,
+                owner_user_id=owner_user_id,
             )
         )
 

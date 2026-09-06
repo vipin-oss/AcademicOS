@@ -18,9 +18,15 @@ class ListBudgetLinesUseCase:
         self._repository = repository
 
     def execute(self, query: ListBudgetLinesQuery) -> ListBudgetsResult:
-        projects = self._repository.find_by_type(ObjectType.RESEARCH_PROJECT)
+        projects = self._repository.find_by_type(
+            ObjectType.RESEARCH_PROJECT, owner_user_id=query.owner_user_id
+        )
         lines = [
-            BudgetLine(**budget_line_for_project(self._repository, project))
+            BudgetLine(
+                **budget_line_for_project(
+                    self._repository, project, owner_user_id=query.owner_user_id
+                )
+            )
             for project in projects
         ]
         lines.sort(key=lambda line: (line.title.casefold(), line.project_id))

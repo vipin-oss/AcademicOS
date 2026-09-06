@@ -266,6 +266,57 @@ def test_event_full_create_get_and_enrichment(client):
     assert row["stats"]["certificates"] == 1
 
 
+def test_list_events_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /events must be scoped to the
+    caller. Previously the list use case filtered only by object_type, so
+    every authenticated user saw every other user's events. Two principals,
+    two private events: each must see only their own, on both the plain
+    (SQL fast-path) and filtered (slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-evt-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-evt-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _event(client, title="Alice's private conference", event_code="EVT-A-001")
+    assert resp_a.status_code == 201, resp_a.text
+    event_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _event(client, title="Bob's private workshop", event_code="EVT-B-001")
+    assert resp_b.status_code == 201, resp_b.text
+    event_b_id = resp_b.json()["id"]
+
+    # Plain (unfiltered, SQL fast-path) listing.
+    listing_b = client.get(f"{API}/events").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert event_b_id in ids_b
+    assert event_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get(f"{API}/events").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert event_a_id in ids_a
+    assert event_b_id not in ids_a
+
+    # Filtered (slow-path) listing — same guarantee under a query param.
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get(f"{API}/events?year=2026").json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert event_a_id not in filtered_ids_b
+
+
 def test_event_duplicate_guards_and_reference_validation(client):
     created = _event(client)
     assert created.status_code == 201, created.text

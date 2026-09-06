@@ -63,9 +63,12 @@ class ListCommitteesUseCase:
             and query.meeting_year is None
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.COMMITTEE)
+            total_count = self._repository.count(
+                object_type=ObjectType.COMMITTEE, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.COMMITTEE,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -91,7 +94,9 @@ class ListCommitteesUseCase:
                 page_size=query.page_size,
             )
 
-        objects = self._repository.find_by_type(ObjectType.COMMITTEE)
+        objects = self._repository.find_by_type(
+            ObjectType.COMMITTEE, owner_user_id=query.owner_user_id
+        )
 
         tokens = (query.q or "").strip().casefold().split()
         chair_tokens = (query.chairperson or "").strip().casefold().split()

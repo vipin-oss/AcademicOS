@@ -39,7 +39,11 @@ class ListTasksUseCase:
         if query.page < 1 or query.page_size < 1 or query.page_size > 100:
             raise ValidationError("Invalid pagination (page >= 1, 1 <= page_size <= 100).")
         today = today_iso()
-        rows = personal_tasks(self._repository.find_by_type(ObjectType.TASK))
+        rows = personal_tasks(
+            self._repository.find_by_type(
+                ObjectType.TASK, owner_user_id=query.owner_user_id
+            )
+        )
 
         def keep(obj) -> bool:
             meta = _meta(obj)

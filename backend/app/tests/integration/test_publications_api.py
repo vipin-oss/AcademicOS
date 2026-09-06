@@ -167,6 +167,59 @@ def test_create_then_get_publication(client):
     assert pub_rows[0]["object_type"] == "publication"
 
 
+def test_list_publications_never_leaks_across_users(client):
+    """2026-09 audit follow-up (P0-1): GET /publications must be scoped to
+    the caller, on both the plain (SQL fast-path) and filtered (year-scoped,
+    slow-path) branches.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="alice",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:alice-pub-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER,
+        title="bob",
+        created_by="system",
+        status=ObjectStatus.ACTIVE,
+        object_id=ObjectId("obj:user:bob-pub-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _create(
+        client, title="Alice's private paper", doi="10.1038/alice-0001"
+    )
+    assert resp_a.status_code == 201, resp_a.text
+    pub_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _create(
+        client, title="Bob's private paper", doi="10.1038/bob-0001"
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    pub_b_id = resp_b.json()["id"]
+
+    # Plain (unfiltered, SQL fast-path) listing.
+    listing_b = client.get("/api/v1/publications").json()
+    ids_b = {item["id"] for item in listing_b["items"]}
+    assert pub_b_id in ids_b
+    assert pub_a_id not in ids_b
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get("/api/v1/publications").json()
+    ids_a = {item["id"] for item in listing_a["items"]}
+    assert pub_a_id in ids_a
+    assert pub_b_id not in ids_a
+
+    # Filtered (slow-path) listing — same guarantee under a query param.
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    filtered_b = client.get("/api/v1/publications?year=2025").json()
+    filtered_ids_b = {item["id"] for item in filtered_b["items"]}
+    assert pub_a_id not in filtered_ids_b
+
+
 def test_create_with_object_links(client):
     project = _create_object(client).json()
     grant = _create_object(client, object_type="grant", title="Grant G1").json()

@@ -12,3 +12,4 @@ class ListAgenciesQuery:
     page_size: int = 50
     q: str | None = None
     status: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

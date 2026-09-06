@@ -7,3 +7,4 @@ from dataclasses import dataclass
 @dataclass
 class GetCommitteesDashboardQuery:
     upcoming_limit: int = 10
+    owner_user_id: str | None = None

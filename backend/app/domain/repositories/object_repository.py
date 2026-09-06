@@ -16,13 +16,26 @@ from app.domain.value_objects.object_id import ObjectId
 
 class ObjectRepository(Repository[UniversalObject]):
     @abc.abstractmethod
-    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
-        """All Objects of a given type (e.g. every Course in the Space)."""
+    def find_by_type(
+        self, object_type: ObjectType, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        """All Objects of a given type (e.g. every Course in the Space).
+
+        ``owner_user_id``, when given, restricts the result to objects
+        created by that user (per-user isolation — security hardening,
+        Phase 1). Concrete repositories should push this into SQL via the
+        indexed owner_user_id column rather than filtering in Python.
+        """
 
     def find_by_type_for_user(self, object_type: ObjectType, user_id: str) -> list[UniversalObject]:
-        """Objects of a type owned by a specific user (ACL enforcement)."""
-        # Default implementation: filter by created_by in metadata
-        return [obj for obj in self.find_by_type(object_type) if obj.created_by == user_id]
+        """Objects of a type owned by a specific user (ACL enforcement).
+
+        Prefer calling ``find_by_type(type, owner_user_id=user_id)``
+        directly in new code — this method is kept for the existing call
+        site in reports/helpers.py and now delegates to the same
+        SQL-pushed-down filter rather than a Python-side scan.
+        """
+        return self.find_by_type(object_type, owner_user_id=user_id)
 
     @abc.abstractmethod
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
@@ -56,6 +69,7 @@ class ObjectRepository(Repository[UniversalObject]):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
         page: int = 1,
         page_size: int = 0,
         sort_by: str | None = None,
@@ -66,6 +80,12 @@ class ObjectRepository(Repository[UniversalObject]):
         ``page_size=0`` (default) returns every match, preserving the
         historical load-all behaviour exactly. With ``page_size > 0`` the
         result is the requested page.
+
+        ``owner_user_id``, when given, restricts the result to objects
+        whose indexed owner_user_id column matches — the per-user
+        isolation predicate (security hardening, Phase 1). Applied in
+        SQL, so it composes with pagination without loading unauthorized
+        rows.
 
         Ordering: when ``sort_by`` is given, the result is ordered by that
         column (``id``, ``object_type``, ``title``, ``title_ci`` (the
@@ -85,6 +105,7 @@ class ObjectRepository(Repository[UniversalObject]):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
     ) -> int:
         """Total number of Objects matching the filters (unpaginated).
 

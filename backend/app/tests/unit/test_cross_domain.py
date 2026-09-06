@@ -64,7 +64,7 @@ def world():
     try:
         yield {
             "repo": repo, "user": user, "grant": grant, "pub": pub,
-            "svc": CrossDomainService(repo, GraphRuntimeService(repo, ObjectPermissionEvaluator()), ObjectPermissionEvaluator()),
+            "svc": CrossDomainService(repo, GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False)), ObjectPermissionEvaluator(deny_by_default=False)),
         }
     finally:
         session.close()
@@ -106,7 +106,7 @@ def test_absence_insufficient_evidence_unknown_type(world):
 
 
 def test_absence_deny_all_never_leaks(world):
-    deny = CrossDomainService(world["repo"], GraphRuntimeService(world["repo"], ObjectPermissionEvaluator()), _DenyAll())
+    deny = CrossDomainService(world["repo"], GraphRuntimeService(world["repo"], ObjectPermissionEvaluator(deny_by_default=False)), _DenyAll())
     res = deny.absence(target_type="grant", user=world["user"])
     # no authorized match visible to a denied principal
     assert res.outcome in ("confirmed_absence", "insufficient_evidence")

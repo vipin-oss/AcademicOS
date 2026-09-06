@@ -198,14 +198,14 @@ def enrich_event_output(
 # ---------------------------------------------------------------------------
 # Event collectors used by the dashboard / list use case
 # ---------------------------------------------------------------------------
-def all_events(repository: ObjectRepository) -> list[UniversalObject]:
-    return repository.find_by_type(ObjectType.EVENT)
+def all_events(repository: ObjectRepository, *, owner_user_id: str | None = None) -> list[UniversalObject]:
+    return repository.find_by_type(ObjectType.EVENT, owner_user_id=owner_user_id)
 
 
 # ---------------------------------------------------------------------------
 # PART 9 — Dashboard cards (computed read)
 # ---------------------------------------------------------------------------
-def events_dashboard(repository: ObjectRepository) -> dict[str, int]:
+def events_dashboard(repository: ObjectRepository, *, owner_user_id: str | None = None) -> dict[str, int]:
     upcoming = 0
     completed = 0
     organized = 0
@@ -213,7 +213,7 @@ def events_dashboard(repository: ObjectRepository) -> dict[str, int]:
     certificates = 0
     presentations = 0
     invited_talks = 0
-    for obj in all_events(repository):
+    for obj in all_events(repository, owner_user_id=owner_user_id):
         meta = _meta(obj)
         status = meta.get(KEY_EVENT_STATUS) or "planned"
         if status in UPCOMING_EVENT_STATUSES:

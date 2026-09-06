@@ -35,7 +35,7 @@ class GetTeachingDashboardUseCase:
 
     def execute(self, query: GetTeachingDashboardQuery) -> TeachingDashboard:
         classes = sorted(
-            self._repository.find_by_type(ObjectType.COURSE),
+            self._repository.find_by_type(ObjectType.COURSE, owner_user_id=query.owner_user_id),
             key=lambda c: (c.title.casefold(), str(c.id)),
         )
 

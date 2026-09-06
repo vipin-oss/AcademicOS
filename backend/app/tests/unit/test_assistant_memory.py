@@ -89,10 +89,10 @@ def world(db):
     vectors = FakeVectorRepository()
     embedder = HashingEmbedder()
     search = SearchObjectsUseCase(
-        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(),
+        SQLAlchemySearchRepository(db), repo, ObjectPermissionEvaluator(deny_by_default=False),
         vector_repository=vectors, embedder=embedder,
     )
-    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator())
+    graph = GraphRuntimeService(repo, ObjectPermissionEvaluator(deny_by_default=False))
     retrieval = AssistantRetrievalService(search, graph)
     memory = AssistantMemoryService(repo, retrieval)
 
@@ -350,7 +350,7 @@ def _ask_use_case(world, provider, *, with_memory: bool):
         context_builder=AssistantContextBuilder(),
         prompt_builder=AssistantPromptBuilder(),
         citation_builder=CitationBuilder(),
-        verifier=AnswerVerifier(ObjectPermissionEvaluator()),
+        verifier=AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)),
         memory=world["memory"] if with_memory else None,
     )
 

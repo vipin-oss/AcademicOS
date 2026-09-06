@@ -61,7 +61,7 @@ def test_valid_citations_survive_in_order():
     b = UniversalObject.create(ObjectType.DOCUMENT, "B", created_by="f:1")
     session, repo = _db_with(a, b)
     try:
-        verified = AnswerVerifier(ObjectPermissionEvaluator()).verify(
+        verified = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)).verify(
             [_citation(1, str(a.id)), _citation(2, str(b.id))], repo, _user()
         )
         assert [c.object_id for c in verified] == [str(a.id), str(b.id)]
@@ -76,7 +76,7 @@ def test_deleted_object_citation_is_dropped():
     session, repo = _db_with(a, b)
     try:
         repo.delete(a.id)  # deleted between retrieval and verification
-        verified = AnswerVerifier(ObjectPermissionEvaluator()).verify(
+        verified = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)).verify(
             [_citation(1, str(a.id)), _citation(2, str(b.id))], repo, _user()
         )
         assert [c.object_id for c in verified] == [str(b.id)]
@@ -97,7 +97,7 @@ def test_hidden_object_citation_is_dropped():
     open_doc = UniversalObject.create(ObjectType.DOCUMENT, "Open", created_by="f:1")
     session, repo = _db_with(secret, open_doc)
     try:
-        verified = AnswerVerifier(ObjectPermissionEvaluator()).verify(
+        verified = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)).verify(
             [_citation(1, str(secret.id)), _citation(2, str(open_doc.id))], repo, _user()
         )
         assert [c.object_id for c in verified] == [str(open_doc.id)]  # no leak
@@ -110,7 +110,7 @@ def test_malformed_id_is_dropped():
     a = UniversalObject.create(ObjectType.DOCUMENT, "A", created_by="f:1")
     session, repo = _db_with(a)
     try:
-        verified = AnswerVerifier(ObjectPermissionEvaluator()).verify(
+        verified = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)).verify(
             [_citation(1, "not-an-object-id"), _citation(2, str(a.id))], repo, _user()
         )
         assert [c.object_id for c in verified] == [str(a.id)]
@@ -122,7 +122,7 @@ def test_duplicates_removed_keeping_first():
     a = UniversalObject.create(ObjectType.DOCUMENT, "A", created_by="f:1")
     session, repo = _db_with(a)
     try:
-        verified = AnswerVerifier(ObjectPermissionEvaluator()).verify(
+        verified = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False)).verify(
             [_citation(1, str(a.id)), _citation(2, str(a.id))], repo, _user()
         )
         assert len(verified) == 1
@@ -136,7 +136,7 @@ def test_deterministic_for_same_state():
     b = UniversalObject.create(ObjectType.DOCUMENT, "B", created_by="f:1")
     session, repo = _db_with(a, b)
     try:
-        verifier = AnswerVerifier(ObjectPermissionEvaluator())
+        verifier = AnswerVerifier(ObjectPermissionEvaluator(deny_by_default=False))
         first = verifier.verify(
             [_citation(1, str(a.id)), _citation(2, str(b.id))], repo, _user()
         )

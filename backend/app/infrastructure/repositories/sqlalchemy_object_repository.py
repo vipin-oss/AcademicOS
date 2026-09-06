@@ -75,6 +75,35 @@ _FIND_SORT_COLUMNS = {
 }
 _FIND_ORDERS = ("asc", "desc")
 
+# Performance hardening (P1, 2026-09 audit follow-up): per-object-type map
+# of which metadata key holds the primary date to materialize into the
+# indexed `search_year` column (see SearchYearMixin on ObjectModel).
+# Extend this map to bring the SQL-pushdown year-filter fast path to more
+# domains' year filters.
+_SEARCH_YEAR_SOURCE_KEY: dict[str, str] = {
+    ObjectType.EVENT.value: "start_date",
+    ObjectType.PUBLICATION.value: "year",
+    ObjectType.RESEARCH_PROJECT.value: "start_date",
+}
+
+
+def _extract_search_year(snap) -> int | None:
+    """Best-effort year extraction for the materialized filter column.
+
+    Never raises: a missing, malformed, or out-of-type-map date simply
+    leaves search_year NULL, which means that row is invisible to the SQL
+    year filter and falls back to being covered by the Python-filtered
+    slow path used by callers that don't yet pass search_year (no data
+    loss, just no fast path for it).
+    """
+    key = _SEARCH_YEAR_SOURCE_KEY.get(snap.object_type)
+    if key is None:
+        return None
+    raw = next((m.value for m in snap.metadata if m.key == key), None)
+    if not raw or len(raw) < 4 or not raw[:4].isdigit():
+        return None
+    return int(raw[:4])
+
 
 def _is_lock_contention(exc: OperationalError) -> bool:
     """True ONLY for transient lock contention — never for real errors (I/O,
@@ -250,6 +279,18 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             "metadata_json": [m.to_dict() for m in snap.metadata],
             "audit_json": snap.audit.to_dict() if snap.audit else None,
         }
+        # Security hardening (Phase 1): stamp the indexed owner_user_id
+        # column from the immutable audit.created_by (never
+        # audit.updated_by, so ownership cannot drift across later edits
+        # by other actors, e.g. an admin correction). Falls back to the
+        # tenancy-stamp default when an object genuinely has no audit
+        # trail. This is the column list/count/find_by_type filter on to
+        # enforce per-user isolation — replaces the ad-hoc, per-call
+        # JSON-extraction approach previously used only by
+        # find_by_type_for_user (see that method below).
+        if snap.audit and snap.audit.created_by:
+            values["owner_user_id"] = snap.audit.created_by
+        values["search_year"] = _extract_search_year(snap)
 
         def write() -> None:
             if expected_version is None:
@@ -393,6 +434,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
+        search_year: int | None = None,
         page: int = 1,
         page_size: int = 0,
         sort_by: str | None = None,
@@ -413,6 +456,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             status=status,
             metadata_key=metadata_key,
             metadata_value=metadata_value,
+            owner_user_id=owner_user_id,
+            search_year=search_year,
         )
         if page_size > 0 and sort_by is None:
             # Deterministic pages need a stable order; default to id.
@@ -435,6 +480,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         status: ObjectStatus | None = None,
         metadata_key: str | None = None,
         metadata_value: str | None = None,
+        owner_user_id: str | None = None,
+        search_year: int | None = None,
     ) -> int:
         stmt = self._apply_object_filters(
             select(func.count(ObjectModel.id)),
@@ -442,6 +489,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
             status=status,
             metadata_key=metadata_key,
             metadata_value=metadata_value,
+            owner_user_id=owner_user_id,
+            search_year=search_year,
         )
         return int(self._session.execute(stmt).scalar() or 0)
 
@@ -453,6 +502,8 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         status: ObjectStatus | None,
         metadata_key: str | None,
         metadata_value: str | None,
+        owner_user_id: str | None = None,
+        search_year: int | None = None,
     ):
         """Apply the shared filter predicates to a SELECT (find or count)."""
         if object_type is not None:
@@ -461,6 +512,10 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         if status is not None:
             value = status.value if isinstance(status, ObjectStatus) else status
             stmt = stmt.where(ObjectModel.status == value)
+        if owner_user_id is not None:
+            stmt = stmt.where(ObjectModel.owner_user_id == owner_user_id)
+        if search_year is not None:
+            stmt = stmt.where(ObjectModel.search_year == search_year)
         if metadata_key is not None:
             stmt = self._apply_metadata_filter(
                 stmt, metadata_key=metadata_key, metadata_value=metadata_value
@@ -526,35 +581,26 @@ class SQLAlchemyObjectRepository(ObjectRepository):
         models = self._session.execute(stmt).scalars().all()
         return self._to_domain_many(models)
 
-    def find_by_type(self, object_type: ObjectType) -> list[UniversalObject]:
-        return self.find(object_type=object_type)
+    def find_by_type(
+        self, object_type: ObjectType, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return self.find(object_type=object_type, owner_user_id=owner_user_id)
 
     def find_by_type_for_user(self, object_type: ObjectType, user_id: str) -> list[UniversalObject]:
         """Find objects of a type owned by a specific user (ACL enforcement).
-        
-        Filters by audit.created_by (stored in audit_json), NOT owner_user_id
-        which is always 'default' in the current schema.
+
+        Security hardening (Phase 1): now delegates to the indexed
+        owner_user_id column via find(), which save() keeps in sync with
+        audit.created_by on every write. Previously this ran a bespoke
+        per-call raw-SQL JSON extraction (audit_json->>'created_by') on
+        every invocation — correct, but a duplicated, dialect-branching,
+        unindexed scan living outside the shared filter path. Kept as a
+        method (rather than deleted) since it is already a call site
+        contract used by app/application/use_cases/reports/helpers.py;
+        new code should prefer find_by_type(type, owner_user_id=...)
+        directly.
         """
-        from sqlalchemy import text as sql_text
-        
-        obj_type_value = object_type.value if isinstance(object_type, ObjectType) else object_type
-        
-        # Filter by audit_json.created_by = user_id
-        # Works on both SQLite and PostgreSQL
-        stmt = select(ObjectModel).where(
-            ObjectModel.object_type == obj_type_value,
-        )
-        # Use JSON extraction to filter by audit.created_by
-        if self._session.get_bind().dialect.name == "postgresql":
-            stmt = stmt.where(
-                sql_text("audit_json->>'created_by' = :uid").bindparams(uid=user_id)
-            )
-        else:
-            stmt = stmt.where(
-                sql_text("json_extract(audit_json, '$.created_by') = :uid").bindparams(uid=user_id)
-            )
-        models = self._session.execute(stmt).scalars().all()
-        return self._to_domain_many(models)
+        return self.find_by_type(object_type, owner_user_id=user_id)
 
     def find_by_status(self, status: ObjectStatus) -> list[UniversalObject]:
         return self.find(status=status)

@@ -10,3 +10,4 @@ class GetTeachingDashboardQuery:
     signals across every Class the installation teaches."""
 
     attendance_threshold: float = 75.0
+    owner_user_id: str | None = None

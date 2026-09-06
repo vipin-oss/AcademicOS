@@ -9,3 +9,4 @@ class ListVendorsQuery:
     page: int = 1
     page_size: int = 20
     q: str | None = None  # token-AND haystack (name/GST/PAN/contact)
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

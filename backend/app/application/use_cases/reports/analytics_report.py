@@ -217,5 +217,5 @@ class GetAnalyticsReportUseCase:
 
     def execute(self, query: GetAnalyticsReportQuery) -> ReportView:
         return build_analytics_report(
-            Snapshot(self._repository), self._repository, query.filters
+            Snapshot(self._repository, user_id=query.filters.owner_user_id), self._repository, query.filters
         )

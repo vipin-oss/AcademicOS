@@ -69,9 +69,12 @@ class ListEventsUseCase:
             and not (query.status or "").strip()
         )
         if plain:
-            total_count = self._repository.count(object_type=ObjectType.EVENT)
+            total_count = self._repository.count(
+                object_type=ObjectType.EVENT, owner_user_id=query.owner_user_id
+            )
             page = self._repository.find(
                 object_type=ObjectType.EVENT,
+                owner_user_id=query.owner_user_id,
                 page=query.page,
                 page_size=query.page_size,
                 sort_by="title_ci",
@@ -97,7 +100,61 @@ class ListEventsUseCase:
                 page_size=query.page_size,
             )
 
-        objects = self._repository.find_by_type(ObjectType.EVENT)
+        # 2026-09 audit follow-up (P1): a year-only filter is the single
+        # most common case beyond the plain listing (e.g. "conferences in
+        # 2024") and is now backed by the materialized, indexed
+        # search_year column — same SQL-paginated shape as the plain path
+        # above, instead of loading every EVENT row to filter in Python.
+        # Falls through to the general slow path below for any other
+        # combination of filters (q/type/role/department/organizer/status),
+        # or for events whose year couldn't be extracted at save time.
+        year_only = (
+            (query.year or "").strip()
+            and not (query.q or "").strip()
+            and not (query.event_type or "").strip()
+            and not (query.role or "").strip()
+            and not (query.department or "").strip()
+            and not (query.organizer or "").strip()
+            and not (query.status or "").strip()
+        )
+        if year_only:
+            search_year = int(query.year.strip())
+            total_count = self._repository.count(
+                object_type=ObjectType.EVENT, owner_user_id=query.owner_user_id,
+                search_year=search_year,
+            )
+            page = self._repository.find(
+                object_type=ObjectType.EVENT,
+                owner_user_id=query.owner_user_id,
+                search_year=search_year,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            items = []
+            for obj in page:
+                link_ids = [
+                    rel.target
+                    for rel in obj.relationships
+                    if rel.kind is RelationshipKind.RELATED_TO
+                ]
+                linked_by_id = {
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                }
+                out = EventOutput.from_domain(obj, [], linked_by_id=linked_by_id)
+                enrich_event_output(self._repository, obj, out)
+                items.append(out)
+            return ListEventsResult(
+                items=items,
+                total_count=total_count,
+                page=query.page,
+                page_size=query.page_size,
+            )
+
+        objects = self._repository.find_by_type(
+            ObjectType.EVENT, owner_user_id=query.owner_user_id
+        )
 
         tokens = (query.q or "").strip().casefold().split()
         wanted_type = (query.event_type or "").strip()

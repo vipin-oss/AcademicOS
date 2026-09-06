@@ -7,3 +7,4 @@ from dataclasses import dataclass
 @dataclass
 class GetProductivityDashboardQuery:
     as_of: str | None = None  # testing seam; server defaults to today
+    owner_user_id: str | None = None

@@ -37,7 +37,9 @@ class ListGrantsUseCase:
     def execute(self, query: ListGrantsQuery) -> ListGrantsResult:
         assert_valid_list_grants_query(query)
 
-        grants = self._repository.find_by_type(ObjectType.GRANT)
+        grants = self._repository.find_by_type(
+            ObjectType.GRANT, owner_user_id=query.owner_user_id
+        )
 
         if query.project_id is not None:
             target = str(query.project_id)

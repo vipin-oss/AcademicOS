@@ -31,7 +31,8 @@ class GetResearchDashboardUseCase:
         self._repository = repository
 
     def execute(self, query: GetResearchDashboardQuery) -> ResearchDashboardOutput:
-        projects = self._repository.find_by_type(ObjectType.RESEARCH_PROJECT)
+        owner_user_id = query.owner_user_id
+        projects = self._repository.find_by_type(ObjectType.RESEARCH_PROJECT, owner_user_id=owner_user_id)
 
         def lifecycle(obj) -> str:
             return obj.metadata.get_value(KEY_LIFECYCLE_STATUS) or "draft"
@@ -45,11 +46,11 @@ class GetResearchDashboardUseCase:
             parse_amount(p.metadata.get_value(KEY_BUDGET_UTILIZED)) or 0.0 for p in projects
         )
 
-        grants = self._repository.find_by_type(ObjectType.GRANT)
+        grants = self._repository.find_by_type(ObjectType.GRANT, owner_user_id=owner_user_id)
 
         project_titles = {str(p.id): p.title for p in projects}
         deadlines: list[UpcomingDeadline] = []
-        for milestone in self._repository.find_by_type(ObjectType.PROJECT_MILESTONE):
+        for milestone in self._repository.find_by_type(ObjectType.PROJECT_MILESTONE, owner_user_id=owner_user_id):
             status = milestone.metadata.get_value("milestone_status") or "pending"
             if status == "done":
                 continue

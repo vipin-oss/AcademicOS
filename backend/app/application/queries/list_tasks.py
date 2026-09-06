@@ -16,3 +16,4 @@ class ListTasksQuery:
     overdue: bool | None = None
     due_from: str | None = None
     due_to: str | None = None
+    owner_user_id: str | None = None  # requesting principal (2026-09 audit follow-up)

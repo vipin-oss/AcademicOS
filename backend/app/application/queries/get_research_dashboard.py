@@ -10,3 +10,4 @@ class GetResearchDashboardQuery:
 
     upcoming_limit: int = 10
     overdue_days: int = 0  # 0 = include every pending milestone (overdue first)
+    owner_user_id: str | None = None
