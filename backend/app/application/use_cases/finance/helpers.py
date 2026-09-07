@@ -144,7 +144,7 @@ def proposal_stats(meta: dict[str, str]) -> dict[str, int | float]:
 # Resolution (vendor names, supporting documents, approval meeting)
 # ---------------------------------------------------------------------------
 def resolve_vendors(
-    repository: ObjectRepository, rows: list[dict]
+    repository: ObjectRepository, rows: list[dict], *, owner_user_id: str | None = None
 ) -> dict[str, str]:
     """vendor_id -> vendor title for every row across sections."""
     ids = sorted(
@@ -152,7 +152,7 @@ def resolve_vendors(
     )
     if not ids:
         return {}
-    found = repository.find_by_ids(ids)
+    found = repository.find_by_ids(ids, owner_user_id=owner_user_id)
     return {
         str(obj.id): obj.title
         for obj in found
@@ -161,7 +161,7 @@ def resolve_vendors(
 
 
 def annotate_proposal_sections(
-    repository: ObjectRepository, output: ProposalOutput
+    repository: ObjectRepository, output: ProposalOutput, *, owner_user_id: str | None = None
 ) -> None:
     """In-place: vendor_name + supporting_documents on every section row."""
     all_rows = (
@@ -171,7 +171,7 @@ def annotate_proposal_sections(
         + output.bills
         + output.assets
     )
-    names = resolve_vendors(repository, all_rows)
+    names = resolve_vendors(repository, all_rows, owner_user_id=owner_user_id)
     document_ids = sorted(
         {
             str(raw)
@@ -180,7 +180,7 @@ def annotate_proposal_sections(
         }
     )
     docs_by_id = (
-        {str(doc.id): doc for doc in repository.find_by_ids(document_ids)}
+        {str(doc.id): doc for doc in repository.find_by_ids(document_ids, owner_user_id=owner_user_id)}
         if document_ids
         else {}
     )
@@ -223,8 +223,9 @@ def enrich_proposal_output(
     section row, the resolved PART 2 approval meeting, normalised link-group
     keys, and the computed stats block."""
     meta = _meta(obj)
+    owner_user_id = obj.audit.created_by if obj.audit else None
     output.links = {group: output.links.get(group, []) for group in FINANCE_LINK_GROUPS}
-    annotate_proposal_sections(repository, output)
+    annotate_proposal_sections(repository, output, owner_user_id=owner_user_id)
     output.approval_meeting = resolve_approval_meeting(
         repository, output.approval_meeting_id
     )

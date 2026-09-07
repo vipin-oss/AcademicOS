@@ -90,7 +90,7 @@ class ListAssignmentsUseCase:
         }
         class_by_id = {
             str(c.id): c
-            for c in self._repository.find_by_ids([ObjectId(cid) for cid in class_ids])
+            for c in self._repository.find_by_ids([ObjectId(cid) for cid in class_ids], owner_user_id=query.owner_user_id)
         }
         items = [
             AssignmentOutput.from_domain(

@@ -27,7 +27,7 @@ class ListAssetRegisterUseCase:
         assert_choice(query.status, ASSET_STATUSES, "status")
 
         rows = asset_register_rows(self._repository, owner_user_id=query.owner_user_id)
-        names = resolve_vendors(self._repository, [item.row for item in rows])
+        names = resolve_vendors(self._repository, [item.row for item in rows], owner_user_id=query.owner_user_id)
         for item in rows:
             name = names.get(str(item.row.get("vendor_id") or ""))
             if name is not None:

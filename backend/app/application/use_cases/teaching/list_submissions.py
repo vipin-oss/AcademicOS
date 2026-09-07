@@ -72,7 +72,7 @@ class ListSubmissionsUseCase:
             sid = student_of_submission(raw) if raw is not None else None
             if sid is not None:
                 student_ids.append(sid)
-        student_by_id = {str(s.id): s for s in self._repository.find_by_ids(student_ids)}
+        student_by_id = {str(s.id): s for s in self._repository.find_by_ids(student_ids, owner_user_id=query.owner_user_id)}
 
         items = []
         for out in page_items:

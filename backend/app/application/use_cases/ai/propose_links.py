@@ -254,9 +254,17 @@ class ProposeLinksUseCase:
         for rel in source.relationships:
             if rel.kind is RelationshipKind.SMART_LINK:
                 targets.append(rel.target)
+        # Security hardening (Phase 2): unlike propose()/approve() in this
+        # same class, this read path had no authorization check at all —
+        # find_by_ids() would happily resolve and expose a target's title
+        # even if it belonged to a different owner than the source. Scope
+        # to the source's own owner: legitimate SMART_LINK targets are
+        # always created within the source owner's own data.
         by_id = {
             str(obj.id): obj
-            for obj in self._repository.find_by_ids(targets)
+            for obj in self._repository.find_by_ids(
+                targets, owner_user_id=source.audit.created_by if source.audit else None
+            )
         }
         for target_id in sorted(by_id, key=str):
             target = by_id[target_id]

@@ -128,7 +128,7 @@ class CreateGrantUseCase:
             self._event_publisher.publish(events)
 
         all_ids = [oid for ids in (data.links or {}).values() for oid in ids]
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         out = GrantOutput.from_domain(obj, events, linked_by_id=linked_by_id)
         out.budget = grant_totals(self._repository, obj)
         return out

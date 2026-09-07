@@ -129,7 +129,9 @@ def resolve_members(
     """Denormalise the committee's members against live person Objects."""
     rows = member_rows(obj)
     ids = [str(row.get("faculty_id") or "").strip() for row in rows]
-    by_id = {str(found.id): found for found in repository.find_by_ids(ids)}
+    by_id = {str(found.id): found for found in repository.find_by_ids(
+        ids, owner_user_id=obj.audit.created_by if obj.audit else None
+    )}
     views: list[MemberView] = []
     for row in rows:
         person = by_id.get(str(row.get("faculty_id") or "").strip())

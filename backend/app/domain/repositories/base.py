@@ -38,8 +38,14 @@ class Repository(abc.ABC, Generic[T]):
         """Return the aggregate or ``None`` if it does not exist."""
 
     @abc.abstractmethod
-    def find_by_ids(self, ids: list[ObjectId]) -> list[T]:
-        """Return aggregates for the given ids (missing ids are skipped)."""
+    def find_by_ids(self, ids: list[ObjectId], *, owner_user_id: str | None = None) -> list[T]:
+        """Return aggregates for the given ids (missing ids are skipped).
+
+        ``owner_user_id``, when given, restricts results to aggregates
+        owned by that user (Phase 2 relationship-traversal fix) — see
+        ``SQLAlchemyObjectRepository.find_by_ids`` for the concrete
+        enforcement and rationale.
+        """
 
     @abc.abstractmethod
     def exists(self, id: ObjectId) -> bool:

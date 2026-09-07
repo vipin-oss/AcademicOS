@@ -20,7 +20,8 @@ class GetClassUseCase:
         linked_by_id = {
             str(o.id): o
             for o in self._repository.find_by_ids(
-                [r.target for r in obj.relationships]
+                [r.target for r in obj.relationships],
+                owner_user_id=obj.audit.created_by if obj.audit else None,
             )
         }
         return ClassOutput.from_domain(

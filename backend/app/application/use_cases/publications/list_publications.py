@@ -98,7 +98,7 @@ class ListPublicationsUseCase:
             for pub in page:
                 all_ids.extend(linked_target_ids(pub))
             linked_by_id = {
-                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+                str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
             }
             items = [
                 PublicationOutput.from_domain(pub, [], linked_by_id=linked_by_id)
@@ -143,7 +143,7 @@ class ListPublicationsUseCase:
             for pub in page:
                 all_ids.extend(linked_target_ids(pub))
             linked_by_id = {
-                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+                str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
             }
             items = [
                 PublicationOutput.from_domain(pub, [], linked_by_id=linked_by_id)
@@ -183,7 +183,7 @@ class ListPublicationsUseCase:
         for out in page_items:
             raw = next(p for p in publications if str(p.id) == out.id)
             all_ids.extend(linked_target_ids(raw))
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)}
         items = []
         for out in page_items:
             raw = next(p for p in publications if str(p.id) == out.id)

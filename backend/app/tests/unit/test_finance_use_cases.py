@@ -70,8 +70,20 @@ class InMemoryObjectRepository(ObjectRepository):
     def get_by_id(self, id) -> UniversalObject | None:
         return self._store.get(str(id))
 
-    def find_by_ids(self, ids: list) -> list[UniversalObject]:
-        return [self._store[str(i)] for i in ids if str(i) in self._store]
+    def find_by_ids(
+        self, ids: list, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            self._store[str(i)] for i in ids
+            if str(i) in self._store
+            and (
+                owner_user_id is None
+                or (
+                    self._store[str(i)].audit is not None
+                    and self._store[str(i)].audit.created_by == owner_user_id
+                )
+            )
+        ]
 
     def exists(self, id) -> bool:
         return str(id) in self._store
@@ -207,8 +219,12 @@ def _meta_entries(**pairs: str) -> tuple:
 
 
 def _faculty(repo: InMemoryObjectRepository, title: str) -> UniversalObject:
+    # Phase 2 (relationship-traversal fix): linked entities must share the
+    # same owner ("finance:1") as the proposal that will reference them —
+    # find_by_ids() now scopes enrichment to the referencing object's own
+    # owner, so a mismatched creator here would silently drop the link.
     obj = UniversalObject.create(
-        object_type=ObjectType.FACULTY, title=title, created_by="registrar:1",
+        object_type=ObjectType.FACULTY, title=title, created_by="finance:1",
         status=ObjectStatus.ACTIVE,
     )
     repo.save(obj)
@@ -218,7 +234,7 @@ def _faculty(repo: InMemoryObjectRepository, title: str) -> UniversalObject:
 
 def _document(repo: InMemoryObjectRepository, title: str) -> UniversalObject:
     obj = UniversalObject.create(
-        object_type=ObjectType.DOCUMENT, title=title, created_by="registrar:1",
+        object_type=ObjectType.DOCUMENT, title=title, created_by="finance:1",
         status=ObjectStatus.ACTIVE,
     )
     repo.save(obj)
@@ -230,7 +246,7 @@ def _meeting(repo: InMemoryObjectRepository, title: str) -> UniversalObject:
     from app.domain.value_objects.metadata import Metadata
 
     obj = UniversalObject.create(
-        object_type=ObjectType.MEETING, title=title, created_by="registrar:1",
+        object_type=ObjectType.MEETING, title=title, created_by="finance:1",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=_meta_entries(meeting_number="3", meeting_date="2026-07-28", mode="hybrid")),
     )
@@ -401,7 +417,7 @@ def test_create_proposal_full_enriched_round_trip() -> None:
     document = _document(repo, "Quote A.pdf")
     project = UniversalObject.create(
         object_type=ObjectType.RESEARCH_PROJECT, title="Quantum Sensors",
-        created_by="registrar:1", status=ObjectStatus.ACTIVE,
+        created_by="finance:1", status=ObjectStatus.ACTIVE,
     )
     repo.save(project)
     project.pop_domain_events()
@@ -623,13 +639,13 @@ def test_budget_lines_compose_research_budget_with_procurement_spend() -> None:
     vendor = _make_vendor(repo)
     project = UniversalObject.create(
         object_type=ObjectType.RESEARCH_PROJECT, title="Quantum Sensors",
-        created_by="registrar:1", status=ObjectStatus.ACTIVE,
+        created_by="finance:1", status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=_meta_entries(budget_approved="1000000", budget_utilized="50000")),
     )
     repo.save(project)
     project.pop_domain_events()
     grant = UniversalObject.create(
-        object_type=ObjectType.GRANT, title="SERB Grant", created_by="registrar:1",
+        object_type=ObjectType.GRANT, title="SERB Grant", created_by="finance:1",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(entries=_meta_entries(amount="800000")),
     )
@@ -637,7 +653,7 @@ def test_budget_lines_compose_research_budget_with_procurement_spend() -> None:
     repo.save(grant)
     grant.pop_domain_events()
     installment = UniversalObject.create(
-        object_type=ObjectType.GRANT_INSTALLMENT, title="Installment 1", created_by="registrar:1",
+        object_type=ObjectType.GRANT_INSTALLMENT, title="Installment 1", created_by="finance:1",
         status=ObjectStatus.ACTIVE,
         metadata=Metadata(
             entries=_meta_entries(

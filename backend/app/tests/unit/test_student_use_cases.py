@@ -43,8 +43,20 @@ class InMemoryObjectRepository(ObjectRepository):
     def get_by_id(self, id: ObjectId) -> UniversalObject | None:
         return self._store.get(id)
 
-    def find_by_ids(self, ids: list[ObjectId]) -> list[UniversalObject]:
-        return [self._store[i] for i in ids if i in self._store]
+    def find_by_ids(
+        self, ids: list[ObjectId], *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            self._store[i] for i in ids
+            if i in self._store
+            and (
+                owner_user_id is None
+                or (
+                    self._store[i].audit is not None
+                    and self._store[i].audit.created_by == owner_user_id
+                )
+            )
+        ]
 
     def exists(self, id: ObjectId) -> bool:
         return id in self._store

@@ -47,7 +47,9 @@ class GetMeetingUseCase:
             for raw in (item.get("document_ids") or [])
         ]
         docs_by_id = {
-            str(found.id): found for found in self._repository.find_by_ids(document_ids)
+            str(found.id): found for found in self._repository.find_by_ids(
+                document_ids, owner_user_id=obj.audit.created_by if obj.audit else None
+            )
         }
         for item in output.agenda_items:
             item["supporting_documents"] = [
@@ -63,7 +65,9 @@ class GetMeetingUseCase:
             if entry.get("object_id")
         ]
         people_by_id = {
-            str(found.id): found for found in self._repository.find_by_ids(attendee_ids)
+            str(found.id): found for found in self._repository.find_by_ids(
+                attendee_ids, owner_user_id=obj.audit.created_by if obj.audit else None
+            )
         }
         for entry in output.attendance:
             found = people_by_id.get(str(entry.get("object_id") or ""))

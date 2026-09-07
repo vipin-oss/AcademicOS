@@ -28,7 +28,7 @@ class GetProposalUseCase:
             for rel in obj.relationships
             if rel.kind is RelationshipKind.RELATED_TO
         ]
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         output = ProposalOutput.from_domain(obj, [], linked_by_id=linked_by_id)
         enrich_proposal_output(self._repository, obj, output)
         return output

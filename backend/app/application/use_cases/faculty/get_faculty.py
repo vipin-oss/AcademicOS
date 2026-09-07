@@ -39,7 +39,7 @@ class GetFacultyUseCase:
         # Committee memberships (the edges this module owns) — one batch.
         committee_ids = [rel.target for rel in obj.relationships
                          if rel.kind is RelationshipKind.MEMBER_OF]
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(committee_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(committee_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
 
         out = FacultyOutput.from_domain(obj, [], linked_by_id=linked_by_id)
 

@@ -68,7 +68,8 @@ def research_projects_of_faculty(
     targets: dict[str, UniversalObject] = {
         str(o.id): o
         for o in repository.find_by_ids(
-            [rel.target for rel in obj.relationships if rel.kind in kinds]
+            [rel.target for rel in obj.relationships if rel.kind in kinds],
+            owner_user_id=obj.audit.created_by if obj.audit else None,
         )
     }
     projects: dict[str, UniversalObject] = {}

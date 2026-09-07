@@ -85,7 +85,7 @@ class ListClassesUseCase:
         for out in page_items:
             raw = next(c for c in classes if str(c.id) == out.id)
             all_ids.extend(r.target for r in raw.relationships)
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)}
 
         items = []
         for out in page_items:

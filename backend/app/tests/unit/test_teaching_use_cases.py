@@ -106,8 +106,20 @@ class InMemoryObjectRepository(ObjectRepository):
     def get_by_id(self, id: ObjectId) -> UniversalObject | None:
         return self._store.get(id)
 
-    def find_by_ids(self, ids: list[ObjectId]) -> list[UniversalObject]:
-        return [self._store[i] for i in ids if i in self._store]
+    def find_by_ids(
+        self, ids: list[ObjectId], *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            self._store[i] for i in ids
+            if i in self._store
+            and (
+                owner_user_id is None
+                or (
+                    self._store[i].audit is not None
+                    and self._store[i].audit.created_by == owner_user_id
+                )
+            )
+        ]
 
     def exists(self, id: ObjectId) -> bool:
         return id in self._store
@@ -263,7 +275,10 @@ def storage():
 
 
 def _faculty(repo, title="Dr. Rao"):
-    obj = UniversalObject.create(ObjectType.FACULTY, title, created_by="admin")
+    # Phase 2 (relationship-traversal fix): must share the same owner
+    # ("faculty:1") as the class that will link to it — find_by_ids() now
+    # scopes link resolution to the referencing object's own owner.
+    obj = UniversalObject.create(ObjectType.FACULTY, title, created_by="faculty:1")
     obj.pop_domain_events()
     repo.save(obj)
     return obj

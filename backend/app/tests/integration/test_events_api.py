@@ -317,6 +317,65 @@ def test_list_events_never_leaks_across_users(client):
     assert event_a_id not in filtered_ids_b
 
 
+def test_event_enrichment_never_exposes_a_cross_owner_linked_document(client):
+    """Test 4 (Phase 2, relationship-traversal fix) — a real production
+    relationship path, not just the repository method in isolation.
+
+    Legitimate writes always create same-owner links (Phase 1 stamps
+    created_by from the session on every create), so a cross-owner
+    RELATED_TO edge can't arise through normal API use — which is exactly
+    why it must be tested directly: a defense-in-depth guarantee only
+    matters for the case normal flows don't produce (a bug elsewhere, a
+    migration artifact, a future feature that forgets to check ownership).
+    Alice's event is given a RELATED_TO edge to a document that belongs to
+    Bob. Reading Alice's own event (which she is fully authorized to read)
+    must not surface Bob's document title through the enrichment path.
+    """
+    from app.domain.value_objects.enums import RelationshipKind
+    from app.infrastructure.repositories.sqlalchemy_object_repository import (
+        SQLAlchemyObjectRepository,
+    )
+
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER, title="alice", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:alice-enrich-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER, title="bob", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:bob-enrich-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = _event(client, title="Alice's event", event_code="EVT-ENRICH-A")
+    assert resp_a.status_code == 201, resp_a.text
+    event_a_id = resp_a.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_doc_b = _document(client, title="Bob's Confidential Recommendation Letter")
+    assert "id" in resp_doc_b
+    doc_b_id = resp_doc_b["id"]
+
+    # Simulate the anomalous cross-owner edge directly (no legitimate API
+    # path can create one — that's the point of testing it this way).
+    session = next(app.dependency_overrides[get_db]())
+    repo = SQLAlchemyObjectRepository(session)
+    event_a = repo.get_by_id(ObjectId(event_a_id))
+    event_a.add_relationship(ObjectId(doc_b_id), RelationshipKind.RELATED_TO)
+    event_a.pop_domain_events()
+    repo.save(event_a)
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    got = client.get(f"{API}/events/{event_a_id}")
+    assert got.status_code == 200, got.text
+    body_text = got.text
+    assert "Bob's Confidential Recommendation Letter" not in body_text, (
+        "cross-owner linked document title leaked through event enrichment"
+    )
+    assert doc_b_id not in [
+        link.get("id") for group in got.json().get("links", {}).values() for link in group
+    ]
+
+
 def test_event_duplicate_guards_and_reference_validation(client):
     created = _event(client)
     assert created.status_code == 201, created.text

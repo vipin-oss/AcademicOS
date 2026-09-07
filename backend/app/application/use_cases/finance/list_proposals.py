@@ -78,7 +78,7 @@ class ListProposalsUseCase:
                     if rel.kind is RelationshipKind.RELATED_TO
                 ]
                 linked_by_id = {
-                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)
                 }
                 out = ProposalOutput.from_domain(obj, [], linked_by_id=linked_by_id)
                 enrich_proposal_output(self._repository, obj, out)
@@ -129,7 +129,7 @@ class ListProposalsUseCase:
                 rel.target for rel in obj.relationships
                 if rel.kind is RelationshipKind.RELATED_TO
             ]
-            linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids)}
+            linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)}
             out = ProposalOutput.from_domain(obj, [], linked_by_id=linked_by_id)
             enrich_proposal_output(self._repository, obj, out)
 
@@ -137,6 +137,7 @@ class ListProposalsUseCase:
                 resolve_vendors(
                     self._repository,
                     out.quotations + out.comparative + out.purchase_orders + out.bills,
+                    owner_user_id=query.owner_user_id,
                 ).values()
             ).casefold()
             if vendor_tokens and any(token not in vendor_names for token in vendor_tokens):

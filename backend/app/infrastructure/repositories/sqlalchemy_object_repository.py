@@ -574,10 +574,33 @@ class SQLAlchemyObjectRepository(ObjectRepository):
     def get_by_id(self, id: ObjectId) -> UniversalObject | None:
         return self.get(id)
 
-    def find_by_ids(self, ids: list[ObjectId]) -> list[UniversalObject]:
+    def find_by_ids(
+        self, ids: list[ObjectId], *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        """Batch-load objects by id — the relationship/link-enrichment path.
+
+        Security hardening (Phase 2, relationship-traversal fix): unlike
+        find()/find_by_type(), this is reached by *id*, so a caller who
+        merely knows or can guess an id could otherwise retrieve any
+        object's content through this path even with the Phase 1
+        list-endpoint fixes in place. ``owner_user_id``, when given,
+        restricts the result to objects owned by that user — the same
+        indexed-column predicate used everywhere else. Callers resolving
+        an object O's own relationships should pass O's owner (not
+        necessarily "the current HTTP caller"), since O's links are
+        legitimately read scoped to whoever created O, not to whichever
+        session happens to be reading O right now (e.g. a shared-read
+        path should still resolve O's own links correctly). Optional and
+        default-None for call sites already covered by an existing
+        downstream per-object ACL check (search, graph traversal,
+        related-documents) — adding a redundant filter there would be
+        harmless but is not required for correctness.
+        """
         if not ids:
             return []
         stmt = select(ObjectModel).where(ObjectModel.id.in_([str(i) for i in ids]))
+        if owner_user_id is not None:
+            stmt = stmt.where(ObjectModel.owner_user_id == owner_user_id)
         models = self._session.execute(stmt).scalars().all()
         return self._to_domain_many(models)
 

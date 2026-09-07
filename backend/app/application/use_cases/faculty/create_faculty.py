@@ -179,5 +179,5 @@ class CreateFacultyUseCase:
         events = obj.pop_domain_events()
         if self._event_publisher is not None:
             self._event_publisher.publish(events)
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(committee_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(committee_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         return FacultyOutput.from_domain(obj, events, linked_by_id=linked_by_id)

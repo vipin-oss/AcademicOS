@@ -82,7 +82,7 @@ class ListCommitteesUseCase:
                     if rel.kind is RelationshipKind.RELATED_TO
                 ]
                 linked_by_id = {
-                    str(o.id): o for o in self._repository.find_by_ids(link_ids)
+                    str(o.id): o for o in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)
                 }
                 out = CommitteeOutput.from_domain(obj, [], linked_by_id=linked_by_id)
                 out.members = resolve_members(self._repository, obj)
@@ -116,7 +116,7 @@ class ListCommitteesUseCase:
                 rel.target for rel in obj.relationships
                 if rel.kind is RelationshipKind.RELATED_TO
             ]
-            linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids)}
+            linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)}
             out = CommitteeOutput.from_domain(obj, [], linked_by_id=linked_by_id)
             # List rows carry resolved members too (leadership line in the UI).
             out.members = resolve_members(self._repository, obj)

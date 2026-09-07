@@ -77,7 +77,7 @@ class GetTeachingDashboardUseCase:
 
             linked_by_id = {
                 str(o.id): o
-                for o in self._repository.find_by_ids([r.target for r in cls.relationships])
+                for o in self._repository.find_by_ids([r.target for r in cls.relationships], owner_user_id=cls.audit.created_by if cls.audit else None)
             }
             class_outputs.append(
                 ClassOutput.from_domain(

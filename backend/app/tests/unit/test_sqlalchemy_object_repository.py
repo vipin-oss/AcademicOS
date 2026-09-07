@@ -650,3 +650,76 @@ def test_find_inbound_returns_sources_pointing_at_target(session):
     assert repo.find_inbound(target, RelationshipKind.PREREQUISITE_OF) == [b.id]
     # No edges pointing at a fresh id.
     assert repo.find_inbound(ObjectId.generate(ObjectType.COURSE)) == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: find_by_ids() owner scoping (relationship-traversal fix)
+# ---------------------------------------------------------------------------
+def _owned(kind: ObjectType, title: str, owner: str) -> UniversalObject:
+    obj = UniversalObject.create(kind, title, created_by=owner, status=ObjectStatus.ACTIVE)
+    obj.pop_domain_events()
+    return obj
+
+
+def test_find_by_ids_same_user_returns_all_owned_records(session):
+    """Test 1 — same-user IDs: User A requests IDs belonging to User A.
+    Expected: all legitimate records are returned."""
+    repo = SQLAlchemyObjectRepository(session)
+    a1 = _owned(ObjectType.DOCUMENT, "Alice Doc 1", "obj:user:alice")
+    a2 = _owned(ObjectType.DOCUMENT, "Alice Doc 2", "obj:user:alice")
+    repo.save(a1)
+    repo.save(a2)
+
+    found = repo.find_by_ids([a1.id, a2.id], owner_user_id="obj:user:alice")
+    assert {str(o.id) for o in found} == {str(a1.id), str(a2.id)}
+    assert {o.title for o in found} == {"Alice Doc 1", "Alice Doc 2"}
+
+
+def test_find_by_ids_cross_user_returns_nothing(session):
+    """Test 2 — cross-user IDs: User A requests IDs belonging to User B.
+    Expected: User B's records are NOT returned. No title, name, metadata,
+    or other object information may leak."""
+    repo = SQLAlchemyObjectRepository(session)
+    b1 = _owned(ObjectType.DOCUMENT, "Bob's Confidential Grant Letter", "obj:user:bob")
+    b2 = _owned(ObjectType.DOCUMENT, "Bob's Private Certificate", "obj:user:bob")
+    repo.save(b1)
+    repo.save(b2)
+
+    found = repo.find_by_ids([b1.id, b2.id], owner_user_id="obj:user:alice")
+    assert found == []
+
+
+def test_find_by_ids_mixed_owned_unowned_and_nonexistent(session):
+    """Test 3 — mixed IDs: User A requests [A-owned ID, B-owned ID,
+    nonexistent ID]. Expected: only the authorized A-owned record is
+    returned. No error or response detail should reveal that B's ID
+    exists (find_by_ids silently omits it, exactly like a nonexistent id,
+    rather than raising or including a placeholder)."""
+    repo = SQLAlchemyObjectRepository(session)
+    a1 = _owned(ObjectType.PUBLICATION, "Alice's Paper", "obj:user:alice")
+    b1 = _owned(ObjectType.PUBLICATION, "Bob's Paper", "obj:user:bob")
+    repo.save(a1)
+    repo.save(b1)
+    nonexistent_id = ObjectId.generate(ObjectType.PUBLICATION)
+
+    found = repo.find_by_ids(
+        [a1.id, b1.id, nonexistent_id], owner_user_id="obj:user:alice"
+    )
+    assert [str(o.id) for o in found] == [str(a1.id)]
+    assert found[0].title == "Alice's Paper"
+    # Bob's id and the nonexistent id are indistinguishable in the result —
+    # both simply absent, never an error, never a partial/redacted stub.
+
+
+def test_find_by_ids_without_owner_scope_preserves_backward_compatible_behaviour(session):
+    """owner_user_id is optional and defaults to None — the handful of
+    call sites already covered by a downstream per-object ACL check
+    (search, graph traversal) must keep working unfiltered at this layer."""
+    repo = SQLAlchemyObjectRepository(session)
+    a1 = _owned(ObjectType.EVENT, "Alice's Event", "obj:user:alice")
+    b1 = _owned(ObjectType.EVENT, "Bob's Event", "obj:user:bob")
+    repo.save(a1)
+    repo.save(b1)
+
+    found = repo.find_by_ids([a1.id, b1.id])
+    assert {str(o.id) for o in found} == {str(a1.id), str(b1.id)}

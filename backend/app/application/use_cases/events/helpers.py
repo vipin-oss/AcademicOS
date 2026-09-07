@@ -102,19 +102,22 @@ def section_rows(meta: dict[str, str], key: str) -> list[dict]:
 # Resolution (documents, publications, schedule speakers)
 # ---------------------------------------------------------------------------
 def _resolve_titles(
-    repository: ObjectRepository, ids: list[str], expected: ObjectType
+    repository: ObjectRepository, ids: list[str], expected: ObjectType, *,
+    owner_user_id: str | None = None,
 ) -> dict[str, str]:
     wanted = sorted({str(raw) for raw in ids if raw})
     if not wanted:
         return {}
     return {
         str(obj.id): obj.title
-        for obj in repository.find_by_ids(wanted)
+        for obj in repository.find_by_ids(wanted, owner_user_id=owner_user_id)
         if obj.object_type is expected
     }
 
 
-def annotate_event_sections(repository: ObjectRepository, output: EventOutput) -> None:
+def annotate_event_sections(
+    repository: ObjectRepository, output: EventOutput, *, owner_user_id: str | None = None
+) -> None:
     """In-place: certificate/photo/supporting refs, schedule speaker names
     and presentation titles on every section row (the finance
     ``annotate_proposal_sections`` precedent)."""
@@ -132,8 +135,8 @@ def annotate_event_sections(repository: ObjectRepository, output: EventOutput) -
     )
     publication_ids = [str(row.get("publication_id") or "") for row in output.presentations]
 
-    doc_titles = _resolve_titles(repository, document_ids, ObjectType.DOCUMENT)
-    publication_titles = _resolve_titles(repository, publication_ids, ObjectType.PUBLICATION)
+    doc_titles = _resolve_titles(repository, document_ids, ObjectType.DOCUMENT, owner_user_id=owner_user_id)
+    publication_titles = _resolve_titles(repository, publication_ids, ObjectType.PUBLICATION, owner_user_id=owner_user_id)
     speaker_names = {
         str(row.get("row_id")): str(row.get("name"))
         for row in output.speakers
@@ -190,8 +193,9 @@ def enrich_event_output(
     precedent): resolved document/publication/speaker refs on every section
     row, normalised link-group keys, and the computed stats block."""
     meta = _meta(obj)
+    owner_user_id = obj.audit.created_by if obj.audit else None
     output.links = {group: output.links.get(group, []) for group in EVENT_LINK_GROUPS}
-    annotate_event_sections(repository, output)
+    annotate_event_sections(repository, output, owner_user_id=owner_user_id)
     output.stats = event_stats(meta)
 
 

@@ -279,7 +279,7 @@ class CreateEventUseCase:
         if self._event_publisher is not None:
             self._event_publisher.publish(events)
 
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_link_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_link_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         output = EventOutput.from_domain(obj, events, linked_by_id=linked_by_id)
         enrich_event_output(self._repository, obj, output)
         return output

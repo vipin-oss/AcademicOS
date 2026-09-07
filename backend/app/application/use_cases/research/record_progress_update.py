@@ -74,7 +74,10 @@ class RecordProgressUpdateUseCase:
 
         # Return the enriched workspace payload (timeline reactivity).
         linked_by_id = {
-            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(project))
+            str(o.id): o for o in self._repository.find_by_ids(
+                linked_target_ids(project),
+                owner_user_id=project.audit.created_by if project.audit else None,
+            )
         }
         out = ProjectOutput.from_domain(project, events, linked_by_id=linked_by_id)
         project_id = str(project.id)

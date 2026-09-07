@@ -169,7 +169,7 @@ class UpdateProjectUseCase:
             self._event_publisher.publish(events)
 
         linked_by_id = {
-            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj))
+            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj), owner_user_id=obj.audit.created_by if obj.audit else None)
         }
         out = ProjectOutput.from_domain(obj, events, linked_by_id=linked_by_id)
         project_id = str(obj.id)

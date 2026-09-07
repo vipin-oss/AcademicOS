@@ -31,7 +31,7 @@ class GetGrantUseCase:
 
         grant_id = str(obj.id)
         linked_by_id = {
-            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj))
+            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj), owner_user_id=obj.audit.created_by if obj.audit else None)
         }
         out = GrantOutput.from_domain(obj, [], linked_by_id=linked_by_id)
         out.installments = [

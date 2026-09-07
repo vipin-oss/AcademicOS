@@ -50,8 +50,20 @@ class InMemoryObjectRepository(ObjectRepository):
     def get_by_id(self, id) -> UniversalObject | None:
         return self._store.get(str(id))
 
-    def find_by_ids(self, ids: list) -> list[UniversalObject]:
-        return [self._store[str(i)] for i in ids if str(i) in self._store]
+    def find_by_ids(
+        self, ids: list, *, owner_user_id: str | None = None
+    ) -> list[UniversalObject]:
+        return [
+            self._store[str(i)] for i in ids
+            if str(i) in self._store
+            and (
+                owner_user_id is None
+                or (
+                    self._store[str(i)].audit is not None
+                    and self._store[str(i)].audit.created_by == owner_user_id
+                )
+            )
+        ]
 
     def exists(self, id) -> bool:
         return str(id) in self._store
@@ -190,8 +202,13 @@ class InMemoryObjectRepository(ObjectRepository):
 # Fabrication helpers (mirror the other suites' style)
 # ---------------------------------------------------------------------------
 def _object(repo: InMemoryObjectRepository, kind: ObjectType, title: str) -> UniversalObject:
+    # Phase 2 (relationship-traversal fix): linked entities must share the
+    # same owner as the event that will reference them — in real usage a
+    # professor's event links only to their own faculty/student/document
+    # records, never another actor's. "registrar:1" here previously worked
+    # only because find_by_ids() had no owner filter at all.
     obj = UniversalObject.create(
-        object_type=kind, title=title, created_by="registrar:1",
+        object_type=kind, title=title, created_by="faculty:1",
         status=ObjectStatus.ACTIVE,
     )
     repo.save(obj)

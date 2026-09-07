@@ -91,7 +91,7 @@ class ListStudentsUseCase:
         for out in page_items:
             raw = next(s for s in students if str(s.id) == out.id)
             all_ids.extend(linked_target_ids(raw))
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)}
         items = []
         for out in page_items:
             raw = next(s for s in students if str(s.id) == out.id)

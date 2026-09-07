@@ -205,5 +205,5 @@ class CreatePublicationUseCase:
 
         # 9. Output DTO (linked objects batch-resolved in one call)
         all_ids = [oid for ids in (data.links or {}).values() for oid in ids]
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         return PublicationOutput.from_domain(obj, events, linked_by_id=linked_by_id)

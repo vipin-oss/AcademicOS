@@ -80,10 +80,20 @@ class RecordingRepository(ObjectRepository):
     def exists(self, object_id):
         return self.get(object_id) is not None
 
-    def find_by_ids(self, ids):
+    def find_by_ids(self, ids, *, owner_user_id=None):
         self.calls.append("find_by_ids")
         by_id = {str(o.id): o for o in self._objects}
-        return [by_id[str(i)] for i in ids if str(i) in by_id]
+        return [
+            by_id[str(i)] for i in ids
+            if str(i) in by_id
+            and (
+                owner_user_id is None
+                or (
+                    by_id[str(i)].audit is not None
+                    and by_id[str(i)].audit.created_by == owner_user_id
+                )
+            )
+        ]
 
     def find_related(self, object_id, kind=None):
         return []

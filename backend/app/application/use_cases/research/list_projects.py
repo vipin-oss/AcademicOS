@@ -28,7 +28,8 @@ def _agency_names(repository: ObjectRepository, obj: UniversalObject) -> str:
     """Linked agency titles for the agency filter haystack."""
     names: list[str] = []
     for target in repository.find_by_ids(
-        [rel.target for rel in obj.relationships if rel.kind is RelationshipKind.FUNDED_BY]
+        [rel.target for rel in obj.relationships if rel.kind is RelationshipKind.FUNDED_BY],
+        owner_user_id=obj.audit.created_by if obj.audit else None,
     ):
         if target.object_type is ObjectType.FUNDING_AGENCY:
             names.append(target.title)
@@ -91,7 +92,7 @@ class ListProjectsUseCase:
             for project in page:
                 all_ids.extend(linked_target_ids(project))
             linked_by_id = {
-                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+                str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
             }
             return ListProjectsResult(
                 items=[
@@ -135,7 +136,7 @@ class ListProjectsUseCase:
             for project in page:
                 all_ids.extend(linked_target_ids(project))
             linked_by_id = {
-                str(o.id): o for o in self._repository.find_by_ids(all_ids)
+                str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
             }
             return ListProjectsResult(
                 items=[
@@ -207,7 +208,7 @@ class ListProjectsUseCase:
         all_ids = []
         for _out, project, _a, _t in page_rows:
             all_ids.extend(linked_target_ids(project))
-        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids)}
+        linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)}
         items = [
             ProjectOutput.from_domain(project, [], linked_by_id=linked_by_id)
             for _out, project, _a, _t in page_rows

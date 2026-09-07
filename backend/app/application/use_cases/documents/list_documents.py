@@ -46,7 +46,7 @@ class ListDocumentsUseCase:
                 link for doc in page if (link := linked_object_id(doc)) is not None
             ]
             linked_by_id = {
-                str(obj.id): obj for obj in self._repository.find_by_ids(link_ids)
+                str(obj.id): obj for obj in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)
             }
             return ListDocumentsResult(
                 items=[
@@ -88,7 +88,7 @@ class ListDocumentsUseCase:
             link for doc in page_items if (link := linked_object_id(doc)) is not None
         ]
         linked_by_id = {
-            str(obj.id): obj for obj in self._repository.find_by_ids(link_ids)
+            str(obj.id): obj for obj in self._repository.find_by_ids(link_ids, owner_user_id=query.owner_user_id)
         }
 
         return ListDocumentsResult(

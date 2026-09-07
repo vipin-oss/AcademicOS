@@ -24,7 +24,7 @@ class GetPublicationUseCase:
         if obj is None or obj.object_type is not ObjectType.PUBLICATION:
             raise ObjectNotFoundError(f"Publication {query.object_id} not found.")
         linked_by_id = {
-            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj))
+            str(o.id): o for o in self._repository.find_by_ids(linked_target_ids(obj), owner_user_id=obj.audit.created_by if obj.audit else None)
         }
         # No events are emitted on a read; pass an empty list.
         return PublicationOutput.from_domain(obj, [], linked_by_id=linked_by_id)
