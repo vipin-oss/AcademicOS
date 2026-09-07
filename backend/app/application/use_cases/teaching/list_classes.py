@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.application.dtos.teaching import ClassOutput, ListClassesResult
 from app.application.queries.list_classes import ListClassesQuery
-from app.application.use_cases.teaching.helpers import enrolled_students
+from app.application.use_cases.teaching.helpers import enrolled_students, students_by_class
 from app.application.validators.teaching import assert_valid_list_classes_query
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType, RelationshipKind
@@ -82,10 +82,17 @@ class ListClassesUseCase:
                 str(o.id): o
                 for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
             }
+            # Perf hardening (Phase 2B audit follow-up): one STUDENT scan
+            # grouped by class, instead of one full unscoped STUDENT-table
+            # scan per class on the page (enrolled_students() called once
+            # per item — the N+1 the sweep found in this exact file).
+            roster_by_class = students_by_class(
+                self._repository, [str(cls.id) for cls in page], owner_user_id=query.owner_user_id
+            )
             items = [
                 ClassOutput.from_domain(
                     cls, [], linked_by_id=linked_by_id,
-                    student_count=len(enrolled_students(self._repository, str(cls.id))),
+                    student_count=len(roster_by_class.get(str(cls.id), [])),
                 )
                 for cls in page
             ]
@@ -129,6 +136,11 @@ class ListClassesUseCase:
             raw = next(c for c in classes if str(c.id) == out.id)
             all_ids.extend(r.target for r in raw.relationships)
         linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)}
+        # Perf hardening (Phase 2B audit follow-up): same fix as the plain
+        # path above — one grouped STUDENT scan instead of one per class.
+        roster_by_class = students_by_class(
+            self._repository, [out.id for out in page_items], owner_user_id=query.owner_user_id
+        )
 
         items = []
         for out in page_items:
@@ -137,7 +149,7 @@ class ListClassesUseCase:
                     next(c for c in classes if str(c.id) == out.id),
                     [],
                     linked_by_id=linked_by_id,
-                    student_count=len(enrolled_students(self._repository, out.id)),
+                    student_count=len(roster_by_class.get(out.id, [])),
                 )
             )
 

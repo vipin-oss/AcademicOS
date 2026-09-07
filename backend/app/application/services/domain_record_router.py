@@ -184,9 +184,13 @@ class DomainRecordRouter:
         # Extract year from start_date for date-aware deduplication
         extracted_year = _extract_year(start) if start else None
 
-        # Find potential duplicates owned by the current user
-        existing_events = self._repository.find_by_type(ObjectType.EVENT)
-        user_events = [e for e in existing_events if e.audit and e.audit.created_by == created_by]
+        # Find potential duplicates owned by the current user.
+        # Security correction + perf hardening (Phase 2B audit follow-up):
+        # this previously scanned every user's EVENT objects (the comment
+        # already said "owned by the current user" — the filter just
+        # wasn't pushed into the query) on every document upload that
+        # classifies as an event/certificate, a high-frequency path.
+        user_events = self._repository.find_by_type(ObjectType.EVENT, owner_user_id=created_by)
 
         # Check for duplicates with date-aware logic
         for existing in user_events:

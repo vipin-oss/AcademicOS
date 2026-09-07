@@ -39,18 +39,32 @@ def _meta(obj: UniversalObject) -> dict[str, str]:
 # Child collectors (the milestones_of_project doctrine)
 # ---------------------------------------------------------------------------
 def meetings_of_committee(
-    repository: ObjectRepository, committee_id: str
+    repository: ObjectRepository,
+    committee_id: str,
+    *,
+    owner_user_id: str | None = None,
+    meetings: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
-    """Every meeting BELONGS_TO this committee (date-desc, number tie-break)."""
-    meetings = [
+    """Every meeting BELONGS_TO this committee (date-desc, number tie-break).
+
+    Security correction + perf hardening (Phase 2B audit follow-up): pass
+    ``meetings`` (one find_by_type(MEETING) call) when resolving this for
+    many committees in the same request (list_committees.py's slow path,
+    get_committees_dashboard.py) — otherwise every committee triggers its
+    own full, previously-unscoped MEETING-table scan.
+    """
+    source = meetings if meetings is not None else repository.find_by_type(
+        ObjectType.MEETING, owner_user_id=owner_user_id
+    )
+    matched = [
         obj
-        for obj in repository.find_by_type(ObjectType.MEETING)
+        for obj in source
         if any(
             rel.kind is RelationshipKind.BELONGS_TO and str(rel.target) == committee_id
             for rel in obj.relationships
         )
     ]
-    meetings.sort(
+    matched.sort(
         key=lambda obj: (
             _meta(obj).get(KEY_MEETING_DATE) or "",
             _meta(obj).get(KEY_MEETING_NUMBER) or "",
@@ -58,16 +72,30 @@ def meetings_of_committee(
         ),
         reverse=True,
     )
-    return meetings
+    return matched
 
 
 def actions_of_meeting(
-    repository: ObjectRepository, meeting_id: str
+    repository: ObjectRepository,
+    meeting_id: str,
+    *,
+    owner_user_id: str | None = None,
+    tasks: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
-    """Every action item (task) BELONGS_TO this meeting (title-ordered)."""
+    """Every action item (task) BELONGS_TO this meeting (title-ordered).
+
+    Security correction + perf hardening (Phase 2B audit follow-up): pass
+    ``tasks`` (one find_by_type(TASK) call) when resolving this for many
+    meetings in the same request — get_committees_dashboard.py calls this
+    once per meeting, itself once per committee, so an unshared scan here
+    is a triply-nested N+1 (committees x meetings x full TASK-table scan).
+    """
+    source = tasks if tasks is not None else repository.find_by_type(
+        ObjectType.TASK, owner_user_id=owner_user_id
+    )
     actions = [
         obj
-        for obj in repository.find_by_type(ObjectType.TASK)
+        for obj in source
         if any(
             rel.kind is RelationshipKind.BELONGS_TO and str(rel.target) == meeting_id
             for rel in obj.relationships

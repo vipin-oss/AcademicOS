@@ -344,16 +344,26 @@ def budget_line_for_project(
     *,
     owner_user_id: str | None = None,
     proposals: list[UniversalObject] | None = None,
+    grants: list[UniversalObject] | None = None,
+    installments: list[UniversalObject] | None = None,
+    expenditures: list[UniversalObject] | None = None,
 ) -> dict:
     """Approved/released from the frozen research helpers; procurement spend
     (PAID bills on proposals linked to this project) is added into utilized —
     a composed read, nothing stored.
 
-    Perf hardening (Phase 2 audit follow-up): pass ``proposals`` (from one
-    ``all_proposals()`` call) when computing this for many projects in the
-    same request — see ``proposals_linked_to`` for why.
+    Perf hardening (Phase 2/2B audit follow-up): pass ``proposals`` (from
+    one ``all_proposals()`` call), and ``grants``/``installments``/
+    ``expenditures`` (from one find_by_type() call each), when computing
+    this for many projects in the same request — see ``proposals_linked_to``
+    and ``project_budget`` for why. Phase 2 fixed the proposals scan; the
+    grants/installments/expenditures scans one level deeper were missed
+    until the Phase 2B sweep found them.
     """
-    budget = project_budget(repository, project)
+    budget = project_budget(
+        repository, project, owner_user_id=owner_user_id,
+        grants=grants, installments=installments, expenditures=expenditures,
+    )
     linked = proposals_linked_to(
         repository, str(project.id), owner_user_id=owner_user_id, proposals=proposals
     )

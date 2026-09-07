@@ -54,6 +54,7 @@ from app.application.validators.reports import (
 )
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
+from app.domain.value_objects.enums import ObjectType
 
 KIND = "finance"
 REPORT_TITLE = "Finance Report"
@@ -96,11 +97,21 @@ def build_finance_report(repository: ObjectRepository, snapshot: Snapshot, filte
     # owner) once Phase 1's fail-closed default is enabled — filters
     # already carries owner_user_id, it just wasn't threaded through here.
     # Fetching once and sharing it also closes the N+1 the audit measured
-    # (previously one full proposals scan per project, in this loop).
+    # (previously one full proposals scan per project, in this loop), and
+    # the deeper grants/installments/expenditures scans one level inside
+    # project_budget() the Phase 2B sweep found nested here too.
     proposals = all_proposals(repository, owner_user_id=filters.owner_user_id)
+    grants = repository.find_by_type(ObjectType.GRANT, owner_user_id=filters.owner_user_id)
+    installments = repository.find_by_type(
+        ObjectType.GRANT_INSTALLMENT, owner_user_id=filters.owner_user_id
+    )
+    expenditures = repository.find_by_type(
+        ObjectType.GRANT_EXPENDITURE, owner_user_id=filters.owner_user_id
+    )
     for project in projects:
         line = budget_line_for_project(
-            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals
+            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals,
+            grants=grants, installments=installments, expenditures=expenditures,
         )
         budget_lines.append(line)
         total_approved += line["approved"] or 0.0

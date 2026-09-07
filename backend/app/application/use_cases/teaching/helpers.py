@@ -15,13 +15,47 @@ from app.domain.value_objects.enums import ObjectType, RelationshipKind
 from app.domain.value_objects.object_id import ObjectId
 
 
-def enrolled_students(repository: ObjectRepository, class_id: str) -> list[UniversalObject]:
-    """Students whose Object carries an ENROLLED_IN edge to ``class_id``."""
+def enrolled_students(
+    repository: ObjectRepository, class_id: str, *, owner_user_id: str | None = None
+) -> list[UniversalObject]:
+    """Students whose Object carries an ENROLLED_IN edge to ``class_id``.
+
+    Security correction + perf hardening (Phase 2B audit follow-up):
+    previously called find_by_type(STUDENT) with no owner_user_id at all.
+    For single-class callers (the majority — one class per request) this
+    is a straightforward scoping fix. For callers resolving rosters
+    across MANY classes in one request (list_classes, teaching/analytics
+    reports), use ``students_by_class`` instead — it does one scan and
+    groups by class, rather than one full STUDENT-table scan per class.
+    """
     return [
         student
-        for student in repository.find_by_type(ObjectType.STUDENT)
+        for student in repository.find_by_type(ObjectType.STUDENT, owner_user_id=owner_user_id)
         if class_id in {str(oid) for oid in student.related_ids(RelationshipKind.ENROLLED_IN)}
     ]
+
+
+def students_by_class(
+    repository: ObjectRepository,
+    class_ids: list[str],
+    *,
+    owner_user_id: str | None = None,
+) -> dict[str, list[UniversalObject]]:
+    """The same ENROLLED_IN grouping as ``enrolled_students``, computed for
+    MANY classes from a single STUDENT scan.
+
+    Perf hardening (Phase 2B audit follow-up): list_classes.py (and any
+    future multi-class report) should use this instead of calling
+    ``enrolled_students`` once per class — that pattern was measured to
+    trigger one full STUDENT-table scan per class on the page (a 20-class
+    page = 20 scans), the exact N+1 shape the audit's sweep found.
+    """
+    wanted = set(class_ids)
+    result: dict[str, list[UniversalObject]] = {cid: [] for cid in wanted}
+    for student in repository.find_by_type(ObjectType.STUDENT, owner_user_id=owner_user_id):
+        for cid in {str(oid) for oid in student.related_ids(RelationshipKind.ENROLLED_IN)} & wanted:
+            result[cid].append(student)
+    return result
 
 
 def to_roster_entry(student: UniversalObject) -> RosterEntry:

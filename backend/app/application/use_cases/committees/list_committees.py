@@ -102,6 +102,16 @@ class ListCommitteesUseCase:
         chair_tokens = (query.chairperson or "").strip().casefold().split()
         wanted_type = (query.committee_type or "").strip().casefold()
         wanted_dept = (query.department or "").strip().casefold()
+        # Perf hardening (Phase 2B audit follow-up): fetch every meeting
+        # ONCE (only when the meeting_year filter is actually in use) and
+        # share it across every candidate committee, instead of
+        # meetings_of_committee() re-scanning the user's entire MEETING
+        # table per committee — the N+1 the sweep found in this loop.
+        all_meetings = (
+            self._repository.find_by_type(ObjectType.MEETING, owner_user_id=query.owner_user_id)
+            if query.meeting_year is not None
+            else None
+        )
 
         matched: list[CommitteeOutput] = []
         for obj in objects:
@@ -138,7 +148,10 @@ class ListCommitteesUseCase:
                         {e.key: e.value for e in meeting.metadata.entries}
                         .get(KEY_MEETING_DATE) or ""
                     ).startswith(prefix)
-                    for meeting in meetings_of_committee(self._repository, str(obj.id))
+                    for meeting in meetings_of_committee(
+                        self._repository, str(obj.id),
+                        owner_user_id=query.owner_user_id, meetings=all_meetings,
+                    )
                 ):
                     continue
             matched.append(out)

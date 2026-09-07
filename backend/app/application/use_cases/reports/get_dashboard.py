@@ -13,6 +13,7 @@ from app.application.queries.get_reports_dashboard import GetReportsDashboardQue
 from app.application.use_cases.finance.helpers import all_proposals, budget_line_for_project
 from app.application.use_cases.reports.helpers import Snapshot
 from app.domain.repositories.object_repository import ObjectRepository
+from app.domain.value_objects.enums import ObjectType
 
 
 def reports_dashboard(repository: ObjectRepository, *, owner_user_id: str | None = None) -> ReportsDashboard:
@@ -21,14 +22,20 @@ def reports_dashboard(repository: ObjectRepository, *, owner_user_id: str | None
     snapshot = Snapshot(repository, user_id=owner_user_id)
     approved = utilized = remaining = 0.0
     seen = False
-    # Perf hardening (Phase 2 audit follow-up): fetch every proposal ONCE
-    # and share it across every project, instead of each
-    # budget_line_for_project() call re-scanning the user's entire
-    # PURCHASE table — the N+1 pattern the audit measured.
+    # Perf hardening (Phase 2/2B audit follow-up): fetch every proposal/
+    # grant/installment/expenditure ONCE and share them across every
+    # project, instead of each budget_line_for_project() call re-scanning
+    # the user's entire PURCHASE table (Phase 2), or the GRANT/
+    # GRANT_INSTALLMENT/GRANT_EXPENDITURE tables one level deeper inside
+    # project_budget() (the N+1 the Phase 2B sweep found nested here too).
     proposals = all_proposals(repository, owner_user_id=owner_user_id)
+    grants = repository.find_by_type(ObjectType.GRANT, owner_user_id=owner_user_id)
+    installments = repository.find_by_type(ObjectType.GRANT_INSTALLMENT, owner_user_id=owner_user_id)
+    expenditures = repository.find_by_type(ObjectType.GRANT_EXPENDITURE, owner_user_id=owner_user_id)
     for project in snapshot["projects"]:
         line = budget_line_for_project(
-            repository, project, owner_user_id=owner_user_id, proposals=proposals
+            repository, project, owner_user_id=owner_user_id, proposals=proposals,
+            grants=grants, installments=installments, expenditures=expenditures,
         )
         if line["approved"] is None and line["utilized"] is None:
             continue

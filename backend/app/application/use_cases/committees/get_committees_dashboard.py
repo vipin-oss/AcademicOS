@@ -47,8 +47,23 @@ class GetCommitteesDashboardUseCase:
         completed_actions = 0
         upcoming: list[dict] = []
 
+        # Perf hardening (Phase 2B audit follow-up): fetch every meeting
+        # and every task ONCE and share them across every committee/
+        # meeting, instead of meetings_of_committee()/actions_of_meeting()
+        # each re-scanning their entire table per call — the sweep found
+        # this triply nested (committees x meetings x tasks) N+1 here.
+        all_meetings = self._repository.find_by_type(
+            ObjectType.MEETING, owner_user_id=query.owner_user_id
+        )
+        all_tasks = self._repository.find_by_type(
+            ObjectType.TASK, owner_user_id=query.owner_user_id
+        )
+
         for committee in committees:
-            for meeting in meetings_of_committee(self._repository, str(committee.id)):
+            for meeting in meetings_of_committee(
+                self._repository, str(committee.id),
+                owner_user_id=query.owner_user_id, meetings=all_meetings,
+            ):
                 meta = {entry.key: entry.value for entry in meeting.metadata.entries}
                 date = (meta.get(KEY_MEETING_DATE) or "").strip()
                 if date.startswith(this_month):
@@ -66,7 +81,10 @@ class GetCommitteesDashboardUseCase:
                             "mode": meta.get(KEY_MODE),
                         }
                     )
-                for action in actions_of_meeting(self._repository, str(meeting.id)):
+                for action in actions_of_meeting(
+                    self._repository, str(meeting.id),
+                    owner_user_id=query.owner_user_id, tasks=all_tasks,
+                ):
                     status = (
                         {e.key: e.value for e in action.metadata.entries}.get(KEY_ACTION_STATUS)
                         or "pending"

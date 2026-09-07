@@ -150,6 +150,40 @@ def test_duplicate_conference_is_not_recreated(db):
     assert len(events) == 1
 
 
+def test_conference_dedup_never_matches_a_different_users_event(db):
+    """Security correction + perf hardening (Phase 2B audit follow-up):
+    the dedup scan previously loaded every user's EVENT objects before
+    filtering to the current actor in Python. This proves the fix is
+    correct, not just faster — a same-titled, same-year conference
+    already routed for user B must never be treated as user A's
+    duplicate, and user A's upload must create their own Event."""
+    repo = _repo(db)
+    _doc(repo, "obj:document:userA")
+    _doc(repo, "obj:document:userB")
+    router = DomainRecordRouter(repo)
+    fields = {"conference_name": "ICQM 2024", "start_date": "2024-12-06",
+              "__types__": ("conference",)}
+
+    # User B routes the same conference first.
+    b_outcome = router.route(type_ids=("conference",), fields=fields,
+                              created_by="obj:user:b", source_document_id="obj:document:userB",
+                              confidence=0.95)
+    assert b_outcome[0].kind == "created"
+
+    # User A routes the identical title/year — must create THEIR OWN
+    # Event, never match/link to user B's.
+    a_outcome = router.route(type_ids=("conference",), fields=fields,
+                              created_by="obj:user:a", source_document_id="obj:document:userA",
+                              confidence=0.95)
+    assert a_outcome[0].kind == "created"
+    assert a_outcome[0].object_id != b_outcome[0].object_id
+
+    events = repo.find_by_type(ObjectType.EVENT)
+    assert len(events) == 2
+    owners = {e.audit.created_by for e in events}
+    assert owners == {"obj:user:a", "obj:user:b"}
+
+
 def test_award_is_claim_only(db):
     repo = _repo(db)
     _doc(repo)

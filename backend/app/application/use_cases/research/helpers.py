@@ -144,18 +144,33 @@ def milestone_output(obj: UniversalObject) -> MilestoneOutput:
 
 
 def installments_of_grant(
-    repository: ObjectRepository, grant_id: str
+    repository: ObjectRepository,
+    grant_id: str,
+    *,
+    owner_user_id: str | None = None,
+    installments: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
-    """Installment children (BELONGS_TO → grant), installment-number order."""
+    """Installment children (BELONGS_TO → grant), installment-number order.
+
+    Security correction + perf hardening (Phase 2B audit follow-up): pass
+    ``installments`` (one find_by_type(GRANT_INSTALLMENT) call, fetched
+    once by a caller resolving budgets for many grants/projects — e.g.
+    project_budget() over every project in a dashboard) to avoid one full
+    unscoped scan per grant, the N+1 the sweep found nested inside
+    budget_line_for_project().
+    """
     def no(obj: UniversalObject) -> tuple[int, str]:
         try:
             return (int(obj.metadata.get_value(KEY_INSTALLMENT_NO) or "0"), str(obj.id))
         except ValueError:
             return (0, str(obj.id))
 
+    source = installments if installments is not None else repository.find_by_type(
+        ObjectType.GRANT_INSTALLMENT, owner_user_id=owner_user_id
+    )
     children = [
         obj
-        for obj in repository.find_by_type(ObjectType.GRANT_INSTALLMENT)
+        for obj in source
         if any(rel.kind is RelationshipKind.BELONGS_TO and str(rel.target) == grant_id
                for rel in obj.relationships)
     ]
@@ -181,12 +196,19 @@ def installment_output(obj: UniversalObject) -> InstallmentOutput:
 
 
 def expenditures_of_grant(
-    repository: ObjectRepository, grant_id: str
+    repository: ObjectRepository,
+    grant_id: str,
+    *,
+    owner_user_id: str | None = None,
+    expenditures: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
     """Expenditure children (BELONGS_TO → grant), date order."""
+    source = expenditures if expenditures is not None else repository.find_by_type(
+        ObjectType.GRANT_EXPENDITURE, owner_user_id=owner_user_id
+    )
     children = [
         obj
-        for obj in repository.find_by_type(ObjectType.GRANT_EXPENDITURE)
+        for obj in source
         if any(rel.kind is RelationshipKind.BELONGS_TO and str(rel.target) == grant_id
                for rel in obj.relationships)
     ]
@@ -207,7 +229,12 @@ def expenditure_output(obj: UniversalObject) -> ExpenditureOutput:
 
 
 def grant_totals(
-    repository: ObjectRepository, grant: UniversalObject
+    repository: ObjectRepository,
+    grant: UniversalObject,
+    *,
+    owner_user_id: str | None = None,
+    installments: list[UniversalObject] | None = None,
+    expenditures: list[UniversalObject] | None = None,
 ) -> dict[str, float | None]:
     """The simple MVP budget view (PART 7): approved / released / utilized /
     remaining — computed from the installment & expenditure children, never
@@ -216,11 +243,15 @@ def grant_totals(
     approved = parse_amount(grant.metadata.get_value(KEY_AMOUNT))
     grant_id = str(grant.id)
     released = 0.0
-    for inst in installments_of_grant(repository, grant_id):
+    for inst in installments_of_grant(
+        repository, grant_id, owner_user_id=owner_user_id, installments=installments
+    ):
         if (inst.metadata.get_value(KEY_INSTALLMENT_STATUS) or "released") == "released":
             released += parse_amount(inst.metadata.get_value(KEY_AMOUNT)) or 0.0
     utilized = 0.0
-    for exp in expenditures_of_grant(repository, grant_id):
+    for exp in expenditures_of_grant(
+        repository, grant_id, owner_user_id=owner_user_id, expenditures=expenditures
+    ):
         utilized += parse_amount(exp.metadata.get_value(KEY_AMOUNT)) or 0.0
     remaining = (approved - utilized) if approved is not None else None
     return {
@@ -232,30 +263,57 @@ def grant_totals(
 
 
 def grants_of_project(
-    repository: ObjectRepository, project_id: str
+    repository: ObjectRepository,
+    project_id: str,
+    *,
+    owner_user_id: str | None = None,
+    grants: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
     """Grant Objects funding a project (FUNDS → project edge on the grant)."""
-    grants = [
+    source = grants if grants is not None else repository.find_by_type(
+        ObjectType.GRANT, owner_user_id=owner_user_id
+    )
+    matched = [
         obj
-        for obj in repository.find_by_type(ObjectType.GRANT)
+        for obj in source
         if any(rel.kind is RelationshipKind.FUNDS and str(rel.target) == project_id
                for rel in obj.relationships)
     ]
-    grants.sort(key=lambda g: (g.title.casefold(), str(g.id)))
-    return grants
+    matched.sort(key=lambda g: (g.title.casefold(), str(g.id)))
+    return matched
 
 
-def project_budget(repository: ObjectRepository, project: UniversalObject) -> dict:
+def project_budget(
+    repository: ObjectRepository,
+    project: UniversalObject,
+    *,
+    owner_user_id: str | None = None,
+    grants: list[UniversalObject] | None = None,
+    installments: list[UniversalObject] | None = None,
+    expenditures: list[UniversalObject] | None = None,
+) -> dict:
     """Project-level MVP budget (PART 7): approved / utilized ride on the
     project record; ``grants_released`` is the sum of released installments
     across the project's grant objects; remaining is derived.
+
+    Security correction + perf hardening (Phase 2B audit follow-up): pass
+    ``grants``/``installments``/``expenditures`` (one find_by_type() call
+    each) when computing this for many projects in the same request — the
+    sweep found this nested, doubly-unscoped N+1 (one GRANT scan per
+    project, then one GRANT_INSTALLMENT/GRANT_EXPENDITURE scan per grant)
+    inside every one of budget_line_for_project()'s 4 callers.
     """
     approved = parse_amount(project.metadata.get_value(KEY_BUDGET_APPROVED))
     utilized = parse_amount(project.metadata.get_value(KEY_BUDGET_UTILIZED))
     released = 0.0
     seen = False
-    for grant in grants_of_project(repository, str(project.id)):
-        totals = grant_totals(repository, grant)
+    for grant in grants_of_project(
+        repository, str(project.id), owner_user_id=owner_user_id, grants=grants
+    ):
+        totals = grant_totals(
+            repository, grant, owner_user_id=owner_user_id,
+            installments=installments, expenditures=expenditures,
+        )
         if totals["released"]:
             released += totals["released"] or 0.0
             seen = True

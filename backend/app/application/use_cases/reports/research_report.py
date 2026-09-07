@@ -53,6 +53,7 @@ from app.application.validators.reports import (
 )
 from app.domain.entities.object import UniversalObject
 from app.domain.repositories.object_repository import ObjectRepository
+from app.domain.value_objects.enums import ObjectType
 
 KIND = "research"
 REPORT_TITLE = "Research Report"
@@ -117,13 +118,23 @@ def build_research_report(repository: ObjectRepository, snapshot: Snapshot, filt
     budget_rows: list[list[str]] = []
     budget_hrefs: list[list[str | None]] = []
     total_approved = total_utilized = total_remaining = 0.0
-    # Security correction + perf hardening (Phase 2 audit follow-up): same
-    # fix as finance_report.py — owner_user_id was omitted entirely, and
-    # each call re-scanned the user's whole PURCHASE table.
+    # Security correction + perf hardening (Phase 2/2B audit follow-up):
+    # same fix as finance_report.py — owner_user_id was omitted entirely
+    # (Phase 2), and the deeper grants/installments/expenditures scans one
+    # level inside project_budget() were still unshared per project until
+    # the Phase 2B sweep found them.
     proposals = all_proposals(repository, owner_user_id=filters.owner_user_id)
+    grants = repository.find_by_type(ObjectType.GRANT, owner_user_id=filters.owner_user_id)
+    installments = repository.find_by_type(
+        ObjectType.GRANT_INSTALLMENT, owner_user_id=filters.owner_user_id
+    )
+    expenditures = repository.find_by_type(
+        ObjectType.GRANT_EXPENDITURE, owner_user_id=filters.owner_user_id
+    )
     for project in projects:
         line = budget_line_for_project(
-            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals
+            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals,
+            grants=grants, installments=installments, expenditures=expenditures,
         )
         total_approved += line["approved"] or 0.0
         total_utilized += line["utilized"] or 0.0
