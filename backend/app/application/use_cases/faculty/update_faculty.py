@@ -100,8 +100,7 @@ class UpdateFacultyUseCase:
             )
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate faculty: {dupes[0].id} ({dupes[0].title!r}) already carries "
-                    f"this employee id / faculty code."
+                    f"Duplicate faculty: this employee id / faculty code is already in use."
                 )
 
         if data.name is not None and data.name.strip() != obj.title:

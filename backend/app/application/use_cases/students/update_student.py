@@ -97,8 +97,7 @@ class UpdateStudentUseCase:
             )
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate student: {dupes[0].id} ({dupes[0].title!r}) already has "
-                    f"this roll number or enrollment id."
+                    f"Duplicate student: this roll number or enrollment id is already in use."
                 )
 
         # --- link groups (validate first, then merge per group) ----------

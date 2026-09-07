@@ -317,7 +317,53 @@ def test_list_events_never_leaks_across_users(client):
     assert event_a_id not in filtered_ids_b
 
 
-def test_event_enrichment_never_exposes_a_cross_owner_linked_document(client):
+def test_duplicate_event_conflict_never_discloses_another_users_id_or_title(client):
+    """Phase 2C security fix: the 409 duplicate-conflict response must
+    never disclose another user's private object id or title, even
+    though the duplicate CHECK itself is correctly global (dedup must see
+    every user's events to be meaningful — only the disclosure was the
+    bug). Reproduces the exact path found in the audit: User B privately
+    creates a sensitively-titled event; User A, who cannot see it through
+    any legitimate read (her own listing is empty), guesses the same
+    event_code and must receive only a generic conflict message — not
+    B's real event id or B's private title.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER, title="alice", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-alice-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER, title="bob", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-bob-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = _event(
+        client, title="Confidential Disciplinary Committee Review",
+        event_code="EVT-SECRET-001",
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    event_b_id = resp_b.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    # Confirm Alice has no legitimate visibility into Bob's event at all.
+    listing_a = client.get(f"{API}/events").json()
+    assert event_b_id not in {item["id"] for item in listing_a["items"]}
+
+    # Alice guesses Bob's event_code — the only field she could plausibly
+    # know without having ever seen his event.
+    dup = _event(
+        client, title="Something Else Entirely", event_code="EVT-SECRET-001",
+    )
+    assert dup.status_code == 409, dup.text
+    body = dup.text
+    assert event_b_id not in body, "duplicate-conflict response leaked Bob's real object id"
+    assert "Confidential Disciplinary Committee Review" not in body, (
+        "duplicate-conflict response leaked Bob's private event title"
+    )
+
+
+
     """Test 4 (Phase 2, relationship-traversal fix) — a real production
     relationship path, not just the repository method in isolation.
 

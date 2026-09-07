@@ -78,8 +78,7 @@ class UpdateMeetingUseCase:
                 )
                 if duplicates:
                     raise ObjectAlreadyExistsError(
-                        f"Duplicate meeting number: {duplicates[0].id} ({duplicates[0].title!r}) "
-                        f"already carries number {data.meeting_number!r} in this committee."
+                        f"Duplicate meeting number: number {data.meeting_number!r} is already in use in this committee."
                     )
 
         if data.title is not None and data.title.strip() != obj.title:

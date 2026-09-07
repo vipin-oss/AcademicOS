@@ -104,8 +104,7 @@ class UpdatePublicationUseCase:
             ]
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Possible duplicate: publication {dupes[0].id} "
-                    f"({dupes[0].title!r}) already exists."
+                    f"Possible duplicate: a publication with this DOI or title already exists."
                 )
 
         # --- link groups (validate first, then merge per group) ---------

@@ -129,8 +129,7 @@ class CreateCommitteeUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate committee: {existing.id} ({existing.title!r}) already carries this "
-                f"code / name+type+department."
+                f"Duplicate committee: this code / name+type+department is already in use."
             )
 
         link_ids: dict[str, list[ObjectId]] = {}

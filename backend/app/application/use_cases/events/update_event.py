@@ -123,8 +123,7 @@ class UpdateEventUseCase:
             )
             if duplicates:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate event: {duplicates[0].id} ({duplicates[0].title!r}) "
-                    f"already carries this code / title+department+start_date."
+                    f"Duplicate event: this code / title+department+start_date is already in use."
                 )
 
         # Section group-replaces are validated against live documents /

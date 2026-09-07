@@ -112,8 +112,7 @@ class CreateFacultyUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate faculty: {existing.id} ({existing.title!r}) already carries this "
-                f"employee id / faculty code."
+                f"Duplicate faculty: this employee id / faculty code is already in use."
             )
 
         committee_ids = [ObjectId.parse(raw) for raw in data.committees]

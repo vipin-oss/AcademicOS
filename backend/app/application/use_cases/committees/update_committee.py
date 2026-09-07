@@ -103,8 +103,7 @@ class UpdateCommitteeUseCase:
             )
             if duplicates:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate committee: {duplicates[0].id} ({duplicates[0].title!r}) already "
-                    f"carries this code / name+type+department."
+                    f"Duplicate committee: this code / name+type+department is already in use."
                 )
 
         if data.name is not None and data.name.strip() != obj.title:

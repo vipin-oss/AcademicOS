@@ -111,8 +111,7 @@ class CreatePublicationUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Possible duplicate: publication {existing.id} "
-                f"({existing.title!r}) already exists."
+                f"Possible duplicate: a publication with this DOI or title already exists."
             )
 
         # 3. Linked Objects must exist before any edge is written

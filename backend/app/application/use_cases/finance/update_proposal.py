@@ -125,8 +125,7 @@ class UpdateProposalUseCase:
             )
             if duplicates:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate purchase proposal: {duplicates[0].id} ({duplicates[0].title!r}) "
-                    f"already carries this number / title+department+date."
+                    f"Duplicate purchase proposal: this number / title+department+date is already in use."
                 )
 
         # Section group-replaces are validated against live vendors/documents.

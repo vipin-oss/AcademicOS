@@ -498,3 +498,45 @@ def test_list_tasks_calendar_notifications_never_leak_across_users(client: TestC
     notes_a = client.get(f"{API}/productivity/notifications", params={"state": "all"}).json()
     ids = {i["id"] for i in notes_a["items"]}
     assert note_a_id in ids and note_b_id not in ids
+
+
+def test_renaming_a_task_never_conflicts_with_another_users_task(client: TestClient):
+    """Phase 2C security fix: update_task's duplicate-title check
+    previously scanned every user's TASK objects with no owner scope at
+    all — an existence oracle (User A could learn "someone has a task
+    titled X due on date Y") and a missing owner_user_id gap in its own
+    right. User B creates a task; User A creates and then renames their
+    OWN, unrelated task to the exact same title+due-date — this must
+    succeed, since after the fix the check only ever compares against
+    the caller's own tasks.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER, title="alice", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-alice-task-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER, title="bob", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-bob-task-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = client.post(f"{API}/productivity/tasks", json={
+        "title": "Submit grant report", "uploaded_by": "me", "due_date": TODAY,
+    })
+    assert resp_b.status_code == 201, resp_b.text
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    resp_a = client.post(f"{API}/productivity/tasks", json={
+        "title": "Alice's own task", "uploaded_by": "me", "due_date": TODAY,
+    })
+    assert resp_a.status_code == 201, resp_a.text
+    task_a_id = resp_a.json()["id"]
+
+    # Renaming Alice's own task to collide with Bob's title+due-date must
+    # succeed — the check must never see across users after the fix.
+    renamed = client.patch(f"{API}/productivity/tasks/{task_a_id}", json={
+        "title": "Submit grant report", "due_date": TODAY, "uploaded_by": "me",
+    })
+    assert renamed.status_code == 200, (
+        f"renaming to match another user's task title+date incorrectly conflicted: {renamed.text}"
+    )

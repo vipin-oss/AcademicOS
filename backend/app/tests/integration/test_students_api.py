@@ -334,3 +334,46 @@ def test_get_student_404_for_non_student_objects(client):
     ).json()["id"]
     assert client.get(f"/api/v1/students/{course}").status_code == 404
     assert client.get("/api/v1/students/obj:student:DEADBEEFDEADBEEF").status_code == 404
+
+
+def test_duplicate_student_conflict_never_discloses_another_users_name_or_id(client):
+    """Phase 2C security fix: the student duplicate-check is the most
+    sensitive of the ~22 sites found in the audit, since a student's
+    "title" is a real person's full name — an unredacted PII leak, not
+    just an academic-record leak. User B privately enrolls a student
+    under a roll number; User A, who cannot see User B's roster at all,
+    guesses the same roll number and must receive only a generic
+    conflict, never the other student's real name or object id.
+    """
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER, title="alice", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-alice-stu-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER, title="bob", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-bob-stu-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    resp_b = client.post(
+        "/api/v1/students",
+        json=_payload(name="Priya Confidential Sharma", roll_number="ROLL-SECRET-01"),
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    student_b_id = resp_b.json()["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    listing_a = client.get("/api/v1/students").json()
+    assert student_b_id not in {item["id"] for item in listing_a["items"]}
+
+    dup = client.post(
+        "/api/v1/students",
+        json=_payload(name="Some Other Name", roll_number="ROLL-SECRET-01",
+                      university_enrollment="UNIV-2026-999"),
+    )
+    assert dup.status_code == 409, dup.text
+    body = dup.text
+    assert student_b_id not in body, "duplicate-conflict response leaked Bob's student's real object id"
+    assert "Priya Confidential Sharma" not in body, (
+        "duplicate-conflict response leaked Bob's student's real name (PII)"
+    )

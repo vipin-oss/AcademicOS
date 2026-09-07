@@ -57,8 +57,7 @@ class UpdateAgencyUseCase:
             )
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate funding agency: {dupes[0].id} ({dupes[0].title!r}) already "
-                    f"exists."
+                    f"Duplicate funding agency: an agency with this name already exists."
                 )
 
         if data.name is not None and data.name.strip() != obj.title:

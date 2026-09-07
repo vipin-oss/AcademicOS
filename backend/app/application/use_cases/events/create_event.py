@@ -195,8 +195,7 @@ class CreateEventUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate event: {existing.id} ({existing.title!r}) already carries "
-                f"this code / title+department+start_date."
+                f"Duplicate event: this code / title+department+start_date is already in use."
             )
 
         link_ids: dict[str, list[ObjectId]] = {}

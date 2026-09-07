@@ -73,8 +73,7 @@ class CreateVendorUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate vendor: {existing.id} ({existing.title!r}) already carries this "
-                f"name / GST number."
+                f"Duplicate vendor: this name / GST number is already in use."
             )
 
         entries: list[MetadataEntry] = []

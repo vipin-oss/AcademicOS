@@ -69,8 +69,7 @@ class UpdateVendorUseCase:
             )
             if duplicates:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate vendor: {duplicates[0].id} ({duplicates[0].title!r}) already "
-                    f"carries this name / GST number."
+                    f"Duplicate vendor: this name / GST number is already in use."
                 )
 
         if data.name is not None and data.name.strip() != obj.title:

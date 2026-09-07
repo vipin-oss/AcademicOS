@@ -83,8 +83,7 @@ class CreateGrantUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate grant: {existing.id} ({existing.title!r}) already has this "
-                f"grant number."
+                f"Duplicate grant: this grant number is already in use."
             )
 
         assert_grant_link_targets(self._repository, data.links)

@@ -62,7 +62,7 @@ class CreateAgencyUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate funding agency: {existing.id} ({existing.title!r}) already exists."
+                f"Duplicate funding agency: an agency with this name already exists."
             )
 
         entries: list[MetadataEntry] = []

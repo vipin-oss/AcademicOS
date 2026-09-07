@@ -95,8 +95,7 @@ class CreateStudentUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate student: {existing.id} ({existing.title!r}) already has this "
-                f"roll number or enrollment id."
+                f"Duplicate student: this roll number or enrollment id is already in use."
             )
 
         # 3. Linked Objects (supervisors, projects, …) must exist before edges

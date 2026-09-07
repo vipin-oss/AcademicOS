@@ -206,8 +206,7 @@ class CreateProposalUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate purchase proposal: {existing.id} ({existing.title!r}) already "
-                f"carries this number / title+department+date."
+                f"Duplicate purchase proposal: this number / title+department+date is already in use."
             )
 
         link_ids: dict[str, list[ObjectId]] = {}

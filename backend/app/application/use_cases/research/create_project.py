@@ -128,8 +128,7 @@ class CreateProjectUseCase:
         if duplicates:
             existing = duplicates[0]
             raise ObjectAlreadyExistsError(
-                f"Duplicate project: {existing.id} ({existing.title!r}) already has this "
-                f"project code."
+                f"Duplicate project: this project code is already in use."
             )
 
         # 3. Link + team targets must exist and be of the right type

@@ -62,7 +62,11 @@ class UpdateTaskUseCase:
         meta = {entry.key: entry.value for entry in obj.metadata.entries}
         merged_title = (data.title.strip() if data.title is not None else obj.title)
         merged_due = (data.due_date or "").strip() if data.due_date is not None else (meta.get(KEY_DUE_DATE) or "")
-        for other in personal_tasks(self._repository.find_by_type(ObjectType.TASK)):
+        for other in personal_tasks(
+            self._repository.find_by_type(
+                ObjectType.TASK, owner_user_id=obj.audit.created_by if obj.audit else None
+            )
+        ):
             if str(other.id) == str(obj.id):
                 continue
             other_meta = {entry.key: entry.value for entry in other.metadata.entries}

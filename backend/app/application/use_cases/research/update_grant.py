@@ -79,8 +79,7 @@ class UpdateGrantUseCase:
             )
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate grant: {dupes[0].id} ({dupes[0].title!r}) already has "
-                    f"this grant number."
+                    f"Duplicate grant: this grant number is already in use."
                 )
 
         if data.links is not None:

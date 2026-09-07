@@ -96,8 +96,7 @@ class UpdateProjectUseCase:
             )
             if dupes:
                 raise ObjectAlreadyExistsError(
-                    f"Duplicate project: {dupes[0].id} ({dupes[0].title!r}) already has "
-                    f"this project code."
+                    f"Duplicate project: this project code is already in use."
                 )
 
         # --- link groups (validate first, then merge per group) ---------
