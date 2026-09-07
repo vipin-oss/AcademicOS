@@ -123,7 +123,7 @@ def build_events_report(snapshot: Snapshot, repository: ObjectRepository, filter
             participation_hrefs.append([href_for(event), None, None, None])
             document_id = str(row.get("certificate_document_id") or "")
             if document_id:
-                document = snapshot.get(document_id)
+                document = snapshot.get(document_id, types=["documents"])
                 certificate_rows.append([
                     event.title,
                     title_case(str(row.get("role"))),

@@ -37,6 +37,47 @@ class ListGrantsUseCase:
     def execute(self, query: ListGrantsQuery) -> ListGrantsResult:
         assert_valid_list_grants_query(query)
 
+        # Perf hardening (Phase 2 audit follow-up): an unfiltered registry
+        # listing pages directly in SQL instead of loading every GRANT row.
+        # The slow path below is preserved for the project/agency lenses,
+        # status, and free-text search. Ordering note: same tradeoff as
+        # list_students — grant_number isn't a first-class SQL column, so
+        # this fast path orders by title (title_ci) instead of
+        # (grant_number, title, id).
+        plain = (
+            query.project_id is None
+            and query.agency_id is None
+            and query.status is None
+            and not (query.q or "").strip()
+        )
+        if plain:
+            total_count = self._repository.count(
+                object_type=ObjectType.GRANT, owner_user_id=query.owner_user_id
+            )
+            page = self._repository.find(
+                object_type=ObjectType.GRANT,
+                owner_user_id=query.owner_user_id,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            all_ids = []
+            for g in page:
+                all_ids.extend(linked_target_ids(g))
+            linked_by_id = {
+                str(o.id): o
+                for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
+            }
+            items = []
+            for obj in page:
+                enriched = GrantOutput.from_domain(obj, [], linked_by_id=linked_by_id)
+                enriched.budget = grant_totals(self._repository, obj)
+                items.append(enriched)
+            return ListGrantsResult(
+                items=items, total_count=total_count, page=query.page, page_size=query.page_size
+            )
+
         grants = self._repository.find_by_type(
             ObjectType.GRANT, owner_user_id=query.owner_user_id
         )

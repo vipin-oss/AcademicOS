@@ -233,11 +233,25 @@ def enrich_proposal_output(
 
 
 def proposals_of_vendor(
-    repository: ObjectRepository, vendor_id: str
+    repository: ObjectRepository,
+    vendor_id: str,
+    *,
+    owner_user_id: str | None = None,
+    proposals: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
-    """Every purchase proposal whose sections reference this vendor."""
+    """Every purchase proposal whose sections reference this vendor.
+
+    Security correction + perf hardening (Phase 2 audit follow-up): this
+    previously called find_by_type(PURCHASE) with no owner_user_id at
+    all, and is called once per vendor in a loop (finance_report.py) —
+    pass ``proposals`` (from one all_proposals() call) to share a single
+    scan across every vendor instead of one full scan each.
+    """
     out = []
-    for obj in repository.find_by_type(ObjectType.PURCHASE):
+    source = proposals if proposals is not None else repository.find_by_type(
+        ObjectType.PURCHASE, owner_user_id=owner_user_id
+    )
+    for obj in source:
         meta = _meta(obj)
         rows = (
             section_rows(meta, KEY_QUOTATIONS)
@@ -251,12 +265,20 @@ def proposals_of_vendor(
     return out
 
 
-def vendor_stats(repository: ObjectRepository, vendor_id: str) -> dict[str, int | float]:
-    proposals = proposals_of_vendor(repository, vendor_id)
+def vendor_stats(
+    repository: ObjectRepository,
+    vendor_id: str,
+    *,
+    owner_user_id: str | None = None,
+    proposals: list[UniversalObject] | None = None,
+) -> dict[str, int | float]:
+    matched = proposals_of_vendor(
+        repository, vendor_id, owner_user_id=owner_user_id, proposals=proposals
+    )
     orders = 0
     pending = 0
     spent = 0.0
-    for obj in proposals:
+    for obj in matched:
         meta = _meta(obj)
         for row in section_rows(meta, KEY_PURCHASE_ORDERS):
             if str(row.get("vendor_id") or "") == vendor_id:
@@ -267,7 +289,7 @@ def vendor_stats(repository: ObjectRepository, vendor_id: str) -> dict[str, int 
                 if (row.get("payment_status") or "pending") != "paid":
                     pending += 1
     return {
-        "proposals": len(proposals),
+        "proposals": len(matched),
         "purchase_orders": orders,
         "pending_bills": pending,
         "spent": round(spent, 2),
@@ -284,12 +306,28 @@ def all_proposals(
 
 
 def proposals_linked_to(
-    repository: ObjectRepository, target_id: str, *, owner_user_id: str | None = None
+    repository: ObjectRepository,
+    target_id: str,
+    *,
+    owner_user_id: str | None = None,
+    proposals: list[UniversalObject] | None = None,
 ) -> list[UniversalObject]:
-    """Proposals carrying a RELATED_TO edge to the given link target."""
+    """Proposals carrying a RELATED_TO edge to the given link target.
+
+    Perf hardening (Phase 2 audit follow-up): callers that resolve this
+    for many targets in one request (e.g. budget_line_for_project() over
+    every project in a dashboard) should fetch all_proposals() ONCE and
+    pass it as ``proposals`` — otherwise every call re-scans the user's
+    entire PURCHASE table, an N+1 pattern measured to matter at realistic
+    proposal counts. Single-call sites are unaffected: omitting
+    ``proposals`` preserves the original one-scan-per-call behaviour.
+    """
+    source = proposals if proposals is not None else all_proposals(
+        repository, owner_user_id=owner_user_id
+    )
     return [
         obj
-        for obj in all_proposals(repository, owner_user_id=owner_user_id)
+        for obj in source
         if any(
             rel.kind is RelationshipKind.RELATED_TO and str(rel.target) == target_id
             for rel in obj.relationships
@@ -301,13 +339,24 @@ def proposals_linked_to(
 # PART 9 — Budget tracking (project lens, composed read)
 # ---------------------------------------------------------------------------
 def budget_line_for_project(
-    repository: ObjectRepository, project: UniversalObject, *, owner_user_id: str | None = None
+    repository: ObjectRepository,
+    project: UniversalObject,
+    *,
+    owner_user_id: str | None = None,
+    proposals: list[UniversalObject] | None = None,
 ) -> dict:
     """Approved/released from the frozen research helpers; procurement spend
     (PAID bills on proposals linked to this project) is added into utilized —
-    a composed read, nothing stored."""
+    a composed read, nothing stored.
+
+    Perf hardening (Phase 2 audit follow-up): pass ``proposals`` (from one
+    ``all_proposals()`` call) when computing this for many projects in the
+    same request — see ``proposals_linked_to`` for why.
+    """
     budget = project_budget(repository, project)
-    linked = proposals_linked_to(repository, str(project.id), owner_user_id=owner_user_id)
+    linked = proposals_linked_to(
+        repository, str(project.id), owner_user_id=owner_user_id, proposals=proposals
+    )
     spent = round(sum(proposal_spent(_meta(obj)) for obj in linked), 2)
     base_utilized = budget["utilized"] or 0.0
     utilized = round(base_utilized + spent, 2)
@@ -329,10 +378,16 @@ def budget_line_for_project(
 # PART 8 — Asset register collector
 # ---------------------------------------------------------------------------
 def asset_register_rows(
-    repository: ObjectRepository, *, owner_user_id: str | None = None
+    repository: ObjectRepository,
+    *,
+    owner_user_id: str | None = None,
+    proposals: list[UniversalObject] | None = None,
 ) -> list[AssetRegisterRow]:
     rows: list[AssetRegisterRow] = []
-    for obj in all_proposals(repository, owner_user_id=owner_user_id):
+    source = proposals if proposals is not None else all_proposals(
+        repository, owner_user_id=owner_user_id
+    )
+    for obj in source:
         meta = _meta(obj)
         for row in section_rows(meta, KEY_ASSETS):
             rows.append(

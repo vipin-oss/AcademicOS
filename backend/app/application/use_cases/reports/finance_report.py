@@ -24,6 +24,7 @@ from app.application.dtos.reports import (
 )
 from app.application.queries.get_finance_report import GetFinanceReportQuery
 from app.application.use_cases.finance.helpers import (
+    all_proposals,
     asset_register_rows,
     budget_line_for_project,
     proposal_stats,
@@ -89,8 +90,18 @@ def build_finance_report(repository: ObjectRepository, snapshot: Snapshot, filte
     budget_hrefs: list[list[str | None]] = []
     budget_lines: list[dict] = []
     total_approved = total_utilized = total_remaining = 0.0
+    # Security correction + perf hardening (Phase 2 audit follow-up): this
+    # call previously omitted owner_user_id entirely, so it would have
+    # scanned every user's PURCHASE objects (not just this report's own
+    # owner) once Phase 1's fail-closed default is enabled — filters
+    # already carries owner_user_id, it just wasn't threaded through here.
+    # Fetching once and sharing it also closes the N+1 the audit measured
+    # (previously one full proposals scan per project, in this loop).
+    proposals = all_proposals(repository, owner_user_id=filters.owner_user_id)
     for project in projects:
-        line = budget_line_for_project(repository, project)
+        line = budget_line_for_project(
+            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals
+        )
         budget_lines.append(line)
         total_approved += line["approved"] or 0.0
         total_utilized += line["utilized"] or 0.0
@@ -108,7 +119,9 @@ def build_finance_report(repository: ObjectRepository, snapshot: Snapshot, filte
     vendor_rows: list[list[str]] = []
     total_vendor_spend = 0.0
     for vendor in sorted(snapshot["vendors"], key=lambda o: (o.title.casefold(), str(o.id))):
-        stats = vendor_stats(repository, str(vendor.id))
+        stats = vendor_stats(
+            repository, str(vendor.id), owner_user_id=filters.owner_user_id, proposals=proposals
+        )
         total_vendor_spend += stats["spent"]
         vendor_rows.append([
             vendor.title,
@@ -147,7 +160,7 @@ def build_finance_report(repository: ObjectRepository, snapshot: Snapshot, filte
         purchase_hrefs.append([None, href_for(proposal), None, None, None, None, None, None, None, None])
 
     # Asset summary.
-    assets = list(asset_register_rows(repository))
+    assets = list(asset_register_rows(repository, owner_user_id=filters.owner_user_id, proposals=proposals))
     asset_rows: list[list[str]] = []
     asset_hrefs: list[list[str | None]] = []
     total_asset_cost = 0.0

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from app.application.dtos.reports import ReportsDashboard
 from app.application.queries.get_reports_dashboard import GetReportsDashboardQuery
-from app.application.use_cases.finance.helpers import budget_line_for_project
+from app.application.use_cases.finance.helpers import all_proposals, budget_line_for_project
 from app.application.use_cases.reports.helpers import Snapshot
 from app.domain.repositories.object_repository import ObjectRepository
 
@@ -21,8 +21,15 @@ def reports_dashboard(repository: ObjectRepository, *, owner_user_id: str | None
     snapshot = Snapshot(repository, user_id=owner_user_id)
     approved = utilized = remaining = 0.0
     seen = False
+    # Perf hardening (Phase 2 audit follow-up): fetch every proposal ONCE
+    # and share it across every project, instead of each
+    # budget_line_for_project() call re-scanning the user's entire
+    # PURCHASE table — the N+1 pattern the audit measured.
+    proposals = all_proposals(repository, owner_user_id=owner_user_id)
     for project in snapshot["projects"]:
-        line = budget_line_for_project(repository, project, owner_user_id=owner_user_id)
+        line = budget_line_for_project(
+            repository, project, owner_user_id=owner_user_id, proposals=proposals
+        )
         if line["approved"] is None and line["utilized"] is None:
             continue
         seen = True

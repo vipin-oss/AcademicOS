@@ -100,5 +100,8 @@ class UpdateVendorUseCase:
         if self._event_publisher is not None:
             self._event_publisher.publish(events)
         output = VendorOutput.from_domain(obj, events)
-        output.stats = vendor_stats(self._repository, str(obj.id))
+        output.stats = vendor_stats(
+            self._repository, str(obj.id),
+            owner_user_id=obj.audit.created_by if obj.audit else None,
+        )
         return output

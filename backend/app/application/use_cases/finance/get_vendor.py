@@ -18,5 +18,8 @@ class GetVendorUseCase:
         if obj is None or obj.object_type is not ObjectType.VENDOR:
             raise ObjectNotFoundError(f"Vendor {query.object_id} not found.")
         output = VendorOutput.from_domain(obj, [])
-        output.stats = vendor_stats(self._repository, str(obj.id))
+        output.stats = vendor_stats(
+            self._repository, str(obj.id),
+            owner_user_id=obj.audit.created_by if obj.audit else None,
+        )
         return output

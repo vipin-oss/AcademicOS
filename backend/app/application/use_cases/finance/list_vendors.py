@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from app.application.dtos.finance import ListVendorsResult, VendorOutput
 from app.application.queries.list_vendors import ListVendorsQuery
-from app.application.use_cases.finance.helpers import vendor_stats
+from app.application.use_cases.finance.helpers import all_proposals, vendor_stats
 from app.application.validators.finance import assert_valid_list_query
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType
@@ -53,9 +53,17 @@ class ListVendorsUseCase:
                 order="asc",
             )
             items: list[VendorOutput] = []
+            # Security correction + perf hardening (Phase 2 audit follow-up):
+            # vendor_stats() previously scanned every user's PURCHASE
+            # objects, once per vendor. Fetch once, scoped to this owner,
+            # and share it.
+            proposals = all_proposals(self._repository, owner_user_id=query.owner_user_id)
             for obj in page:
                 out = VendorOutput.from_domain(obj, [])
-                out.stats = vendor_stats(self._repository, str(obj.id))
+                out.stats = vendor_stats(
+                    self._repository, str(obj.id),
+                    owner_user_id=query.owner_user_id, proposals=proposals,
+                )
                 items.append(out)
             return ListVendorsResult(
                 items=items,
@@ -70,13 +78,17 @@ class ListVendorsUseCase:
 
         tokens = (query.q or "").strip().casefold().split()
         matched: list[VendorOutput] = []
+        proposals = all_proposals(self._repository, owner_user_id=query.owner_user_id)
         for obj in objects:
             out = VendorOutput.from_domain(obj, [])
             if tokens:
                 haystack = _haystack(out)
                 if any(token not in haystack for token in tokens):
                     continue
-            out.stats = vendor_stats(self._repository, str(obj.id))
+            out.stats = vendor_stats(
+                self._repository, str(obj.id),
+                owner_user_id=query.owner_user_id, proposals=proposals,
+            )
             matched.append(out)
 
         matched.sort(key=lambda item: (item.name.casefold(), item.id))

@@ -75,7 +75,7 @@ def _classes_of_student(snapshot: Snapshot, student_id: str) -> list[UniversalOb
     """Classes the student carries an ENROLLED_IN edge to (teaching helper
     ``enrolled_students`` inverted — the roster is derived from student edges,
     so the class list is the same set read from the other side)."""
-    student = snapshot.get(student_id)
+    student = snapshot.get(student_id, types=["students"])
     enrolled = (
         {str(oid) for oid in student.related_ids(RelationshipKind.ENROLLED_IN)}
         if student is not None
@@ -355,7 +355,7 @@ def _overview_view(repository: ObjectRepository, snapshot: Snapshot, filters) ->
 def build_students_report(repository: ObjectRepository, snapshot: Snapshot, filters) -> ReportView:
     filters = assert_valid_filters(filters, KIND)
     if filters.student_id:
-        student = snapshot.get(filters.student_id)
+        student = snapshot.get(filters.student_id, types=["students"])
         if student is None or str(filters.student_id) not in {
             str(s.id) for s in snapshot["students"]
         }:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.application.dtos.finance import BudgetLine, ListBudgetsResult
 from app.application.queries.list_budget_lines import ListBudgetLinesQuery
-from app.application.use_cases.finance.helpers import budget_line_for_project
+from app.application.use_cases.finance.helpers import all_proposals, budget_line_for_project
 from app.domain.repositories.object_repository import ObjectRepository
 from app.domain.value_objects.enums import ObjectType
 
@@ -21,10 +21,16 @@ class ListBudgetLinesUseCase:
         projects = self._repository.find_by_type(
             ObjectType.RESEARCH_PROJECT, owner_user_id=query.owner_user_id
         )
+        # Perf hardening (Phase 2 audit follow-up): fetch every proposal
+        # ONCE and share it across every project, instead of each
+        # budget_line_for_project() call re-scanning the user's entire
+        # PURCHASE table — the N+1 pattern the audit measured.
+        proposals = all_proposals(self._repository, owner_user_id=query.owner_user_id)
         lines = [
             BudgetLine(
                 **budget_line_for_project(
-                    self._repository, project, owner_user_id=query.owner_user_id
+                    self._repository, project,
+                    owner_user_id=query.owner_user_id, proposals=proposals,
                 )
             )
             for project in projects

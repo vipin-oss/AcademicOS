@@ -128,9 +128,12 @@ def list_folders(
 ):
     """List all folders owned by the current user, optionally under a parent."""
     repo = _repo(db)
-    all_folders = repo.find_by_type(ObjectType.FOLDER)
-    # Only show folders owned by this user
-    my_folders = [f for f in all_folders if f.audit and f.audit.created_by == str(user.id)]
+    # Perf hardening (Phase 2 audit follow-up): scope at the repository
+    # query, not after loading every user's folders — was a global,
+    # cross-tenant full scan (not a leak, since the Python filter below
+    # already excluded other users, but the query cost grew with every
+    # user's total folder count on the installation, not just this one).
+    my_folders = repo.find_by_type(ObjectType.FOLDER, owner_user_id=str(user.id))
 
     if parent_id:
         # Filter to children of this parent
@@ -162,8 +165,7 @@ def list_all_folders(
 ):
     """List ALL folders owned by the current user (flat, not filtered by parent)."""
     repo = _repo(db)
-    all_folders = repo.find_by_type(ObjectType.FOLDER)
-    my_folders = [f for f in all_folders if f.audit and f.audit.created_by == str(user.id)]
+    my_folders = repo.find_by_type(ObjectType.FOLDER, owner_user_id=str(user.id))
     return FolderListResponse(
         items=[_to_response(f, repo) for f in my_folders],
         total=len(my_folders),

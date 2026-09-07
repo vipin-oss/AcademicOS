@@ -51,6 +51,53 @@ class ListAssignmentsUseCase:
     def execute(self, query: ListAssignmentsQuery) -> ListAssignmentsResult:
         _validate(query)
 
+        # Perf hardening (Phase 2 audit follow-up): a fully unfiltered
+        # listing pages directly in SQL instead of loading every
+        # ASSIGNMENT row. The slow path below is preserved for the
+        # class_id/object_id lenses (relationship-based, not expressible
+        # as a repository filter) and every other filter/search
+        # combination. Ordering note: deadline isn't a first-class SQL
+        # column, so this fast path orders by title (title_ci) instead of
+        # (deadline, title, id).
+        plain = (
+            query.class_id is None
+            and query.object_id is None
+            and query.assignment_type is None
+            and query.visibility is None
+            and query.status is None
+            and not (query.q or "").strip()
+        )
+        if plain:
+            total_count = self._repository.count(
+                object_type=ObjectType.ASSIGNMENT, owner_user_id=query.owner_user_id
+            )
+            page = self._repository.find(
+                object_type=ObjectType.ASSIGNMENT,
+                owner_user_id=query.owner_user_id,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            class_ids = {
+                cid for a in page if (cid := class_id_of_assignment(a)) is not None
+            }
+            class_by_id = {
+                str(c.id): c
+                for c in self._repository.find_by_ids(
+                    [ObjectId(cid) for cid in class_ids], owner_user_id=query.owner_user_id
+                )
+            }
+            items = [
+                AssignmentOutput.from_domain(
+                    a, [], class_obj=class_by_id.get(class_id_of_assignment(a))
+                )
+                for a in page
+            ]
+            return ListAssignmentsResult(
+                items=items, total_count=total_count, page=query.page, page_size=query.page_size
+            )
+
         assignments = self._repository.find_by_type(
             ObjectType.ASSIGNMENT, owner_user_id=query.owner_user_id
         )

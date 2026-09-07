@@ -653,3 +653,117 @@ def test_export_matches_workspace_view(world):
     assert "Chromatic Cycles" in text
     assert "Ramsey Bounds" not in text
     assert "year=2026" in text
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 performance hardening: Snapshot over-fetch regression
+# ---------------------------------------------------------------------------
+class _CountingRepository(InMemoryObjectRepository):
+    """Wraps InMemoryObjectRepository, recording every distinct object type
+    fetched via find_by_type / find_by_type_for_user — the actual proof
+    that a narrow report loads only what it needs, not just that its
+    output looks correct."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.types_fetched: set[ObjectType] = set()
+
+    def find_by_type(self, object_type: ObjectType, *, owner_user_id: str | None = None):
+        self.types_fetched.add(object_type)
+        return super().find_by_type(object_type, owner_user_id=owner_user_id)
+
+
+def _seed_events_report_world() -> _CountingRepository:
+    """One event with a certificate document link, plus several UNRELATED
+    types the events report has no reason to touch."""
+    repo = _CountingRepository()
+    document = _make(repo, ObjectType.DOCUMENT, "Certificate of Participation")
+    event = _make(repo, ObjectType.EVENT, "Mathematics Day 2026",
+                  event_type="mathematics_day", event_status="completed",
+                  start_date="2026-12-22",
+                  participation=json.dumps([{
+                      "role": "organizer",
+                      "certificate_document_id": str(document.id),
+                  }]))
+    # Unrelated types the events report must never scan for this lookup.
+    _make(repo, ObjectType.FACULTY, "Dr. Unrelated Faculty")
+    _make(repo, ObjectType.STUDENT, "Unrelated Student")
+    _make(repo, ObjectType.GRANT, "Unrelated Grant")
+    _make(repo, ObjectType.RESEARCH_PROJECT, "Unrelated Project")
+    return repo
+
+
+def test_events_report_does_not_scan_unrelated_snapshot_types():
+    """Regression for the Phase 2 audit's Finding 1: resolving one
+    certificate's document title must not trigger a scan of every
+    SNAPSHOT_TYPES key (previously 18, including faculty/students/grants/
+    projects this report never uses)."""
+    repo = _seed_events_report_world()
+    snapshot = Snapshot(repo)
+    build_events_report(snapshot, repo, ReportFilters())
+
+    assert ObjectType.DOCUMENT in repo.types_fetched
+    assert ObjectType.EVENT in repo.types_fetched
+    unrelated = {ObjectType.FACULTY, ObjectType.STUDENT, ObjectType.GRANT, ObjectType.RESEARCH_PROJECT}
+    leaked = unrelated & repo.types_fetched
+    assert not leaked, (
+        f"events_report scanned unrelated SNAPSHOT_TYPES it doesn't need: {leaked} "
+        "— Snapshot.by_id()/get() regressed to the unrestricted 18-type merge."
+    )
+
+
+def test_faculty_report_does_not_scan_unrelated_snapshot_types():
+    """Faculty reports legitimately touch several SNAPSHOT_TYPES (profile,
+    publications, projects, grants, students supervised, classes taught,
+    events, committees) — this test only proves the narrowed grant-id
+    lookup doesn't ALSO drag in the types that genuinely have nothing to
+    do with a faculty profile (meetings, tasks, purchases, vendors,
+    documents, funding agencies, grant installments, assignments,
+    submissions, attendance sessions)."""
+    repo = _CountingRepository()
+    faculty = _make(repo, ObjectType.FACULTY, "Dr. Meera Krishnan",
+                    designation="Professor", employee_id="EMP-1", email="meera@univ.edu")
+    _make(repo, ObjectType.MEETING, "Unrelated Meeting")
+    _make(repo, ObjectType.TASK, "Unrelated Task")
+    _make(repo, ObjectType.PURCHASE, "Unrelated Purchase")
+    _make(repo, ObjectType.DOCUMENT, "Unrelated Document")
+
+    snapshot = Snapshot(repo)
+    build_faculty_report(repo, snapshot, ReportFilters(faculty_id=str(faculty.id)))
+
+    assert ObjectType.FACULTY in repo.types_fetched
+    unrelated = {ObjectType.MEETING, ObjectType.TASK, ObjectType.PURCHASE, ObjectType.DOCUMENT}
+    leaked = unrelated & repo.types_fetched
+    assert not leaked, f"faculty_report scanned unrelated SNAPSHOT_TYPES: {leaked}"
+
+
+def test_students_report_does_not_scan_unrelated_snapshot_types():
+    repo = _CountingRepository()
+    student = _make(repo, ObjectType.STUDENT, "Asha Verma",
+                    roll_number="PG-01", programme="MSc Mathematics")
+    _make(repo, ObjectType.FACULTY, "Unrelated Faculty")
+    _make(repo, ObjectType.GRANT, "Unrelated Grant")
+    _make(repo, ObjectType.EVENT, "Unrelated Event")
+
+    snapshot = Snapshot(repo)
+    build_students_report(repo, snapshot, ReportFilters(student_id=str(student.id)))
+
+    assert ObjectType.STUDENT in repo.types_fetched
+    unrelated = {ObjectType.FACULTY, ObjectType.GRANT, ObjectType.EVENT}
+    leaked = unrelated & repo.types_fetched
+    assert not leaked, f"students_report scanned unrelated SNAPSHOT_TYPES: {leaked}"
+
+
+def test_snapshot_full_by_id_still_available_for_callers_that_need_it():
+    """The restricted-types path is additive: omitting ``types`` still
+    returns the full merged index, unchanged, for any caller that
+    genuinely needs cross-module lookups (Academic CV, dashboards)."""
+    repo = _CountingRepository()
+    doc = _make(repo, ObjectType.DOCUMENT, "Some Document")
+    student = _make(repo, ObjectType.STUDENT, "Some Student")
+    snapshot = Snapshot(repo)
+
+    assert snapshot.get(str(doc.id)) is not None
+    assert snapshot.get(str(student.id)) is not None
+    assert ObjectType.DOCUMENT in repo.types_fetched
+    assert ObjectType.STUDENT in repo.types_fetched

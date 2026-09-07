@@ -164,9 +164,9 @@ def _profile_view(
         table("grants", "Grants", ("Title", "Grant Number", "Amount"),
               [[g["title"],
                 (meta_of(g_obj).get("grant_number") or "—")
-                if (g_obj := snapshot.get(g["id"])) is not None else "—",
+                if (g_obj := snapshot.get(g["id"], types=["grants"])) is not None else "—",
                 (meta_of(g_obj).get("amount") or "—")
-                if (g_obj := snapshot.get(g["id"])) is not None else "—"]
+                if (g_obj := snapshot.get(g["id"], types=["grants"])) is not None else "—"]
                for g in grants],
               [[f"/research/grants/{g['id']}", None, None] for g in grants]),
         table("supervision", "Students Supervised (current)", ("Student", "Link"),
@@ -276,7 +276,7 @@ def _overview_view(repository: ObjectRepository, snapshot: Snapshot, filters) ->
 def build_faculty_report(repository: ObjectRepository, snapshot: Snapshot, filters) -> ReportView:
     filters = assert_valid_filters(filters, KIND)
     if filters.faculty_id:
-        member = snapshot.get(filters.faculty_id)
+        member = snapshot.get(filters.faculty_id, types=["faculty"])
         if member is None or member not in snapshot["faculty"]:
             from app.application.exceptions import ObjectNotFoundError
 

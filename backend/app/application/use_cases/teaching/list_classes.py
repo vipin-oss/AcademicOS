@@ -50,6 +50,49 @@ class ListClassesUseCase:
     def execute(self, query: ListClassesQuery) -> ListClassesResult:
         assert_valid_list_classes_query(query)
 
+        # Perf hardening (Phase 2 audit follow-up): an unfiltered listing
+        # pages directly in SQL instead of loading every COURSE row. The
+        # slow path below is preserved for semester/session/status/q and
+        # the student/faculty dashboard object_id lens. Ordering note:
+        # session isn't a first-class SQL column, so this fast path orders
+        # by title (title_ci) instead of (session, title, id).
+        plain = (
+            query.semester is None
+            and query.session is None
+            and query.status is None
+            and not (query.q or "").strip()
+            and query.object_id is None
+        )
+        if plain:
+            total_count = self._repository.count(
+                object_type=ObjectType.COURSE, owner_user_id=query.owner_user_id
+            )
+            page = self._repository.find(
+                object_type=ObjectType.COURSE,
+                owner_user_id=query.owner_user_id,
+                page=query.page,
+                page_size=query.page_size,
+                sort_by="title_ci",
+                order="asc",
+            )
+            all_ids = []
+            for cls in page:
+                all_ids.extend(r.target for r in cls.relationships)
+            linked_by_id = {
+                str(o.id): o
+                for o in self._repository.find_by_ids(all_ids, owner_user_id=query.owner_user_id)
+            }
+            items = [
+                ClassOutput.from_domain(
+                    cls, [], linked_by_id=linked_by_id,
+                    student_count=len(enrolled_students(self._repository, str(cls.id))),
+                )
+                for cls in page
+            ]
+            return ListClassesResult(
+                items=items, total_count=total_count, page=query.page, page_size=query.page_size
+            )
+
         classes = self._repository.find_by_type(
             ObjectType.COURSE, owner_user_id=query.owner_user_id
         )

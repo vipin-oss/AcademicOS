@@ -25,7 +25,7 @@ from app.application.dtos.research import (
     PROJECT_IN_FLIGHT_STATUSES,
 )
 from app.application.queries.get_research_report import GetResearchReportQuery
-from app.application.use_cases.finance.helpers import budget_line_for_project
+from app.application.use_cases.finance.helpers import all_proposals, budget_line_for_project
 from app.application.use_cases.reports.helpers import (
     Snapshot,
     bar_chart,
@@ -117,8 +117,14 @@ def build_research_report(repository: ObjectRepository, snapshot: Snapshot, filt
     budget_rows: list[list[str]] = []
     budget_hrefs: list[list[str | None]] = []
     total_approved = total_utilized = total_remaining = 0.0
+    # Security correction + perf hardening (Phase 2 audit follow-up): same
+    # fix as finance_report.py — owner_user_id was omitted entirely, and
+    # each call re-scanned the user's whole PURCHASE table.
+    proposals = all_proposals(repository, owner_user_id=filters.owner_user_id)
     for project in projects:
-        line = budget_line_for_project(repository, project)
+        line = budget_line_for_project(
+            repository, project, owner_user_id=filters.owner_user_id, proposals=proposals
+        )
         total_approved += line["approved"] or 0.0
         total_utilized += line["utilized"] or 0.0
         total_remaining += line["remaining"] if line["remaining"] is not None else 0.0

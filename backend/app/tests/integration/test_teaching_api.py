@@ -101,7 +101,16 @@ def _import_students(client, text=None):
 
 
 def _student_ids(client):
-    return [s["id"] for s in client.get("/api/v1/students?page_size=100").json()["items"]]
+    # Perf hardening (Phase 2 audit follow-up): GET /students' unfiltered
+    # fast path now orders by name (title_ci) rather than roll_number (see
+    # list_students.py) — sort explicitly by roll_number here so this
+    # helper's return order (and every ids[N] index built on it below)
+    # stays independent of that implementation-detail ordering choice,
+    # rather than assuming a specific list-endpoint order the API never
+    # documented as a contract.
+    items = client.get("/api/v1/students?page_size=100").json()["items"]
+    items.sort(key=lambda s: s.get("roll_number") or "")
+    return [s["id"] for s in items]
 
 
 def _enroll_all(client, class_id):
