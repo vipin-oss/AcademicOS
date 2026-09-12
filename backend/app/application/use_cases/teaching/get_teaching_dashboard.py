@@ -49,12 +49,16 @@ class GetTeachingDashboardUseCase:
 
         for cls in classes:
             class_id = str(cls.id)
-            roster = enrolled_students(self._repository, class_id)
+            roster = enrolled_students(self._repository, class_id, owner_user_id=query.owner_user_id)
             student_ids.update(str(s.id) for s in roster)
-            assignments = assignments_of_class(self._repository, class_id)
+            assignments = assignments_of_class(
+                self._repository, class_id, owner_user_id=query.owner_user_id
+            )
             assignment_count += len(assignments)
 
-            submissions = collect_submissions(self._repository, assignments)
+            submissions = collect_submissions(
+                self._repository, assignments, owner_user_id=query.owner_user_id
+            )
             for assignment in assignments:
                 by_student = submissions.get(str(assignment.id), {})
                 pending += max(len(roster) - len(by_student), 0)
@@ -62,7 +66,9 @@ class GetTeachingDashboardUseCase:
                 graded += sum(1 for s in by_student.values() if s.marks is not None)
 
             gradebook = build_gradebook(roster, assignments, submissions, class_id=class_id)
-            sessions = attendance_sessions_of_class(self._repository, class_id)
+            sessions = attendance_sessions_of_class(
+                self._repository, class_id, owner_user_id=query.owner_user_id
+            )
             attendance = build_attendance_summary(
                 roster, sessions, class_id=class_id, threshold=query.attendance_threshold
             )

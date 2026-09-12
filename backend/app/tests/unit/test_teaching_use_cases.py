@@ -437,7 +437,7 @@ def test_enroll_csv_resolves_roll_and_email_with_row_errors(repo):
     s2 = CreateStudentUseCase(repo).execute(
         CreateStudentCommand(
             input=CreateStudentInput(
-                name="Ravi Kumar", created_by="f:1", student_type="ug",
+                name="Ravi Kumar", created_by="faculty:1", student_type="ug",
                 roll_number="102", email="ravi@u.edu",
             )
         )
@@ -446,6 +446,7 @@ def test_enroll_csv_resolves_roll_and_email_with_row_errors(repo):
         EnrollFromCsvCommand(
             class_id=ObjectId.parse(cls.id),
             text="Roll No,Email\n101,\n,ravi@u.edu\n999,ghost@u.edu\n",
+            actor="faculty:1",
         )
     )
     assert len(result.enrolled) == 2
@@ -807,6 +808,7 @@ def test_record_attendance_upserts_one_session_per_class_date(repo):
             class_id=ObjectId.parse(cls.id),
             session_date="2026-08-03",
             records={s1.id: "present", s2.id: "absent"},
+            actor="faculty:1",
         )
     )
     second = use_case.execute(
@@ -814,6 +816,7 @@ def test_record_attendance_upserts_one_session_per_class_date(repo):
             class_id=ObjectId.parse(cls.id),
             session_date="2026-08-03",
             records={s1.id: "late", s2.id: "present"},
+            actor="faculty:1",
         )
     )
     assert second.id == first.id  # upsert — no duplicate session
@@ -976,6 +979,7 @@ def test_class_report_composes_everything(repo):
             SubmitToAssignmentCommand(
                 assignment_id=ObjectId.parse(assignment.id),
                 student_id=ObjectId.parse(student.id),
+                actor="faculty:1",
             )
         )
         grade.execute(GradeSubmissionCommand(object_id=ObjectId.parse(sub.id), marks=marks))
@@ -984,6 +988,7 @@ def test_class_report_composes_everything(repo):
             class_id=ObjectId.parse(cls.id),
             session_date="2026-08-03",
             records={s1.id: "present", s2.id: "absent"},
+            actor="faculty:1",
         )
     )
     report = GetClassReportUseCase(repo).execute(

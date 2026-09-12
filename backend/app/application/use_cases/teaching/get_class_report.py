@@ -122,19 +122,20 @@ class GetClassReportUseCase:
             raise ObjectNotFoundError(f"Class {query.class_id} not found.")
 
         class_id = str(cls.id)
-        roster = enrolled_students(self._repository, class_id)
+        owner_uid = cls.audit.created_by if cls.audit else None
+        roster = enrolled_students(self._repository, class_id, owner_user_id=owner_uid)
         roster_entries = [to_roster_entry(s) for s in roster]
         roster_entries.sort(
             key=lambda e: ((e.roll_number or "￿").casefold(), e.name.casefold())
         )
-        assignments = assignments_of_class(self._repository, class_id)
+        assignments = assignments_of_class(self._repository, class_id, owner_user_id=owner_uid)
         assignments.sort(
             key=lambda a: (a.metadata.get_value("deadline") or "￿", a.title.casefold())
         )
-        submissions = collect_submissions(self._repository, assignments)
+        submissions = collect_submissions(self._repository, assignments, owner_user_id=owner_uid)
         gradebook = build_gradebook(roster, assignments, submissions, class_id=class_id)
 
-        sessions = attendance_sessions_of_class(self._repository, class_id)
+        sessions = attendance_sessions_of_class(self._repository, class_id, owner_user_id=owner_uid)
         sessions.sort(key=lambda s: (s.metadata.get_value("session_date") or "", str(s.id)))
         attendance = build_attendance_summary(
             roster, sessions, class_id=class_id, threshold=query.attendance_threshold

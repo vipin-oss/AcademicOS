@@ -170,7 +170,9 @@ class ListProjectsUseCase:
             if (query.q and query.q.strip()) or (query.agency and query.agency.strip()):
                 agency_names = _agency_names(self._repository, project)
             if (query.q and query.q.strip()) or (query.pi and query.pi.strip()):
-                team_names = team_names_of_project(self._repository, str(project.id))
+                team_names = team_names_of_project(
+                    self._repository, str(project.id), owner_user_id=query.owner_user_id
+                )
             rows.append((out, project, agency_names, team_names))
 
         def matches(row: tuple[ProjectOutput, UniversalObject, str, str]) -> bool:

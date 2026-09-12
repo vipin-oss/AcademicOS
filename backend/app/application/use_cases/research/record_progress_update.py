@@ -81,9 +81,14 @@ class RecordProgressUpdateUseCase:
         }
         out = ProjectOutput.from_domain(project, events, linked_by_id=linked_by_id)
         project_id = str(project.id)
-        out.team = deflated_team(self._repository, project_id)
+        out.team = deflated_team(
+            self._repository, project_id, owner_user_id=project.audit.created_by if project.audit else None
+        )
         out.milestones = [
-            milestone_output(m) for m in milestones_of_project(self._repository, project_id)
+            milestone_output(m) for m in milestones_of_project(
+                self._repository, project_id,
+                owner_user_id=project.audit.created_by if project.audit else None,
+            )
         ]
         out.budget = project_budget(self._repository, project)
         return out

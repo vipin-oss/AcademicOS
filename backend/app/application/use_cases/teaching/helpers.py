@@ -84,11 +84,17 @@ def class_of(repository: ObjectRepository, class_id: ObjectId) -> UniversalObjec
     return obj
 
 
-def assignments_of_class(repository: ObjectRepository, class_id: str) -> list[UniversalObject]:
-    """Assignments BELONGS_TO the class."""
+def assignments_of_class(
+    repository: ObjectRepository, class_id: str, *, owner_user_id: str | None = None
+) -> list[UniversalObject]:
+    """Assignments BELONGS_TO the class.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's ASSIGNMENT objects unscoped.
+    """
     return [
         assignment
-        for assignment in repository.find_by_type(ObjectType.ASSIGNMENT)
+        for assignment in repository.find_by_type(ObjectType.ASSIGNMENT, owner_user_id=owner_user_id)
         if class_id
         in {str(oid) for oid in assignment.related_ids(RelationshipKind.BELONGS_TO)}
     ]
@@ -107,10 +113,15 @@ def class_id_of_assignment(assignment: UniversalObject) -> str | None:
 
 
 def submission_for(
-    repository: ObjectRepository, assignment_id: str, student_id: str
+    repository: ObjectRepository, assignment_id: str, student_id: str,
+    *, owner_user_id: str | None = None,
 ) -> UniversalObject | None:
-    """The single Submission Object of (assignment, student), if any."""
-    for submission in repository.find_by_type(ObjectType.SUBMISSION):
+    """The single Submission Object of (assignment, student), if any.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's SUBMISSION objects unscoped.
+    """
+    for submission in repository.find_by_type(ObjectType.SUBMISSION, owner_user_id=owner_user_id):
         if (
             assignment_id
             in {str(oid) for oid in submission.related_ids(RelationshipKind.BELONGS_TO)}
@@ -121,10 +132,14 @@ def submission_for(
     return None
 
 
-def submissions_of_assignment(repository: ObjectRepository, assignment_id: str) -> list[UniversalObject]:
+def submissions_of_assignment(
+    repository: ObjectRepository, assignment_id: str, *, owner_user_id: str | None = None
+) -> list[UniversalObject]:
+    """Security correction (Phase 2C audit follow-up): previously scanned
+    every user's SUBMISSION objects unscoped."""
     return [
         submission
-        for submission in repository.find_by_type(ObjectType.SUBMISSION)
+        for submission in repository.find_by_type(ObjectType.SUBMISSION, owner_user_id=owner_user_id)
         if assignment_id
         in {str(oid) for oid in submission.related_ids(RelationshipKind.BELONGS_TO)}
     ]
@@ -136,10 +151,12 @@ def student_of_submission(submission: UniversalObject) -> ObjectId | None:
 
 
 def attendance_sessions_of_class(
-    repository: ObjectRepository, class_id: str
+    repository: ObjectRepository, class_id: str, *, owner_user_id: str | None = None
 ) -> list[UniversalObject]:
+    """Security correction (Phase 2C audit follow-up): previously scanned
+    every user's ATTENDANCE_SESSION objects unscoped."""
     return [
         session
-        for session in repository.find_by_type(ObjectType.ATTENDANCE_SESSION)
+        for session in repository.find_by_type(ObjectType.ATTENDANCE_SESSION, owner_user_id=owner_user_id)
         if class_id in {str(oid) for oid in session.related_ids(RelationshipKind.BELONGS_TO)}
     ]

@@ -209,6 +209,8 @@ class CreateProjectUseCase:
         all_ids = [oid for ids in (data.links or {}).values() for oid in ids]
         linked_by_id = {str(o.id): o for o in self._repository.find_by_ids(all_ids, owner_user_id=obj.audit.created_by if obj.audit else None)}
         out = ProjectOutput.from_domain(obj, events, linked_by_id=linked_by_id)
-        out.team = deflated_team(self._repository, str(obj.id))
+        out.team = deflated_team(
+            self._repository, str(obj.id), owner_user_id=obj.audit.created_by if obj.audit else None
+        )
         out.budget = project_budget(self._repository, obj)
         return out

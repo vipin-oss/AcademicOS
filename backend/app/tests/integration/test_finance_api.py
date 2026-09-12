@@ -603,3 +603,34 @@ def test_proposal_events_and_audit_projection(client):
     ).json()
     assert updated["notes"] == "Audit note"
     assert any("Updated" in event or "Metadata" in event for event in updated["events"])
+
+
+def test_finance_dashboard_never_aggregates_across_users(client):
+    """Phase 2C security fix: GET /finance/dashboard was never owner-scoped
+    at all — proposals, vendors, and research project budgets were
+    aggregated across every user on the installation. Bob's dashboard
+    count must be completely unaffected by Alice creating her own vendor."""
+    user_a = UniversalObject.create(
+        object_type=ObjectType.USER, title="alice", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-alice-fin-0001"),
+    )
+    user_b = UniversalObject.create(
+        object_type=ObjectType.USER, title="bob", created_by="system",
+        status=ObjectStatus.ACTIVE, object_id=ObjectId("obj:user:oracle-bob-fin-0001"),
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    dash_b_before = client.get(f"{API}/finance/dashboard").json()
+
+    app.dependency_overrides[get_current_user] = lambda: user_a
+    dash_a_before = client.get(f"{API}/finance/dashboard").json()
+    _vendor(client, name="Alice's Vendor", gst="07AAAAA0000A1Z5")
+    dash_a_after = client.get(f"{API}/finance/dashboard").json()
+    assert dash_a_after["total_vendors"] == dash_a_before["total_vendors"] + 1
+
+    app.dependency_overrides[get_current_user] = lambda: user_b
+    dash_b_after = client.get(f"{API}/finance/dashboard").json()
+    assert dash_b_after["total_vendors"] == dash_b_before["total_vendors"], (
+        "Bob's dashboard vendor count changed after Alice created her own vendor "
+        "— the dashboard is still aggregating across users"
+    )

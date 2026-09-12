@@ -18,7 +18,9 @@ class ListAttendanceUseCase:
         if cls is None or cls.object_type is not ObjectType.COURSE:
             raise ObjectNotFoundError(f"Class {query.class_id} not found.")
 
-        sessions = attendance_sessions_of_class(self._repository, str(cls.id))
+        sessions = attendance_sessions_of_class(
+            self._repository, str(cls.id), owner_user_id=cls.audit.created_by if cls.audit else None
+        )
         outputs = [AttendanceSessionOutput.from_domain(s, []) for s in sessions]
         outputs.sort(key=lambda out: (out.session_date, out.id), reverse=True)
         return outputs

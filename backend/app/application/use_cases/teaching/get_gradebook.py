@@ -133,14 +133,17 @@ def build_gradebook(
 
 
 def collect_submissions(
-    repository: ObjectRepository, assignments: list[UniversalObject]
+    repository: ObjectRepository, assignments: list[UniversalObject],
+    *, owner_user_id: str | None = None,
 ) -> dict[str, dict[str, SubmissionOutput]]:
     """{assignment_id: {student_id: SubmissionOutput}} in one pass."""
     out: dict[str, dict[str, SubmissionOutput]] = {}
     students_cache: dict[str, UniversalObject] = {}
     for assignment in assignments:
         by_student: dict[str, SubmissionOutput] = {}
-        for submission in submissions_of_assignment(repository, str(assignment.id)):
+        for submission in submissions_of_assignment(
+            repository, str(assignment.id), owner_user_id=owner_user_id
+        ):
             sid = student_of_submission(submission)
             if sid is None:
                 continue

@@ -287,8 +287,11 @@ def _unprocessable(exc: Exception) -> HTTPException:
 # distinct families, so ordering is illustrative — kept for parity)
 # ---------------------------------------------------------------------------
 @router.get("/dashboard", response_model=FinanceDashboardModel)
-def finance_dashboard(repo: SQLAlchemyObjectRepository = Depends(_repository)):
-    return GetFinanceDashboardUseCase(repo).execute(GetFinanceDashboardQuery())
+def finance_dashboard(
+    repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
+):
+    return GetFinanceDashboardUseCase(repo).execute(GetFinanceDashboardQuery(owner_user_id=str(user.id)))
 
 
 @router.get("/budgets", response_model=ListBudgetsResponseModel)

@@ -43,8 +43,13 @@ class CreateCalendarEntryUseCase:
         data = command.input
         assert_valid_create_entry_input(data)
 
+        # Security correction (Phase 2C audit follow-up): same fix as
+        # create_task.py — this scanned every user's CALENDAR_ENTRY
+        # objects with no owner scope at all.
         title_cf = data.title.strip().casefold()
-        for existing in self._repository.find_by_type(ObjectType.CALENDAR_ENTRY):
+        for existing in self._repository.find_by_type(
+            ObjectType.CALENDAR_ENTRY, owner_user_id=data.uploaded_by.strip()
+        ):
             other = {entry.key: entry.value for entry in existing.metadata.entries}
             if (
                 existing.title.casefold() == title_cf

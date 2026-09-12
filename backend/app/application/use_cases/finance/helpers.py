@@ -441,8 +441,12 @@ def financial_year_of(date_str: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # PART 11 — Dashboard cards (computed read)
 # ---------------------------------------------------------------------------
-def finance_dashboard(repository: ObjectRepository) -> dict:
-    proposals = all_proposals(repository)
+def finance_dashboard(repository: ObjectRepository, *, owner_user_id: str | None = None) -> dict:
+    """Security correction (Phase 2C audit follow-up): this entire
+    dashboard was never owner-scoped at all — proposals, vendors, and
+    research projects were all scanned across every user.
+    """
+    proposals = all_proposals(repository, owner_user_id=owner_user_id)
     active = 0
     pending_approvals = 0
     purchase_orders = 0
@@ -463,7 +467,7 @@ def finance_dashboard(repository: ObjectRepository) -> dict:
                 pending_bills += 1
         procurement_spent += proposal_spent(meta)
 
-    vendors = repository.find_by_type(ObjectType.VENDOR)
+    vendors = repository.find_by_type(ObjectType.VENDOR, owner_user_id=owner_user_id)
 
     # Global budget position = frozen research project budgets + procurement
     # spend overlapping only via PAID bills (research records its own
@@ -471,8 +475,8 @@ def finance_dashboard(repository: ObjectRepository) -> dict:
     approved_total = 0.0
     approved_seen = False
     research_utilized = 0.0
-    for project in repository.find_by_type(ObjectType.RESEARCH_PROJECT):
-        budget = project_budget(repository, project)
+    for project in repository.find_by_type(ObjectType.RESEARCH_PROJECT, owner_user_id=owner_user_id):
+        budget = project_budget(repository, project, owner_user_id=owner_user_id)
         if budget["approved"] is not None:
             approved_total += budget["approved"]
             approved_seen = True

@@ -57,7 +57,15 @@ class CreateTaskUseCase:
         data = command.input
         assert_valid_create_task_input(data)
 
-        all_tasks = self._repository.find_by_type(ObjectType.TASK)
+        # Security correction (Phase 2C audit follow-up): this create-time
+        # duplicate check previously scanned every user's TASK objects —
+        # the same missing owner_user_id gap update_task.py had (fixed
+        # separately). data.uploaded_by is server-stamped from the
+        # authenticated session (see routes/productivity.py), never
+        # client-suppliable.
+        all_tasks = self._repository.find_by_type(
+            ObjectType.TASK, owner_user_id=data.uploaded_by.strip()
+        )
         title_cf = data.title.strip().casefold()
         due = (data.due_date or "").strip()
         for existing in personal_tasks(all_tasks):

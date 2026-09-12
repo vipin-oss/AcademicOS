@@ -59,7 +59,9 @@ class EnrollFromCsvUseCase:
                 "(Roll No, Email, …)."
             )
 
-        students = self._repository.find_by_type(ObjectType.STUDENT)
+        students = self._repository.find_by_type(
+            ObjectType.STUDENT, owner_user_id=command.actor
+        )
         ids = []
         result = EnrollmentResult()
         for index, record in enumerate(rows):

@@ -189,7 +189,7 @@ def build_research_report(repository: ObjectRepository, snapshot: Snapshot, filt
         ])
         team_rows.append([
             project.title,
-            team_names_of_project(repository, str(project.id)) or "—",
+            team_names_of_project(repository, str(project.id), owner_user_id=filters.owner_user_id) or "—",
         ])
         team_hrefs.append([href_for(project), None])
 

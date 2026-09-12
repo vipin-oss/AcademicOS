@@ -534,13 +534,14 @@ def enroll_students(
     class_id: str,
     req: EnrollRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         result = EnrollStudentsUseCase(repo).execute(
             EnrollStudentsCommand(
                 class_id=ObjectId.parse(class_id),
                 student_ids=tuple(ObjectId.parse(sid) for sid in req.student_ids),
-                actor=req.actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -553,11 +554,12 @@ def enroll_students_csv(
     class_id: str,
     req: CsvImportRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         result = EnrollFromCsvUseCase(repo).execute(
             EnrollFromCsvCommand(
-                class_id=ObjectId.parse(class_id), text=req.text, actor=req.actor
+                class_id=ObjectId.parse(class_id), text=req.text, actor=str(user.id)
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -1008,13 +1010,14 @@ def import_marks_csv(
     assignment_id: str,
     req: CsvImportRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
+    user: UniversalObject = Depends(get_current_user),
 ) -> dict:
     try:
         result = ImportMarksCsvUseCase(repo).execute(
             ImportMarksCsvCommand(
                 assignment_id=ObjectId.parse(assignment_id),
                 text=req.text,
-                actor=req.actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:
@@ -1076,6 +1079,7 @@ def grade_submission(
     req: GradeSubmissionRequest,
     repo: SQLAlchemyObjectRepository = Depends(_repository),
     storage: LocalFileStorage = Depends(get_storage),
+    user: UniversalObject = Depends(get_current_user),
 ) -> SubmissionResponseModel:
     try:
         out = GradeSubmissionUseCase(repo).execute(
@@ -1084,7 +1088,7 @@ def grade_submission(
                 marks=req.marks,
                 faculty_feedback=req.faculty_feedback,
                 rubric_score=tuple(req.rubric_score) if req.rubric_score is not None else None,
-                actor=req.actor,
+                actor=str(user.id),
             )
         )
     except (ObjectNotFoundError, ValidationError, ValueError) as exc:

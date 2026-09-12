@@ -494,12 +494,14 @@ def test_milestones_add_update_order_and_delete():
         AddMilestoneCommand(
             project_id=ObjectId(project.id),
             input=MilestoneInput(title="Literature review", date="2026-06-30"),
+            actor="faculty:1",
         )
     )
     AddMilestoneUseCase(repo).execute(
         AddMilestoneCommand(
             project_id=ObjectId(project.id),
             input=MilestoneInput(title="Pilot experiments", date="2026-03-15"),
+            actor="faculty:1",
         )
     )
     fetched = GetProjectUseCase(repo).execute(GetProjectQuery(object_id=ObjectId(project.id)))
@@ -551,6 +553,7 @@ def test_delete_project_cascades_milestones_only():
         AddMilestoneCommand(
             project_id=ObjectId(project.id),
             input=MilestoneInput(title="Mid-term review", date="2027-01-15"),
+            actor="faculty:1",
         )
     )
     DeleteProjectUseCase(repo).execute(DeleteProjectCommand(object_id=ObjectId(project.id)))

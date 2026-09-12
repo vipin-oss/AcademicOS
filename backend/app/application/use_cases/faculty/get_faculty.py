@@ -50,20 +50,21 @@ class GetFacultyUseCase:
             meta = {entry.key: entry.value for entry in project.metadata.entries}
             if (meta.get(KEY_LIFECYCLE_STATUS) or "draft") in PROJECT_IN_FLIGHT_STATUSES:
                 in_flight += 1
-        grants = grants_of_projects(self._repository, set(project_objects))
+        owner_uid = obj.audit.created_by if obj.audit else None
+        grants = grants_of_projects(self._repository, set(project_objects), owner_user_id=owner_uid)
         out.research = {"projects": projects, "grants": grants}
 
         # PART 4 — student supervision (current vs completed).
-        out.supervision = supervision_of_faculty(self._repository, faculty_id)
+        out.supervision = supervision_of_faculty(self._repository, faculty_id, owner_user_id=owner_uid)
 
         # PART 5 — teaching load (classes + derived weekly hours).
-        classes, total_hours = classes_of_faculty(self._repository, faculty_id)
+        classes, total_hours = classes_of_faculty(self._repository, faculty_id, owner_user_id=owner_uid)
         out.teaching = {"classes": classes, "total_weekly_hours": total_hours}
 
         # PART 6 — dashboard cards.
         committee_count = len(out.links.get("committees", []))
         out.stats = {
-            "publications": publications_count_of_faculty(self._repository, faculty_id),
+            "publications": publications_count_of_faculty(self._repository, faculty_id, owner_user_id=owner_uid),
             "active_projects": in_flight,
             "grants": len(grants),
             "students_supervised": len(out.supervision["current"]),

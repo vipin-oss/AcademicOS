@@ -15,7 +15,7 @@ class GetFinanceDashboardUseCase:
         self._repository = repository
 
     def execute(self, query: GetFinanceDashboardQuery) -> FinanceDashboard:
-        cards = finance_dashboard(self._repository)
+        cards = finance_dashboard(self._repository, owner_user_id=query.owner_user_id)
         return FinanceDashboard(
             active_procurements=cards["active_procurements"],
             pending_approvals=cards["pending_approvals"],

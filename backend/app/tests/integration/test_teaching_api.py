@@ -463,7 +463,11 @@ def test_submission_flow_file_download_grade_and_grid(client):
     )
     assert graded.status_code == 200
     assert graded.json()["marks"] == 18.0
-    assert graded.json()["graded_by"] == "faculty:1"
+    # Security correction (Phase 2C audit follow-up): grade_submission now
+    # stamps graded_by from the authenticated session, never the
+    # client-supplied "actor" field in the request body — a spoofable
+    # audit trail is a real vulnerability, not a cosmetic detail.
+    assert graded.json()["graded_by"] == "obj:user:test-user-0001"
 
     # grid: one graded, two pending
     grid = client.get(f"/api/v1/teaching/assignments/{assignment['id']}/grid")

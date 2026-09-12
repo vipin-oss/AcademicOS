@@ -92,10 +92,11 @@ def _committees_of(snapshot: Snapshot, faculty_id: str) -> list[UniversalObject]
 
 def _counts(repository: ObjectRepository, snapshot: Snapshot, member: UniversalObject) -> dict[str, int | float]:
     faculty_id = str(member.id)
+    owner_uid = member.audit.created_by if member.audit else None
     _, projects = research_projects_of_faculty(repository, member)
-    grants = grants_of_projects(repository, set(projects))
-    supervision = supervision_of_faculty(repository, faculty_id)
-    classes, weekly_hours = classes_of_faculty(repository, faculty_id)
+    grants = grants_of_projects(repository, set(projects), owner_user_id=owner_uid)
+    supervision = supervision_of_faculty(repository, faculty_id, owner_user_id=owner_uid)
+    classes, weekly_hours = classes_of_faculty(repository, faculty_id, owner_user_id=owner_uid)
     return {
         "publications": len(_publications_of(snapshot, faculty_id)),
         "projects": len(projects),
@@ -122,11 +123,12 @@ def _profile_view(
         if _year_window_ok(meta_of(pub), filters)
     ]
 
+    owner_uid = member.audit.created_by if member.audit else None
     _, projects_map = research_projects_of_faculty(repository, member)
     projects = sorted(projects_map.values(), key=lambda o: (o.title.casefold(), str(o.id)))
-    grants = grants_of_projects(repository, {str(p.id) for p in projects})
-    supervision = supervision_of_faculty(repository, faculty_id)
-    classes, weekly_hours = classes_of_faculty(repository, faculty_id)
+    grants = grants_of_projects(repository, {str(p.id) for p in projects}, owner_user_id=owner_uid)
+    supervision = supervision_of_faculty(repository, faculty_id, owner_user_id=owner_uid)
+    classes, weekly_hours = classes_of_faculty(repository, faculty_id, owner_user_id=owner_uid)
     committees = _committees_of(snapshot, faculty_id)
     events = linked_from(snapshot, "events", faculty_id)
 

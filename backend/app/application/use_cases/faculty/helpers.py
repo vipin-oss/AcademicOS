@@ -85,13 +85,17 @@ def research_projects_of_faculty(
 
 
 def grants_of_projects(
-    repository: ObjectRepository, project_ids: set[str]
+    repository: ObjectRepository, project_ids: set[str], *, owner_user_id: str | None = None
 ) -> list[dict]:
-    """Grants FUNDS → any of the faculty's projects (reverse scan over grants)."""
+    """Grants FUNDS → any of the faculty's projects (reverse scan over grants).
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's GRANT objects unscoped.
+    """
     if not project_ids:
         return []
     entries: list[dict] = []
-    for grant in repository.find_by_type(ObjectType.GRANT):
+    for grant in repository.find_by_type(ObjectType.GRANT, owner_user_id=owner_user_id):
         if any(
             rel.kind is RelationshipKind.FUNDS and str(rel.target) in project_ids
             for rel in grant.relationships
@@ -102,13 +106,17 @@ def grants_of_projects(
 
 
 def supervision_of_faculty(
-    repository: ObjectRepository, faculty_id: str
+    repository: ObjectRepository, faculty_id: str, *, owner_user_id: str | None = None
 ) -> dict[str, list[dict]]:
-    """Students SUPERVISED_BY/ADVISED_BY → faculty; current (ug/pg/phd) vs alumni."""
+    """Students SUPERVISED_BY/ADVISED_BY → faculty; current (ug/pg/phd) vs alumni.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's STUDENT objects unscoped.
+    """
     kinds = (RelationshipKind.SUPERVISED_BY, RelationshipKind.ADVISED_BY)
     current: list[dict] = []
     completed: list[dict] = []
-    for student in repository.find_by_type(ObjectType.STUDENT):
+    for student in repository.find_by_type(ObjectType.STUDENT, owner_user_id=owner_user_id):
         hits = [
             rel
             for rel in student.relationships
@@ -126,12 +134,16 @@ def supervision_of_faculty(
 
 
 def classes_of_faculty(
-    repository: ObjectRepository, faculty_id: str
+    repository: ObjectRepository, faculty_id: str, *, owner_user_id: str | None = None
 ) -> tuple[list[dict], float]:
-    """Classes TAUGHT_BY → faculty (edge on the class) + derived weekly hours."""
+    """Classes TAUGHT_BY → faculty (edge on the class) + derived weekly hours.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's COURSE objects unscoped.
+    """
     entries: list[dict] = []
     total = 0.0
-    for cls in repository.find_by_type(ObjectType.COURSE):
+    for cls in repository.find_by_type(ObjectType.COURSE, owner_user_id=owner_user_id):
         if not any(
             rel.kind is RelationshipKind.TAUGHT_BY and str(rel.target) == faculty_id
             for rel in cls.relationships
@@ -160,11 +172,17 @@ def classes_of_faculty(
     return entries, round(total, 2)
 
 
-def publications_count_of_faculty(repository: ObjectRepository, faculty_id: str) -> int:
-    """Publications AUTHORED_BY → faculty (publications module edge)."""
+def publications_count_of_faculty(
+    repository: ObjectRepository, faculty_id: str, *, owner_user_id: str | None = None
+) -> int:
+    """Publications AUTHORED_BY → faculty (publications module edge).
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's PUBLICATION objects unscoped.
+    """
     return sum(
         1
-        for publication in repository.find_by_type(ObjectType.PUBLICATION)
+        for publication in repository.find_by_type(ObjectType.PUBLICATION, owner_user_id=owner_user_id)
         if any(
             rel.kind is RelationshipKind.AUTHORED_BY and str(rel.target) == faculty_id
             for rel in publication.relationships

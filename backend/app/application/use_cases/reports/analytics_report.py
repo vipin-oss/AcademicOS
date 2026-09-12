@@ -102,7 +102,10 @@ def build_analytics_report(snapshot: Snapshot, repository: ObjectRepository, fil
     load_labels: list[str] = []
     load_hours: list[float] = []
     for member in sorted(snapshot["faculty"], key=lambda o: (o.title.casefold(), str(o.id))):
-        _, hours = classes_of_faculty(repository, str(member.id))
+        _, hours = classes_of_faculty(
+            repository, str(member.id),
+            owner_user_id=member.audit.created_by if member.audit else None,
+        )
         load_labels.append(member.title)
         load_hours.append(round(hours, 2))
 

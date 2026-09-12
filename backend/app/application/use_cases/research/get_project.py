@@ -34,9 +34,14 @@ class GetProjectUseCase:
         }
         out = ProjectOutput.from_domain(obj, [], linked_by_id=linked_by_id)
         project_id = str(obj.id)
-        out.team = deflated_team(self._repository, project_id)
+        out.team = deflated_team(
+            self._repository, project_id, owner_user_id=obj.audit.created_by if obj.audit else None
+        )
         out.milestones = [
-            milestone_output(m) for m in milestones_of_project(self._repository, project_id)
+            milestone_output(m) for m in milestones_of_project(
+                self._repository, project_id,
+                owner_user_id=obj.audit.created_by if obj.audit else None,
+            )
         ]
         out.budget = project_budget(self._repository, obj)
         return out

@@ -34,23 +34,31 @@ from app.domain.value_objects.enums import ObjectType, Provenance, RelationshipK
 from app.domain.value_objects.object_id import ObjectId
 
 
-def people(repository: ObjectRepository) -> list[UniversalObject]:
-    """All team-eligible Objects (faculty + students) in one pass each."""
-    return repository.find_by_type(ObjectType.FACULTY) + repository.find_by_type(
-        ObjectType.STUDENT
-    )
+def people(repository: ObjectRepository, *, owner_user_id: str | None = None) -> list[UniversalObject]:
+    """All team-eligible Objects (faculty + students) in one pass each.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's FACULTY and STUDENT objects unscoped — used by
+    replace_team_group() on every research-project team update.
+    """
+    return repository.find_by_type(
+        ObjectType.FACULTY, owner_user_id=owner_user_id
+    ) + repository.find_by_type(ObjectType.STUDENT, owner_user_id=owner_user_id)
 
 
 def team_edges_of_project(
-    repository: ObjectRepository, project_id: str
+    repository: ObjectRepository, project_id: str, *, owner_user_id: str | None = None
 ) -> list[tuple[UniversalObject, RelationshipKind]]:
     """Reverse scan: (person, kind) whose outgoing edge targets this project.
 
     Mirrors ``enrolled_students`` (teaching): enrollment/team edges live on
     the person aggregate, so the project view is a reverse scan.
+
+    Security correction (Phase 2C audit follow-up): threads owner_user_id
+    down to people() — previously scanned every user's FACULTY/STUDENT.
     """
     members: list[tuple[UniversalObject, RelationshipKind]] = []
-    for person in people(repository):
+    for person in people(repository, owner_user_id=owner_user_id):
         # One person can legitimately hold several team roles at once
         # (e.g. Co-PI and working member) — classify every matching edge.
         for rel in person.relationships:
@@ -62,11 +70,11 @@ def team_edges_of_project(
 
 
 def deflated_team(
-    repository: ObjectRepository, project_id: str
+    repository: ObjectRepository, project_id: str, *, owner_user_id: str | None = None
 ) -> dict[str, list[dict]]:
     """Denormalised team payload grouped for the project response."""
     team: dict[str, list[dict]] = {group: [] for group in TEAM_GROUP_TO_KIND}
-    for person, kind in team_edges_of_project(repository, project_id):
+    for person, kind in team_edges_of_project(repository, project_id, owner_user_id=owner_user_id):
         group = team_edge_group(kind, person.object_type)
         if group is not None:
             team[group].append(link_dict(person, kind))
@@ -75,9 +83,14 @@ def deflated_team(
     return team
 
 
-def team_names_of_project(repository: ObjectRepository, project_id: str) -> str:
+def team_names_of_project(
+    repository: ObjectRepository, project_id: str, *, owner_user_id: str | None = None
+) -> str:
     """Search haystack of every team member's name (the PART 9 PI filter)."""
-    return " ".join(person.title for person, _ in team_edges_of_project(repository, project_id))
+    return " ".join(
+        person.title
+        for person, _ in team_edges_of_project(repository, project_id, owner_user_id=owner_user_id)
+    )
 
 
 def replace_team_group(
@@ -99,7 +112,7 @@ def replace_team_group(
     kind = TEAM_GROUP_TO_KIND[group]
     project_id = str(project.id)
 
-    for person in people(repository):
+    for person in people(repository, owner_user_id=project.audit.created_by if project.audit else None):
         if any(
             str(rel.target) == project_id and rel.kind is kind
             for rel in person.relationships
@@ -119,12 +132,16 @@ def replace_team_group(
 
 
 def milestones_of_project(
-    repository: ObjectRepository, project_id: str
+    repository: ObjectRepository, project_id: str, *, owner_user_id: str | None = None
 ) -> list[UniversalObject]:
-    """Milestone children (BELONGS_TO → project), date order."""
+    """Milestone children (BELONGS_TO → project), date order.
+
+    Security correction (Phase 2C audit follow-up): previously scanned
+    every user's PROJECT_MILESTONE objects unscoped.
+    """
     milestones = [
         obj
-        for obj in repository.find_by_type(ObjectType.PROJECT_MILESTONE)
+        for obj in repository.find_by_type(ObjectType.PROJECT_MILESTONE, owner_user_id=owner_user_id)
         if any(rel.kind is RelationshipKind.BELONGS_TO and str(rel.target) == project_id
                for rel in obj.relationships)
     ]

@@ -25,6 +25,8 @@ class DeleteProjectUseCase:
         if obj is None or obj.object_type is not ObjectType.RESEARCH_PROJECT:
             raise ObjectNotFoundError(f"Project {command.object_id} not found.")
         project_id = str(obj.id)
-        for milestone in milestones_of_project(self._repository, project_id):
+        for milestone in milestones_of_project(
+            self._repository, project_id, owner_user_id=obj.audit.created_by if obj.audit else None
+        ):
             self._repository.delete(milestone.id)
         self._repository.delete(command.object_id)
