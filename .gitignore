@@ -43,3 +43,9 @@ _academicOS_M27_apply/
 _m21m25_apply/
 _m27_apply/
 academicOS-M21-M25-final.zip
+
+# Local backup/extract folders and archives
+_*_backup_*/
+_*_extract/
+_L0_*/
+*.zip
